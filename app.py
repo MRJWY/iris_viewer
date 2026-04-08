@@ -387,7 +387,6 @@ def render_summary_table(summary_df: pd.DataFrame) -> None:
         [
             ("요약 공고 수", str(len(filtered))),
             ("추천 공고", str(int((filtered["대표추천도"] == "추천").sum()) if "대표추천도" in filtered.columns else 0)),
-            ("평균 대표점수", f"{filtered['대표점수'].mean():.1f}" if "대표점수" in filtered.columns and len(filtered) > 0 else "-"),
             (
                 "평균 과제수",
                 f"{pd.to_numeric(filtered['과제수'], errors='coerce').fillna(0).mean():.1f}"
@@ -417,7 +416,6 @@ def render_opportunity_table(opportunity_df: pd.DataFrame) -> None:
         [
             ("Opportunity 수", str(len(filtered))),
             ("추천 건수", str(int((filtered["추천도"] == "추천").sum()) if "추천도" in filtered.columns else 0)),
-            ("평균 점수", f"{pd.to_numeric(filtered['점수'], errors='coerce').fillna(0).mean():.1f}" if "점수" in filtered.columns and len(filtered) > 0 else "-"),
             ("공고 수", str(filtered["notice_id"].nunique() if "notice_id" in filtered.columns else 0)),
         ]
     )
