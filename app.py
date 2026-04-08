@@ -479,10 +479,10 @@ def load_viewer_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
 
 def main() -> None:
-    st.set_page_config(page_title="IRIS Public Viewer", page_icon="IRIS", layout="wide")
+    st.set_page_config(page_title="Crawler Hub", page_icon="IRIS", layout="wide")
     core.inject_page_styles()
 
-    st.title("IRIS Public Viewer")
+    st.title("Crawler Hub")
     st.caption("IRIS / SUMMARY / OPPORTUNITY 시트를 읽기 전용으로 조회합니다.")
 
     try:
