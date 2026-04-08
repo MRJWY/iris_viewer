@@ -136,8 +136,25 @@ def add_period_alias(df: pd.DataFrame) -> pd.DataFrame:
     return working
 
 
+def add_viewer_id(df: pd.DataFrame, *, kind: str) -> pd.DataFrame:
+    working = df.copy()
+    if kind == "notice":
+        primary = core.series_from_candidates(working, ["공고ID"])
+        fallback = core.series_from_candidates(working, ["공고번호", "공고명"])
+    elif kind == "summary":
+        primary = core.series_from_candidates(working, ["공고ID"])
+        fallback = core.series_from_candidates(working, ["공고번호", "공고명"])
+    else:
+        primary = core.series_from_candidates(working, ["document_id", "문서ID"])
+        fallback_base = core.series_from_candidates(working, ["notice_id", "공고ID"])
+        fallback_name = core.series_from_candidates(working, ["project_name", "과제명", "rfp_title"])
+        fallback = fallback_base.str.cat(fallback_name, sep="|")
+    working["_viewer_id"] = primary.where(primary.ne(""), fallback).fillna("").astype(str).str.strip()
+    return working
+
+
 def build_opportunity_table_df(df: pd.DataFrame) -> pd.DataFrame:
-    working = add_period_alias(df)
+    working = add_viewer_id(add_period_alias(df), kind="opportunity")
     working["전문기관"] = core.series_from_candidates(working, ["전문기관명", "전문기관", "agency"])
     working["과제명"] = core.series_from_candidates(working, ["project_name", "과제명"])
     working["추천도"] = core.series_from_candidates(working, ["recommendation", "추천도"])
@@ -324,7 +341,8 @@ def render_opportunity_detail(row: dict) -> None:
 
 
 def render_notice_table(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
-    filtered = add_period_alias(
+    filtered = add_viewer_id(
+        add_period_alias(
         filter_df(
             notice_df,
             prefix="notice",
@@ -333,6 +351,8 @@ def render_notice_table(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) -
             ministry_column="소관부처",
             recommendation_column="대표추천도",
         )
+        ),
+        kind="notice",
     )
 
     render_metric_row(
@@ -345,11 +365,12 @@ def render_notice_table(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) -
     )
 
     st.caption(f"전체 공고 {len(filtered)}건")
-    core.render_clickable_table(filtered, NOTICE_COLUMNS, page_key="notice", id_column="공고ID")
+    core.render_clickable_table(filtered, NOTICE_COLUMNS, page_key="notice", id_column="_viewer_id")
 
 
 def render_summary_table(summary_df: pd.DataFrame) -> None:
-    filtered = add_period_alias(
+    filtered = add_viewer_id(
+        add_period_alias(
         filter_df(
             summary_df,
             prefix="summary",
@@ -358,6 +379,8 @@ def render_summary_table(summary_df: pd.DataFrame) -> None:
             ministry_column="소관부처",
             recommendation_column="대표추천도",
         )
+        ),
+        kind="summary",
     )
 
     render_metric_row(
@@ -375,7 +398,7 @@ def render_summary_table(summary_df: pd.DataFrame) -> None:
     )
 
     st.caption(f"요약 공고 {len(filtered)}건")
-    core.render_clickable_table(filtered, SUMMARY_COLUMNS, page_key="summary", id_column="공고ID")
+    core.render_clickable_table(filtered, SUMMARY_COLUMNS, page_key="summary", id_column="_viewer_id")
 
 
 def render_opportunity_table(opportunity_df: pd.DataFrame) -> None:
@@ -400,7 +423,7 @@ def render_opportunity_table(opportunity_df: pd.DataFrame) -> None:
     )
 
     st.caption(f"Opportunity {len(filtered)}건")
-    core.render_clickable_table(filtered, OPPORTUNITY_COLUMNS, page_key="opportunity", id_column="document_id")
+    core.render_clickable_table(filtered, OPPORTUNITY_COLUMNS, page_key="opportunity", id_column="_viewer_id")
 
 
 def render_other_crawlers_tab() -> None:
@@ -422,19 +445,22 @@ def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFr
 
     if page == "notice":
         selected_id = core.get_query_param("id")
-        row = core.get_row_by_column_value(notice_df, "공고ID", selected_id)
+        working = add_viewer_id(add_period_alias(notice_df), kind="notice")
+        row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
         render_notice_detail(add_period_alias(pd.DataFrame([row])).iloc[0].to_dict() if row else {}, opportunity_df)
         return
 
     if page == "summary":
         selected_id = core.get_query_param("id")
-        row = core.get_row_by_column_value(summary_df, "공고ID", selected_id)
+        working = add_viewer_id(add_period_alias(summary_df), kind="summary")
+        row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
         render_summary_detail(add_period_alias(pd.DataFrame([row])).iloc[0].to_dict() if row else {}, opportunity_df)
         return
 
     if page == "opportunity":
         selected_id = core.get_query_param("id")
-        row = core.get_row_by_column_value(opportunity_df, "document_id", selected_id)
+        working = build_opportunity_table_df(opportunity_df)
+        row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
         if row:
             row = add_period_alias(pd.DataFrame([row])).iloc[0].to_dict()
         render_opportunity_detail(row or {})
