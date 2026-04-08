@@ -75,31 +75,28 @@ def filter_df(
 
     working = df.copy()
 
-    controls = st.columns([2.4, 1.2, 1.2, 1.2])
-    with controls[0]:
-        search_text = st.text_input("검색", "", key=f"{prefix}_search")
-    with controls[1]:
-        current_only = st.checkbox("현재 공고만", value=True, key=f"{prefix}_current")
-    with controls[2]:
-        if agency_column and agency_column in working.columns:
-            agencies = sorted(
-                x
-                for x in working[agency_column].fillna("").astype(str).str.strip().unique().tolist()
-                if clean(x)
-            )
-            agency_value = st.selectbox("전문기관", ["전체"] + agencies, key=f"{prefix}_agency")
-        else:
-            agency_value = "전체"
-    with controls[3]:
-        if recommendation_column and recommendation_column in working.columns:
-            recommendation_values = sorted(
-                x
-                for x in working[recommendation_column].fillna("").astype(str).str.strip().unique().tolist()
-                if clean(x)
-            )
-            recommendation_value = st.selectbox("추천도", ["전체"] + recommendation_values, key=f"{prefix}_recommendation")
-        else:
-            recommendation_value = "전체"
+    st.sidebar.markdown(f"## {prefix.title()} Filters")
+    search_text = st.sidebar.text_input("검색", "", key=f"{prefix}_search")
+    current_only = st.sidebar.checkbox("현재 공고만", value=True, key=f"{prefix}_current")
+    if agency_column and agency_column in working.columns:
+        agencies = sorted(
+            x
+            for x in working[agency_column].fillna("").astype(str).str.strip().unique().tolist()
+            if clean(x)
+        )
+        agency_value = st.sidebar.selectbox("전문기관", ["전체"] + agencies, key=f"{prefix}_agency")
+    else:
+        agency_value = "전체"
+
+    if recommendation_column and recommendation_column in working.columns:
+        recommendation_values = sorted(
+            x
+            for x in working[recommendation_column].fillna("").astype(str).str.strip().unique().tolist()
+            if clean(x)
+        )
+        recommendation_value = st.sidebar.selectbox("추천도", ["전체"] + recommendation_values, key=f"{prefix}_recommendation")
+    else:
+        recommendation_value = "전체"
 
     if ministry_column and ministry_column in working.columns:
         ministries = sorted(
@@ -107,7 +104,7 @@ def filter_df(
             for x in working[ministry_column].fillna("").astype(str).str.strip().unique().tolist()
             if clean(x)
         )
-        ministry_value = st.selectbox("소관부처", ["전체"] + ministries, key=f"{prefix}_ministry")
+        ministry_value = st.sidebar.selectbox("소관부처", ["전체"] + ministries, key=f"{prefix}_ministry")
     else:
         ministry_value = "전체"
 
@@ -494,6 +491,25 @@ def main() -> None:
         st.error(str(exc))
         st.stop()
 
+    current_source = core.get_query_param("source") or "iris"
+    source_index = 0 if current_source == "iris" else 1
+    selected_source = st.radio(
+        "Source",
+        ["IRIS", "Other Crawlers"],
+        horizontal=True,
+        index=source_index,
+    )
+    selected_source_key = "iris" if selected_source == "IRIS" else "other"
+
+    if selected_source_key != current_source:
+        st.query_params.clear()
+        st.query_params.update({
+            "source": selected_source_key,
+            "page": "notice",
+            "view": "table",
+        })
+        st.rerun()
+
     current_page = core.get_query_param("page") or "notice"
     current_view = core.get_query_param("view") or "table"
 
@@ -501,20 +517,18 @@ def main() -> None:
         render_detail_page(current_page, notice_df, summary_df, opportunity_df)
         return
 
-    iris_tab, other_tab = st.tabs(["IRIS", "Other Crawlers"])
-
-    with iris_tab:
-        st.caption("기본 진입은 Notice이며, Summary와 Opportunity는 탭으로 이동해 확인할 수 있습니다.")
-        notice_tab, summary_tab, opportunity_tab = st.tabs(["Notice", "Summary", "Opportunity"])
-        with notice_tab:
-            render_notice_table(notice_df, opportunity_df)
-        with summary_tab:
-            render_summary_table(summary_df)
-        with opportunity_tab:
-            render_opportunity_table(opportunity_df)
-
-    with other_tab:
+    if selected_source_key == "other":
         render_other_crawlers_tab()
+        return
+
+    st.caption("기본 진입은 Notice이며, Summary와 Opportunity는 탭으로 이동해 확인할 수 있습니다.")
+    notice_tab, summary_tab, opportunity_tab = st.tabs(["Notice", "Summary", "Opportunity"])
+    with notice_tab:
+        render_notice_table(notice_df, opportunity_df)
+    with summary_tab:
+        render_summary_table(summary_df)
+    with opportunity_tab:
+        render_opportunity_table(opportunity_df)
 
 
 if __name__ == "__main__":
