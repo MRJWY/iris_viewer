@@ -126,6 +126,90 @@ def filter_df(
     return working
 
 
+def filter_df_notice_scope(
+    df: pd.DataFrame,
+    *,
+    prefix: str,
+    search_columns: list[str],
+    agency_column: str = "",
+    ministry_column: str = "",
+    recommendation_column: str = "",
+    current_column: str = "is_current",
+    current_only_default: bool = True,
+    status_column: str = "",
+    status_scope_default: str = "전체",
+) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    working = df.copy()
+
+    st.sidebar.markdown(f"## {prefix.title()} Filters")
+    search_text = st.sidebar.text_input("검색", "", key=f"{prefix}_search")
+    current_only = st.sidebar.checkbox("현재 공고만 보기", value=current_only_default, key=f"{prefix}_current")
+
+    if status_column and status_column in working.columns:
+        status_scope = st.sidebar.radio(
+            "공고 상태 보기",
+            ["전체", "진행중", "예정", "마감"],
+            index=["전체", "진행중", "예정", "마감"].index(status_scope_default),
+            key=f"{prefix}_status_scope",
+            horizontal=True,
+        )
+    else:
+        status_scope = "전체"
+
+    if agency_column and agency_column in working.columns:
+        agencies = sorted(
+            x
+            for x in working[agency_column].fillna("").astype(str).str.strip().unique().tolist()
+            if clean(x)
+        )
+        agency_value = st.sidebar.selectbox("전문기관", ["전체"] + agencies, key=f"{prefix}_agency")
+    else:
+        agency_value = "전체"
+
+    if recommendation_column and recommendation_column in working.columns:
+        recommendation_values = sorted(
+            x
+            for x in working[recommendation_column].fillna("").astype(str).str.strip().unique().tolist()
+            if clean(x)
+        )
+        recommendation_value = st.sidebar.selectbox("추천도", ["전체"] + recommendation_values, key=f"{prefix}_recommendation")
+    else:
+        recommendation_value = "전체"
+
+    if ministry_column and ministry_column in working.columns:
+        ministries = sorted(
+            x
+            for x in working[ministry_column].fillna("").astype(str).str.strip().unique().tolist()
+            if clean(x)
+        )
+        ministry_value = st.sidebar.selectbox("소관부처", ["전체"] + ministries, key=f"{prefix}_ministry")
+    else:
+        ministry_value = "전체"
+
+    if current_only and current_column in working.columns:
+        working = working[working[current_column].fillna("").astype(str).str.strip().eq("Y")]
+
+    if status_column and status_column in working.columns and status_scope != "전체":
+        working = working[working[status_column].fillna("").astype(str).str.strip().eq(status_scope)]
+
+    if agency_column and agency_column in working.columns and agency_value != "전체":
+        working = working[working[agency_column].fillna("").astype(str).str.strip().eq(agency_value)]
+
+    if ministry_column and ministry_column in working.columns and ministry_value != "전체":
+        working = working[working[ministry_column].fillna("").astype(str).str.strip().eq(ministry_value)]
+
+    if recommendation_column and recommendation_column in working.columns and recommendation_value != "전체":
+        working = working[working[recommendation_column].fillna("").astype(str).str.strip().eq(recommendation_value)]
+
+    if search_text:
+        working = working[core.build_contains_mask(working, search_columns, search_text)]
+
+    return working
+
+
 def add_period_alias(df: pd.DataFrame) -> pd.DataFrame:
     working = df.copy()
     if "공고기간" not in working.columns:
@@ -365,6 +449,45 @@ def render_notice_table(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) -
     core.render_clickable_table(filtered, NOTICE_COLUMNS, page_key="notice", id_column="_viewer_id")
 
 
+def render_notice_table_by_status(
+    notice_df: pd.DataFrame,
+    *,
+    page_key: str,
+    title: str,
+    status_scope_default: str,
+    current_only_default: bool,
+) -> None:
+    st.subheader(title)
+    filtered = add_viewer_id(
+        add_period_alias(
+        filter_df_notice_scope(
+            notice_df,
+            prefix=page_key,
+            search_columns=["notice_title", "공고명", "ancm_no", "공고번호", "agency", "ministry", "notice_id", "공고ID"],
+            agency_column="agency",
+            ministry_column="ministry",
+            recommendation_column="대표추천도",
+            current_only_default=current_only_default,
+            status_column="공고상태",
+            status_scope_default=status_scope_default,
+        )
+        ),
+        kind="notice",
+    )
+
+    render_metric_row(
+        [
+            ("공고 수", str(len(filtered))),
+            ("현재 공고", str(int((filtered["is_current"] == "Y").sum()) if "is_current" in filtered.columns else 0)),
+            ("추천 공고", str(int((filtered["대표추천도"] == "추천").sum()) if "대표추천도" in filtered.columns else 0)),
+            ("전문기관 수", str(filtered["agency"].nunique() if "agency" in filtered.columns else 0)),
+        ]
+    )
+
+    st.caption(f"전체 공고 {len(filtered)}건")
+    core.render_clickable_table(filtered, NOTICE_COLUMNS, page_key=page_key, id_column="_viewer_id")
+
+
 def render_summary_table(summary_df: pd.DataFrame) -> None:
     filtered = add_viewer_id(
         add_period_alias(
@@ -438,7 +561,7 @@ def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFr
         if st.button("Opportunity 목록", use_container_width=True):
             core.switch_to_table("opportunity")
 
-    if page == "notice":
+    if page in {"notice", "notice_scheduled", "notice_closed"}:
         selected_id = core.get_query_param("id")
         working = add_viewer_id(add_period_alias(notice_df), kind="notice")
         row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
@@ -522,9 +645,31 @@ def main() -> None:
         return
 
     st.caption("기본 진입은 Notice이며, Summary와 Opportunity는 탭으로 이동해 확인할 수 있습니다.")
-    notice_tab, summary_tab, opportunity_tab = st.tabs(["Notice", "Summary", "Opportunity"])
+    notice_tab, scheduled_tab, closed_tab, summary_tab, opportunity_tab = st.tabs(["진행 공고", "예정 공고", "마감 공고", "Summary", "Opportunity"])
     with notice_tab:
-        render_notice_table(notice_df, opportunity_df)
+        render_notice_table_by_status(
+            notice_df,
+            page_key="notice",
+            title="진행 공고",
+            status_scope_default="진행중",
+            current_only_default=True,
+        )
+    with scheduled_tab:
+        render_notice_table_by_status(
+            notice_df,
+            page_key="notice_scheduled",
+            title="예정 공고",
+            status_scope_default="예정",
+            current_only_default=True,
+        )
+    with closed_tab:
+        render_notice_table_by_status(
+            notice_df,
+            page_key="notice_closed",
+            title="마감 공고",
+            status_scope_default="마감",
+            current_only_default=False,
+        )
     with summary_tab:
         render_summary_table(summary_df)
     with opportunity_tab:
