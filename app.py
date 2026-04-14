@@ -151,8 +151,8 @@ def filter_df_notice_scope(
     if status_column and status_column in working.columns:
         status_scope = st.sidebar.radio(
             "공고 상태 보기",
-            ["전체", "진행중", "예정", "마감"],
-            index=["전체", "진행중", "예정", "마감"].index(status_scope_default),
+            ["전체", "접수중", "예정", "마감"],
+            index=["전체", "접수중", "예정", "마감"].index(status_scope_default),
             key=f"{prefix}_status_scope",
             horizontal=True,
         )
@@ -651,7 +651,7 @@ def main() -> None:
             notice_df,
             page_key="notice",
             title="진행 공고",
-            status_scope_default="진행중",
+            status_scope_default="접수중",
             current_only_default=True,
         )
     with scheduled_tab:
