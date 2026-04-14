@@ -22,6 +22,101 @@ def clean(value) -> str:
     return str(value or "").strip()
 
 
+def normalize_display_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return clean(value)
+    if isinstance(value, (list, tuple, set)):
+        items = [clean(item) for item in value if clean(item)]
+        return " | ".join(items)
+    return clean(value)
+
+
+def text_printable_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+
+    printable = 0
+    for ch in text:
+        code = ord(ch)
+        if ch in "\n\r\t":
+            printable += 1
+        elif 32 <= code <= 126:
+            printable += 1
+        elif 0xAC00 <= code <= 0xD7A3:
+            printable += 1
+        elif 0x3131 <= code <= 0x318E:
+            printable += 1
+    return printable / max(len(text), 1)
+
+
+def looks_garbled_text(value: object) -> bool:
+    text = normalize_display_value(value)
+    if not text:
+        return False
+
+    markers = [
+        "root entry",
+        "fileheader",
+        "hwpsummaryinformation",
+        "docinfo",
+        "bodytext",
+        "\x00",
+    ]
+    lowered = text.lower()
+    if any(marker in lowered for marker in markers):
+        return True
+
+    control_count = sum(1 for ch in text if ord(ch) < 32 and ch not in "\n\r\t")
+    if control_count >= 5:
+        return True
+
+    replacement_count = text.count("\ufffd")
+    if replacement_count >= 10:
+        return True
+    if len(text) >= 50 and replacement_count / max(len(text), 1) > 0.02:
+        return True
+
+    if len(text) >= 120 and text_printable_ratio(text) < 0.7:
+        return True
+
+    return False
+
+
+def sanitize_display_text(label: str, value: object) -> str:
+    text = normalize_display_value(value)
+    if not text:
+        return ""
+
+    if looks_garbled_text(text):
+        normalized_label = normalize_display_value(label)
+        lowered = normalized_label.lower()
+        if any(
+            keyword in normalized_label
+            for keyword in [
+                "\ud14d\uc2a4\ud2b8",
+                "\ubbf8\ub9ac\ubcf4\uae30",
+                "\uadfc\uac70",
+                "\ucda9\ub3cc",
+            ]
+        ):
+            return "\uc6d0\ubb38 \ucd94\ucd9c \ud488\uc9c8\uc774 \ub0ae\uc544 \ud45c\uc2dc\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4."
+        if any(keyword in lowered for keyword in ["text", "preview", "evidence", "conflict", "raw"]):
+            return "Hidden due to low-quality extracted text."
+        return ""
+
+    return text
+
+
+def sanitize_display_title(value: object, fallback: str = "\uc0c1\uc138 \uc815\ubcf4") -> str:
+    text = sanitize_display_text("title", value)
+    return text or fallback
+
+
 def series_from_candidates(df: pd.DataFrame, candidates: list[str]) -> pd.Series:
     if df.empty:
         return pd.Series(dtype="object")
@@ -277,6 +372,16 @@ def enrich_opportunity_with_notice_meta(opportunity_df: pd.DataFrame, notice_df:
             if notice_candidate in merged.columns:
                 candidate_columns.append(notice_candidate)
         merged[target] = series_from_candidates(merged, candidate_columns)
+
+    merged["notice_title"] = series_from_candidates(merged, ["notice_title", "공고명"])
+    merged["agency"] = series_from_candidates(merged, ["agency", "전문기관", "전문기관명"])
+    merged["ministry"] = series_from_candidates(merged, ["ministry", "주관부처"])
+    merged["ancm_de"] = series_from_candidates(merged, ["ancm_de", "공고일자"])
+    merged["ancm_no"] = series_from_candidates(merged, ["ancm_no", "공고번호"])
+    merged["rcve_status"] = series_from_candidates(merged, ["rcve_status", "공고상태"])
+    merged["period"] = series_from_candidates(merged, ["period", "접수기간"])
+    merged["detail_link"] = series_from_candidates(merged, ["detail_link", "상세링크"])
+    merged["review_status"] = series_from_candidates(merged, ["review_status", "검토여부", "검토완료여부"])
 
     return merged
 
@@ -569,16 +674,17 @@ def inject_page_styles() -> None:
 def render_detail_header(title: str, kicker: str, chips: list[tuple[str, str]]) -> None:
     chip_html = []
     for text, kind in chips:
-        if not clean(text):
+        safe_text = sanitize_display_text("chip", text)
+        if not clean(safe_text):
             continue
         css_class = "detail-chip" if kind == "accent" else "detail-chip neutral"
-        chip_html.append(f'<span class="{css_class}">{escape(text)}</span>')
+        chip_html.append(f'<span class="{css_class}">{escape(safe_text)}</span>')
 
     st.markdown(
         f"""
         <div class="detail-hero">
           <div class="detail-kicker">{escape(kicker)}</div>
-          <div class="detail-title">{escape(title)}</div>
+          <div class="detail-title">{escape(sanitize_display_title(title))}</div>
           <div class="detail-meta-row">{''.join(chip_html)}</div>
         </div>
         """,
@@ -589,7 +695,7 @@ def render_detail_header(title: str, kicker: str, chips: list[tuple[str, str]]) 
 def render_detail_card(title: str, fields: list[tuple[str, str]]) -> None:
     items = []
     for label, value in fields:
-        text = clean(value)
+        text = sanitize_display_text(label, value)
         if not text:
             continue
         items.append(
@@ -628,7 +734,7 @@ def switch_to_table(page_key: str) -> None:
 
 
 def compact_table_value(value: str, max_chars: int = 80) -> str:
-    text = clean(value)
+    text = sanitize_display_text("", value)
     if len(text) <= max_chars:
         return text
     return f"{text[:max_chars].rstrip()}..."
@@ -659,7 +765,7 @@ def render_clickable_table(df: pd.DataFrame, preferred_columns: list[str], page_
         for column in display_columns:
             value = compact_table_value(row.get(column), 100 if column in {"공고명", "project_name"} else 50)
             cells.append(
-                f'<td><a href="{escape(href, quote=True)}" title="{escape(clean(row.get(column)))}" target="_self">{escape(value)}</a></td>'
+                f'<td><a href="{escape(href, quote=True)}" title="{escape(sanitize_display_text(column, row.get(column)))}" target="_self">{escape(value)}</a></td>'
             )
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
 
