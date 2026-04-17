@@ -175,8 +175,8 @@ def render_notice_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
     top_related = related.iloc[0].to_dict() if not related.empty else {}
     current_source = core.get_query_param("source") or "iris"
     is_tipa = current_source == "tipa"
-    detail_kicker = "TIPA / Notice" if is_tipa else "IRIS / Notice"
-    detail_button_label = "TIPA 상세 바로가기" if is_tipa else "IRIS 상세 바로가기"
+    detail_kicker = "중소기업벤처부 / Notice" if is_tipa else "IRIS / Notice"
+    detail_button_label = "중소기업벤처부 상세 바로가기" if is_tipa else "IRIS 상세 바로가기"
 
     core.render_detail_header(
         title=clean(row.get("공고명")),
@@ -597,12 +597,12 @@ def render_other_crawlers_tab() -> None:
 
 
 def render_tipa_tab() -> None:
-    st.subheader("TIPA")
+    st.subheader("중소기업벤처부")
     current_df, past_df = load_mss_notice_data()
     current_page = core.get_query_param("page") or "mss_current"
     page_options = {
-        "mss_current": "TIPA 진행/예정",
-        "mss_past": "TIPA 마감",
+        "mss_current": "중소기업벤처부 진행/예정",
+        "mss_past": "중소기업벤처부 마감",
     }
     if current_page not in page_options:
         current_page = "mss_current"
@@ -619,9 +619,9 @@ def render_tipa_tab() -> None:
         st.rerun()
 
     if current_page == "mss_past":
-        render_mss_table(past_df, prefix="mss_past", title="TIPA 마감")
+        render_mss_table(past_df, prefix="mss_past", title="중소기업벤처부 마감")
     else:
-        render_mss_table(current_df, prefix="mss_current", title="TIPA 진행/예정")
+        render_mss_table(current_df, prefix="mss_current", title="중소기업벤처부 진행/예정")
 
 
 def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
@@ -630,7 +630,7 @@ def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFr
         source_df = past_df if page == "mss_past" else current_df
         selected_id = core.get_query_param("id")
         row = core.get_row_by_column_value(source_df, "공고ID", selected_id)
-        back_label = "TIPA 마감 목록" if page == "mss_past" else "TIPA 진행/예정 목록"
+        back_label = "중소기업벤처부 마감 목록" if page == "mss_past" else "중소기업벤처부 진행/예정 목록"
         if st.button(back_label, use_container_width=True):
             core.switch_to_table(page)
         render_notice_detail(row or {}, pd.DataFrame())
@@ -705,13 +705,13 @@ def main() -> None:
     source_index = source_index_map.get(current_source, 0)
     selected_source = st.radio(
         "Source",
-        ["IRIS", "TIPA", "Other Crawlers"],
+        ["IRIS", "중소기업벤처부", "Other Crawlers"],
         horizontal=True,
         index=source_index,
     )
     if selected_source == "IRIS":
         selected_source_key = "iris"
-    elif selected_source == "TIPA":
+    elif selected_source == "중소기업벤처부":
         selected_source_key = "tipa"
     else:
         selected_source_key = "other_crawlers"
@@ -733,8 +733,8 @@ def main() -> None:
         return
 
     if selected_source_key == "tipa":
-        st.subheader("TIPA")
-        st.info("TIPA 전용 화면은 다음 단계에서 연결할 예정입니다.")
+        st.subheader("중소기업벤처부")
+        st.info("중소기업벤처부 전용 화면은 다음 단계에서 연결할 예정입니다.")
         return
 
     if selected_source_key == "other_crawlers":
@@ -769,13 +769,13 @@ def main() -> None:
     source_index = source_index_map.get(current_source, 0)
     selected_source = st.radio(
         "Source",
-        ["IRIS", "TIPA", "Other Crawlers"],
+        ["IRIS", "중소기업벤처부", "Other Crawlers"],
         horizontal=True,
         index=source_index,
     )
     if selected_source == "IRIS":
         selected_source_key = "iris"
-    elif selected_source == "TIPA":
+    elif selected_source == "중소기업벤처부":
         selected_source_key = "tipa"
     else:
         selected_source_key = "other_crawlers"
