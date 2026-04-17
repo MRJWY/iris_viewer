@@ -53,8 +53,6 @@ MSS_COLUMNS = [
     "공고명",
     "공고번호",
     "상태",
-    "조회",
-    "상세링크",
 ]
 
 
@@ -175,10 +173,14 @@ def build_opportunity_table_df(df: pd.DataFrame) -> pd.DataFrame:
 def render_notice_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
     related = core.find_related_opportunities_for_notice(row, opportunity_df)
     top_related = related.iloc[0].to_dict() if not related.empty else {}
+    current_source = core.get_query_param("source") or "iris"
+    is_tipa = current_source == "tipa"
+    detail_kicker = "TIPA / Notice" if is_tipa else "IRIS / Notice"
+    detail_button_label = "TIPA 상세 바로가기" if is_tipa else "IRIS 상세 바로가기"
 
     core.render_detail_header(
         title=clean(row.get("공고명")),
-        kicker="IRIS / Notice",
+        kicker=detail_kicker,
         chips=[
             (clean(row.get("대표추천도")), "accent"),
             (clean(row.get("전문기관")), "neutral"),
@@ -222,7 +224,7 @@ def render_notice_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
 
     detail_link = clean(row.get("상세링크"))
     if detail_link:
-        st.link_button("IRIS 상세 바로가기", detail_link, use_container_width=True)
+        st.link_button(detail_button_label, detail_link, use_container_width=True)
 
     st.markdown("### Related Opportunity")
     if related.empty:
