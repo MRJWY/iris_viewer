@@ -637,6 +637,13 @@ def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFr
         return
 
     if page in {"notice", "notice_scheduled", "notice_closed"}:
+        notice_back_labels = {
+            "notice": "진행 공고 테이블로 돌아가기",
+            "notice_scheduled": "예정 공고 테이블로 돌아가기",
+            "notice_closed": "마감 공고 테이블로 돌아가기",
+        }
+        if st.button(notice_back_labels.get(page, "테이블로 돌아가기"), use_container_width=True):
+            core.switch_to_table(page)
         selected_id = core.get_query_param("id")
         working = add_viewer_id(add_period_alias(notice_df), kind="notice")
         row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
@@ -655,6 +662,8 @@ def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFr
             core.switch_to_table("opportunity")
 
     if page == "summary":
+        if st.button("Summary 테이블로 돌아가기", key="summary_back_to_table", use_container_width=True):
+            core.switch_to_table("summary")
         selected_id = core.get_query_param("id")
         working = add_viewer_id(add_period_alias(summary_df), kind="summary")
         row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
@@ -662,6 +671,8 @@ def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFr
         return
 
     if page == "opportunity":
+        if st.button("Opportunity 테이블로 돌아가기", key="opportunity_back_to_table", use_container_width=True):
+            core.switch_to_table("opportunity")
         selected_id = core.get_query_param("id")
         working = build_opportunity_table_df(opportunity_df)
         row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
