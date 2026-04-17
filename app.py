@@ -517,17 +517,22 @@ def render_mss_table(df: pd.DataFrame, *, prefix: str, title: str) -> None:
 
 def render_other_crawlers_tab() -> None:
     st.subheader("Other Crawlers")
+    st.info("다른 크롤러 소스는 여기에 확장할 수 있습니다.")
+
+
+def render_tipa_tab() -> None:
+    st.subheader("TIPA")
     current_df, past_df = load_mss_notice_data()
     current_page = core.get_query_param("page") or "mss_current"
     page_options = {
-        "mss_current": "MSS 진행/예정",
-        "mss_past": "MSS 마감",
+        "mss_current": "TIPA 진행/예정",
+        "mss_past": "TIPA 마감",
     }
     if current_page not in page_options:
         current_page = "mss_current"
 
     selected_label = st.radio(
-        "MSS View",
+        "TIPA View",
         list(page_options.values()),
         horizontal=True,
         index=list(page_options.keys()).index(current_page),
@@ -538,9 +543,9 @@ def render_other_crawlers_tab() -> None:
         st.rerun()
 
     if current_page == "mss_past":
-        render_mss_table(past_df, prefix="mss_past", title="MSS 마감")
+        render_mss_table(past_df, prefix="mss_past", title="TIPA 마감")
     else:
-        render_mss_table(current_df, prefix="mss_current", title="MSS 진행/예정")
+        render_mss_table(current_df, prefix="mss_current", title="TIPA 진행/예정")
 
 
 def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
@@ -689,7 +694,7 @@ def main() -> None:
         selected_source_key = "other_crawlers"
 
     if selected_source_key != current_source:
-        default_page = "mss_current" if selected_source_key == "other_crawlers" else "notice"
+        default_page = "mss_current" if selected_source_key == "tipa" else "notice"
         st.query_params.clear()
         st.query_params.update({
             "source": selected_source_key,
@@ -706,8 +711,7 @@ def main() -> None:
         return
 
     if selected_source_key == "tipa":
-        st.subheader("TIPA")
-        st.info("TIPA 전용 화면은 다음 단계에서 연결할 예정입니다.")
+        render_tipa_tab()
         return
 
     if selected_source_key == "other_crawlers":
