@@ -174,9 +174,9 @@ def render_notice_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
     related = core.find_related_opportunities_for_notice(row, opportunity_df)
     top_related = related.iloc[0].to_dict() if not related.empty else {}
     current_source = core.get_query_param("source") or "iris"
-    is_tipa = current_source == "tipa"
-    detail_kicker = "중소기업벤처부 / Notice" if is_tipa else "IRIS / Notice"
-    detail_button_label = "중소기업벤처부 상세 바로가기" if is_tipa else "IRIS 상세 바로가기"
+    is_mss = current_source == "tipa"
+    detail_kicker = "중소기업벤처부 / Notice" if is_mss else "IRIS / Notice"
+    detail_button_label = "중소기업벤처부 상세 바로가기" if is_mss else "IRIS 상세 바로가기"
 
     core.render_detail_header(
         title=clean(row.get("공고명")),
@@ -596,7 +596,7 @@ def render_other_crawlers_tab() -> None:
     st.info("다른 크롤러 소스는 여기에 확장할 수 있습니다.")
 
 
-def render_tipa_tab() -> None:
+def render_mss_tab() -> None:
     st.subheader("중소기업벤처부")
     current_df, past_df = load_mss_notice_data()
     current_page = core.get_query_param("page") or "mss_current"
@@ -809,7 +809,7 @@ def main() -> None:
         return
 
     if selected_source_key == "tipa":
-        render_tipa_tab()
+        render_mss_tab()
         return
 
     if selected_source_key == "other_crawlers":
