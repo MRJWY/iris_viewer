@@ -379,6 +379,70 @@ def render_notice_table(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) -
     core.render_clickable_table(filtered, NOTICE_COLUMNS, page_key="notice", id_column="_viewer_id")
 
 
+def render_notice_table_with_scope(
+    notice_df: pd.DataFrame,
+    opportunity_df: pd.DataFrame,
+    *,
+    page_key: str,
+    title: str,
+    status_scope: str,
+    current_only_default: bool,
+) -> None:
+    working = core.merge_notice_with_analysis(notice_df, opportunity_df).copy()
+    st.subheader(title)
+
+    st.sidebar.markdown("## Notice Filters")
+    search_text = st.sidebar.text_input("검색", "", key=f"{page_key}_search")
+    current_only = st.sidebar.checkbox("현재 공고만", value=current_only_default, key=f"{page_key}_current")
+
+    if current_only and "is_current" in working.columns:
+        working = working[working["is_current"].fillna("").astype(str).str.strip().eq("Y")]
+
+    if "공고상태" in working.columns and status_scope:
+        working = working[working["공고상태"].fillna("").astype(str).str.strip().eq(status_scope)]
+
+    agencies = sorted(
+        value
+        for value in core.series_from_candidates(working, ["전문기관"]).fillna("").astype(str).str.strip().unique().tolist()
+        if clean(value)
+    )
+    agency_value = st.sidebar.selectbox("전문기관", ["전체"] + agencies, key=f"{page_key}_agency")
+    if agency_value != "전체" and "전문기관" in working.columns:
+        working = working[working["전문기관"].fillna("").astype(str).str.strip().eq(agency_value)]
+
+    ministries = sorted(
+        value
+        for value in core.series_from_candidates(working, ["소관부처"]).fillna("").astype(str).str.strip().unique().tolist()
+        if clean(value)
+    )
+    ministry_value = st.sidebar.selectbox("소관부처", ["전체"] + ministries, key=f"{page_key}_ministry")
+    if ministry_value != "전체" and "소관부처" in working.columns:
+        working = working[working["소관부처"].fillna("").astype(str).str.strip().eq(ministry_value)]
+
+    if search_text:
+        working = working[
+            core.build_contains_mask(
+                working,
+                ["공고명", "공고번호", "전문기관", "소관부처", "공고ID", "대표과제명"],
+                search_text,
+            )
+        ]
+
+    filtered = add_viewer_id(add_period_alias(working), kind="notice")
+
+    render_metric_row(
+        [
+            ("공고 수", str(len(filtered))),
+            ("현재 공고", str(int((filtered["is_current"] == "Y").sum()) if "is_current" in filtered.columns else 0)),
+            ("전문기관 수", str(filtered["전문기관"].nunique() if "전문기관" in filtered.columns else 0)),
+            ("추천 공고", str(int((filtered["대표추천도"] == "추천").sum()) if "대표추천도" in filtered.columns else 0)),
+        ]
+    )
+
+    st.caption(f"{title} {len(filtered)}건")
+    core.render_clickable_table(filtered, NOTICE_COLUMNS, page_key=page_key, id_column="_viewer_id")
+
+
 def render_summary_table(summary_df: pd.DataFrame) -> None:
     filtered = add_viewer_id(
         add_period_alias(
@@ -572,6 +636,13 @@ def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFr
         render_notice_detail(row or {}, pd.DataFrame())
         return
 
+    if page in {"notice", "notice_scheduled", "notice_closed"}:
+        selected_id = core.get_query_param("id")
+        working = add_viewer_id(add_period_alias(core.merge_notice_with_analysis(notice_df, opportunity_df)), kind="notice")
+        row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
+        render_notice_detail(add_period_alias(pd.DataFrame([row])).iloc[0].to_dict() if row else {}, opportunity_df)
+        return
+
     nav1, nav2, nav3 = st.columns(3)
     with nav1:
         if st.button("Notice 목록", use_container_width=True):
@@ -582,13 +653,6 @@ def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFr
     with nav3:
         if st.button("Opportunity 목록", use_container_width=True):
             core.switch_to_table("opportunity")
-
-    if page == "notice":
-        selected_id = core.get_query_param("id")
-        working = add_viewer_id(add_period_alias(notice_df), kind="notice")
-        row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
-        render_notice_detail(add_period_alias(pd.DataFrame([row])).iloc[0].to_dict() if row else {}, opportunity_df)
-        return
 
     if page == "summary":
         selected_id = core.get_query_param("id")
@@ -743,7 +807,9 @@ def main() -> None:
 
     st.caption("선택한 화면 하나만 렌더링해서 사이드바를 app과 비슷하게 유지합니다.")
     page_options = {
-        "notice": "Notice",
+        "notice": "진행 공고",
+        "notice_scheduled": "예정 공고",
+        "notice_closed": "마감 공고",
         "summary": "Summary",
         "opportunity": "Opportunity",
     }
@@ -761,12 +827,37 @@ def main() -> None:
         st.query_params.update({"source": "iris", "page": selected_page, "view": "table"})
         st.rerun()
 
-    if current_page == "summary":
+    if current_page == "notice_scheduled":
+        render_notice_table_with_scope(
+            notice_df,
+            opportunity_df,
+            page_key="notice_scheduled",
+            title="예정 공고",
+            status_scope="예정",
+            current_only_default=True,
+        )
+    elif current_page == "notice_closed":
+        render_notice_table_with_scope(
+            notice_df,
+            opportunity_df,
+            page_key="notice_closed",
+            title="마감 공고",
+            status_scope="마감",
+            current_only_default=False,
+        )
+    elif current_page == "summary":
         render_summary_table(summary_df)
     elif current_page == "opportunity":
         render_opportunity_table(opportunity_df)
     else:
-        render_notice_table(notice_df, opportunity_df)
+        render_notice_table_with_scope(
+            notice_df,
+            opportunity_df,
+            page_key="notice",
+            title="진행 공고",
+            status_scope="접수중",
+            current_only_default=True,
+        )
 
 
 if __name__ == "__main__":
