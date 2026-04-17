@@ -532,14 +532,14 @@ def render_tipa_tab() -> None:
         current_page = "mss_current"
 
     selected_label = st.radio(
-        "TIPA View",
+        "Page",
         list(page_options.values()),
         horizontal=True,
         index=list(page_options.keys()).index(current_page),
     )
     selected_page = next(page for page, label in page_options.items() if label == selected_label)
     if selected_page != current_page:
-        st.query_params.update({"source": "other_crawlers", "page": selected_page, "view": "table"})
+        st.query_params.update({"source": "tipa", "page": selected_page, "view": "table"})
         st.rerun()
 
     if current_page == "mss_past":
