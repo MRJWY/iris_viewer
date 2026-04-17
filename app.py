@@ -451,6 +451,7 @@ def normalize_mss_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     working["status"] = core.series_from_candidates(working, ["status", "상태", "공고상태"])
     working["views"] = core.series_from_candidates(working, ["views", "조회"])
     working["detail_link"] = core.series_from_candidates(working, ["detail_link", "상세링크"])
+    working["notice_id"] = core.series_from_candidates(working, ["notice_id", "공고ID"])
     working["_sort_date"] = core.parse_date_column(working["registered_at"])
     working["등록일"] = working["registered_at"]
     working["신청기간"] = working["period"]
@@ -460,6 +461,7 @@ def normalize_mss_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     working["상태"] = working["status"]
     working["조회"] = working["views"]
     working["상세링크"] = working["detail_link"]
+    working["공고ID"] = working["notice_id"]
     return working.sort_values(by=["_sort_date", "공고번호", "공고명"], ascending=[False, False, True], na_position="last")
 
 
@@ -475,6 +477,18 @@ def render_mss_table(df: pd.DataFrame, *, prefix: str, title: str) -> None:
     st.markdown(f"### {title}")
     if df.empty:
         st.info("표시할 MSS 공고가 없습니다.")
+        return
+
+    current_view, selected_notice_id = core.get_route_state(prefix)
+    if current_view == "detail":
+        selected_row = core.get_row_by_column_value(df, "공고ID", selected_notice_id)
+        back_col, info_col = st.columns([1, 5])
+        with back_col:
+            if st.button("목록으로 돌아가기", key=f"{prefix}_back_to_table", use_container_width=True):
+                core.switch_to_table(prefix)
+        with info_col:
+            st.caption("브라우저 뒤로가기를 눌러도 목록으로 돌아갈 수 있습니다.")
+        render_notice_detail(selected_row or {}, pd.DataFrame())
         return
 
     filtered = df.copy()
@@ -507,12 +521,8 @@ def render_mss_table(df: pd.DataFrame, *, prefix: str, title: str) -> None:
             ("담당부서 수", str(filtered["담당부서"].nunique() if "담당부서" in filtered.columns else 0)),
         ]
     )
-    st.dataframe(
-        filtered[[column for column in MSS_COLUMNS if column in filtered.columns]],
-        use_container_width=True,
-        hide_index=True,
-        column_config={"상세링크": st.column_config.LinkColumn("상세링크", display_text="바로가기")},
-    )
+    st.caption(f"행을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    core.render_clickable_table(filtered, MSS_COLUMNS, page_key=prefix, id_column="공고ID")
 
 
 def render_other_crawlers_tab() -> None:
@@ -549,6 +559,17 @@ def render_tipa_tab() -> None:
 
 
 def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
+    if page in {"mss_current", "mss_past"}:
+        current_df, past_df = load_mss_notice_data()
+        source_df = past_df if page == "mss_past" else current_df
+        selected_id = core.get_query_param("id")
+        row = core.get_row_by_column_value(source_df, "공고ID", selected_id)
+        back_label = "TIPA 마감 목록" if page == "mss_past" else "TIPA 진행/예정 목록"
+        if st.button(back_label, use_container_width=True):
+            core.switch_to_table(page)
+        render_notice_detail(row or {}, pd.DataFrame())
+        return
+
     nav1, nav2, nav3 = st.columns(3)
     with nav1:
         if st.button("Notice 목록", use_container_width=True):
