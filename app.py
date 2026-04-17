@@ -388,7 +388,7 @@ def render_notice_table_with_scope(
     status_scope: str,
     current_only_default: bool,
 ) -> None:
-    working = core.merge_notice_with_analysis(notice_df, opportunity_df).copy()
+    working = notice_df.copy()
     st.subheader(title)
 
     st.sidebar.markdown("## Notice Filters")
@@ -638,7 +638,7 @@ def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFr
 
     if page in {"notice", "notice_scheduled", "notice_closed"}:
         selected_id = core.get_query_param("id")
-        working = add_viewer_id(add_period_alias(core.merge_notice_with_analysis(notice_df, opportunity_df)), kind="notice")
+        working = add_viewer_id(add_period_alias(notice_df), kind="notice")
         row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
         render_notice_detail(add_period_alias(pd.DataFrame([row])).iloc[0].to_dict() if row else {}, opportunity_df)
         return
