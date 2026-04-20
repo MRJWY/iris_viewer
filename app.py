@@ -55,6 +55,15 @@ MSS_COLUMNS = [
     "상태",
 ]
 
+NIPA_COLUMNS = [
+    "등록일",
+    "신청기간",
+    "사업명",
+    "공고명",
+    "공고번호",
+    "상태",
+]
+
 
 def first_non_empty(row: dict, *keys: str) -> str:
     for key in keys:
@@ -175,15 +184,23 @@ def render_notice_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
     top_related = related.iloc[0].to_dict() if not related.empty else {}
     current_source = core.get_query_param("source") or "iris"
     is_mss = current_source == "tipa"
-    detail_kicker = "중소기업벤처부 / Notice" if is_mss else "IRIS / Notice"
-    detail_button_label = "중소기업벤처부 상세 바로가기" if is_mss else "IRIS 상세 바로가기"
+    is_nipa = current_source == "nipa"
+    if is_mss:
+        detail_kicker = "중소기업벤처부 / Notice"
+        detail_button_label = "중소기업벤처부 상세 바로가기"
+    elif is_nipa:
+        detail_kicker = "NIPA / Notice"
+        detail_button_label = "NIPA 상세 바로가기"
+    else:
+        detail_kicker = "IRIS / Notice"
+        detail_button_label = "IRIS 상세 바로가기"
 
     core.render_detail_header(
         title=clean(row.get("공고명")),
         kicker=detail_kicker,
         chips=[
             (clean(row.get("대표추천도")), "accent"),
-            (clean(row.get("전문기관")), "neutral"),
+            (first_non_empty(row, "전문기관", "담당부서"), "neutral"),
             (clean(row.get("공고상태")), "neutral"),
         ],
     )
@@ -195,9 +212,10 @@ def render_notice_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
             [
                 ("공고명", row.get("공고명")),
                 ("공고번호", row.get("공고번호")),
+                ("사업명", row.get("사업명")),
                 ("공고일자", row.get("공고일자")),
-                ("공고기간", first_non_empty(row, "공고기간", "접수기간")),
-                ("전문기관", row.get("전문기관")),
+                ("공고기간", first_non_empty(row, "공고기간", "접수기간", "신청기간")),
+                ("전문기관", first_non_empty(row, "전문기관", "담당부서")),
                 ("소관부처", row.get("소관부처")),
             ],
         )
@@ -499,10 +517,6 @@ def render_opportunity_table(opportunity_df: pd.DataFrame) -> None:
     core.render_clickable_table(filtered, OPPORTUNITY_COLUMNS, page_key="opportunity", id_column="_viewer_id")
 
 
-def render_other_crawlers_tab() -> None:
-    st.subheader("Other Crawlers")
-    st.info("다른 크롤러 소스는 여기로 확장할 수 있습니다.")
-
 
 def normalize_mss_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -531,6 +545,40 @@ def normalize_mss_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     return working.sort_values(by=["_sort_date", "공고번호", "공고명"], ascending=[False, False, True], na_position="last")
 
 
+def normalize_nipa_notice_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    working = df.copy()
+    working["registered_at"] = core.series_from_candidates(working, ["registered_at", "ancm_de", "등록일"])
+    working["period"] = core.series_from_candidates(working, ["period", "신청기간"])
+    working["business_name"] = core.series_from_candidates(working, ["business_name", "project_name", "사업명"])
+    working["agency"] = core.series_from_candidates(working, ["agency", "department", "담당부서", "전문기관"])
+    working["notice_title"] = core.series_from_candidates(working, ["notice_title", "title", "공고명"])
+    working["notice_no"] = core.series_from_candidates(working, ["notice_no", "ancm_no", "공고번호", "row_number"])
+    working["status"] = core.series_from_candidates(working, ["status", "상태", "공고상태"])
+    working["detail_link"] = core.series_from_candidates(working, ["detail_link", "상세링크"])
+    working["notice_id"] = core.series_from_candidates(working, ["notice_id", "공고ID"])
+    working["d_day"] = core.series_from_candidates(working, ["d_day", "남은신청기간"])
+    working["author"] = core.series_from_candidates(working, ["author", "작성자"])
+    working["_sort_date"] = core.parse_date_column(working["registered_at"])
+
+    working["등록일"] = working["registered_at"]
+    working["신청기간"] = working["period"]
+    working["사업명"] = working["business_name"]
+    working["담당부서"] = working["agency"]
+    working["전문기관"] = working["agency"]
+    working["공고명"] = working["notice_title"]
+    working["공고번호"] = working["notice_no"]
+    working["상태"] = working["status"]
+    working["공고상태"] = working["status"]
+    working["상세링크"] = working["detail_link"]
+    working["공고ID"] = working["notice_id"]
+    working["작성자"] = working["author"]
+    working["남은신청기간"] = working["d_day"]
+    return working.sort_values(by=["_sort_date", "공고번호", "공고명"], ascending=[False, False, True], na_position="last")
+
+
 def load_mss_notice_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     current_sheet = core.get_env("MSS_CURRENT_SHEET", "MSS_CURRENT")
     past_sheet = core.get_env("MSS_PAST_SHEET", "MSS_PAST")
@@ -539,10 +587,25 @@ def load_mss_notice_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     return current_df, past_df
 
 
-def render_mss_table(df: pd.DataFrame, *, prefix: str, title: str) -> None:
+def load_nipa_notice_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+    current_sheet = core.get_env("NIPA_CURRENT_SHEET", "NIPA_CURRENT")
+    past_sheet = core.get_env("NIPA_PAST_SHEET", "NIPA_PAST")
+    current_df = normalize_nipa_notice_df(core.load_optional_sheet_as_dataframe(current_sheet))
+    past_df = normalize_nipa_notice_df(core.load_optional_sheet_as_dataframe(past_sheet))
+    return current_df, past_df
+
+
+def render_source_notice_table(
+    df: pd.DataFrame,
+    *,
+    prefix: str,
+    title: str,
+    source_label: str,
+    display_columns: list[str],
+) -> None:
     st.markdown(f"### {title}")
     if df.empty:
-        st.info("표시할 MSS 공고가 없습니다.")
+        st.info(f"표시할 {source_label} 공고가 없습니다.")
         return
 
     current_view, selected_notice_id = core.get_route_state(prefix)
@@ -574,7 +637,7 @@ def render_mss_table(df: pd.DataFrame, *, prefix: str, title: str) -> None:
     status_value = st.sidebar.selectbox("상태", ["전체"] + statuses, key=f"{prefix}_status")
 
     if search_text:
-        filtered = filtered[core.build_contains_mask(filtered, ["공고명", "공고번호", "담당부서"], search_text)]
+        filtered = filtered[core.build_contains_mask(filtered, ["공고명", "공고번호", "사업명", "담당부서"], search_text)]
     if agency_value != "전체" and "담당부서" in filtered.columns:
         filtered = filtered[filtered["담당부서"].fillna("").astype(str).str.strip().eq(agency_value)]
     if status_value != "전체" and "상태" in filtered.columns:
@@ -588,12 +651,33 @@ def render_mss_table(df: pd.DataFrame, *, prefix: str, title: str) -> None:
         ]
     )
     st.caption(f"행을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
-    core.render_clickable_table(filtered, MSS_COLUMNS, page_key=prefix, id_column="공고ID")
+    core.render_clickable_table(filtered, display_columns, page_key=prefix, id_column="공고ID")
+
+
+def render_mss_table(df: pd.DataFrame, *, prefix: str, title: str) -> None:
+    render_source_notice_table(
+        df,
+        prefix=prefix,
+        title=title,
+        source_label="MSS",
+        display_columns=MSS_COLUMNS,
+    )
+
+
+def render_nipa_table(df: pd.DataFrame, *, prefix: str, title: str) -> None:
+    render_source_notice_table(
+        df,
+        prefix=prefix,
+        title=title,
+        source_label="NIPA",
+        display_columns=NIPA_COLUMNS,
+    )
 
 
 def render_other_crawlers_tab() -> None:
     st.subheader("Other Crawlers")
     st.info("다른 크롤러 소스는 여기에 확장할 수 있습니다.")
+
 
 
 def render_mss_tab() -> None:
@@ -624,6 +708,34 @@ def render_mss_tab() -> None:
         render_mss_table(current_df, prefix="mss_current", title="중소기업벤처부 진행/예정")
 
 
+def render_nipa_tab() -> None:
+    st.subheader("NIPA")
+    current_df, past_df = load_nipa_notice_data()
+    current_page = core.get_query_param("page") or "nipa_current"
+    page_options = {
+        "nipa_current": "NIPA 진행/예정",
+        "nipa_past": "NIPA 마감",
+    }
+    if current_page not in page_options:
+        current_page = "nipa_current"
+
+    selected_label = st.radio(
+        "Page",
+        list(page_options.values()),
+        horizontal=True,
+        index=list(page_options.keys()).index(current_page),
+    )
+    selected_page = next(page for page, label in page_options.items() if label == selected_label)
+    if selected_page != current_page:
+        st.query_params.update({"source": "nipa", "page": selected_page, "view": "table"})
+        st.rerun()
+
+    if current_page == "nipa_past":
+        render_nipa_table(past_df, prefix="nipa_past", title="NIPA 마감")
+    else:
+        render_nipa_table(current_df, prefix="nipa_current", title="NIPA 진행/예정")
+
+
 def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
     if page in {"mss_current", "mss_past"}:
         current_df, past_df = load_mss_notice_data()
@@ -631,6 +743,17 @@ def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFr
         selected_id = core.get_query_param("id")
         row = core.get_row_by_column_value(source_df, "공고ID", selected_id)
         back_label = "중소기업벤처부 마감 목록" if page == "mss_past" else "중소기업벤처부 진행/예정 목록"
+        if st.button(back_label, use_container_width=True):
+            core.switch_to_table(page)
+        render_notice_detail(row or {}, pd.DataFrame())
+        return
+
+    if page in {"nipa_current", "nipa_past"}:
+        current_df, past_df = load_nipa_notice_data()
+        source_df = past_df if page == "nipa_past" else current_df
+        selected_id = core.get_query_param("id")
+        row = core.get_row_by_column_value(source_df, "공고ID", selected_id)
+        back_label = "NIPA 마감 목록" if page == "nipa_past" else "NIPA 진행/예정 목록"
         if st.button(back_label, use_container_width=True):
             core.switch_to_table(page)
         render_notice_detail(row or {}, pd.DataFrame())
@@ -712,11 +835,11 @@ def main() -> None:
         st.stop()
 
     current_source = core.get_query_param("source") or "iris"
-    source_index_map = {"iris": 0, "tipa": 1, "other": 2, "other_crawlers": 2}
+    source_index_map = {"iris": 0, "tipa": 1, "nipa": 2, "other": 3, "other_crawlers": 3}
     source_index = source_index_map.get(current_source, 0)
     selected_source = st.radio(
         "Source",
-        ["IRIS", "중소기업벤처부", "Other Crawlers"],
+        ["IRIS", "중소기업벤처부", "NIPA", "Other Crawlers"],
         horizontal=True,
         index=source_index,
     )
@@ -724,75 +847,18 @@ def main() -> None:
         selected_source_key = "iris"
     elif selected_source == "중소기업벤처부":
         selected_source_key = "tipa"
+    elif selected_source == "NIPA":
+        selected_source_key = "nipa"
     else:
         selected_source_key = "other_crawlers"
 
     if selected_source_key != current_source:
-        st.query_params.clear()
-        st.query_params.update({
-            "source": selected_source_key,
-            "page": "notice",
-            "view": "table",
-        })
-        st.rerun()
-
-    current_page = core.get_query_param("page") or "notice"
-    current_view = core.get_query_param("view") or "table"
-
-    if current_view == "detail":
-        render_detail_page(current_page, notice_df, summary_df, opportunity_df)
-        return
-
-    if selected_source_key == "tipa":
-        st.subheader("중소기업벤처부")
-        st.info("중소기업벤처부 전용 화면은 다음 단계에서 연결할 예정입니다.")
-        return
-
-    if selected_source_key == "other_crawlers":
-        render_other_crawlers_tab()
-        return
-
-    st.caption("기본 진입은 Notice이며, Summary와 Opportunity는 탭으로 이동해 확인할 수 있습니다.")
-    notice_tab, summary_tab, opportunity_tab = st.tabs(["Notice", "Summary", "Opportunity"])
-    with notice_tab:
-        render_notice_table(notice_df, opportunity_df)
-    with summary_tab:
-        render_summary_table(summary_df)
-    with opportunity_tab:
-        render_opportunity_table(opportunity_df)
-
-
-def main() -> None:
-    st.set_page_config(page_title="Crawler Hub", page_icon="IRIS", layout="wide")
-    core.inject_page_styles()
-
-    st.title("Crawler Hub")
-    st.caption("IRIS / SUMMARY / OPPORTUNITY 시트를 읽기 전용으로 조회합니다.")
-
-    try:
-        notice_df, summary_df, opportunity_df = load_viewer_data()
-    except Exception as exc:
-        st.error(str(exc))
-        st.stop()
-
-    current_source = core.get_query_param("source") or "iris"
-    source_index_map = {"iris": 0, "tipa": 1, "other": 2, "other_crawlers": 2}
-    source_index = source_index_map.get(current_source, 0)
-    selected_source = st.radio(
-        "Source",
-        ["IRIS", "중소기업벤처부", "Other Crawlers"],
-        horizontal=True,
-        index=source_index,
-    )
-    if selected_source == "IRIS":
-        selected_source_key = "iris"
-    elif selected_source == "중소기업벤처부":
-        selected_source_key = "tipa"
-    else:
-        selected_source_key = "other_crawlers"
-
-    if selected_source_key != current_source:
-        default_page = "mss_current" if selected_source_key == "tipa" else "notice"
+        if selected_source_key == "tipa":
+            default_page = "mss_current"
+        elif selected_source_key == "nipa":
+            default_page = "nipa_current"
+        else:
+            default_page = "notice"
         st.query_params.clear()
         st.query_params.update({
             "source": selected_source_key,
@@ -810,6 +876,10 @@ def main() -> None:
 
     if selected_source_key == "tipa":
         render_mss_tab()
+        return
+
+    if selected_source_key == "nipa":
+        render_nipa_tab()
         return
 
     if selected_source_key == "other_crawlers":
