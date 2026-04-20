@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import uuid
+
 import pandas as pd
 import streamlit as st
 
 import viewer_core as core
+
+REVIEW_OPTIONS = ["", "검토전", "관심공고", "보류", "검토완료"]
+FAVORITE_REVIEW_STATUS = "관심공고"
 
 
 NOTICE_COLUMNS = [
@@ -15,6 +20,7 @@ NOTICE_COLUMNS = [
     "대표과제명",
     "대표예산",
     "공고상태",
+    "검토 여부",
 ]
 
 SUMMARY_COLUMNS = [
@@ -39,6 +45,7 @@ OPPORTUNITY_COLUMNS = [
     "점수",
     "예산",
     "공고상태",
+    "검토 여부",
 ]
 
 
@@ -53,6 +60,7 @@ MSS_COLUMNS = [
     "공고명",
     "공고번호",
     "상태",
+    "검토 여부",
 ]
 
 NIPA_COLUMNS = [
@@ -62,6 +70,29 @@ NIPA_COLUMNS = [
     "공고명",
     "공고번호",
     "상태",
+    "검토 여부",
+]
+
+FAVORITE_COLUMNS = [
+    "매체",
+    "공고일자",
+    "접수기간",
+    "전문기관",
+    "담당부서",
+    "공고명",
+    "공고번호",
+    "공고상태",
+    "검토 여부",
+]
+
+COMMENT_COLUMNS = [
+    "comment_id",
+    "created_at",
+    "source",
+    "notice_id",
+    "notice_title",
+    "author",
+    "comment",
 ]
 
 
@@ -73,10 +104,249 @@ def first_non_empty(row: dict, *keys: str) -> str:
     return ""
 
 
+def get_spreadsheet():
+    gc = core.get_gspread_client()
+    sheet_id = core.get_env("GOOGLE_SHEET_ID")
+    if not sheet_id:
+        raise RuntimeError("GOOGLE_SHEET_ID is not set.")
+    return gc.open_by_key(sheet_id)
+
+
+def get_or_create_worksheet(sheet_name: str, headers: list[str], rows: int = 1000, cols: int | None = None):
+    sh = get_spreadsheet()
+    try:
+        ws = sh.worksheet(sheet_name)
+    except Exception:
+        ws = sh.add_worksheet(title=sheet_name, rows=rows, cols=cols or len(headers))
+        ws.update([headers])
+        return ws
+
+    values = ws.get_all_values()
+    if not values:
+        ws.update([headers])
+        return ws
+
+    header = [clean(x) for x in values[0]]
+    missing_headers = [column for column in headers if column not in header]
+    for offset, column in enumerate(missing_headers, start=len(header) + 1):
+        ws.update_cell(1, offset, column)
+    return ws
+
+
+def get_comment_sheet_name() -> str:
+    return core.get_env("NOTICE_COMMENT_SHEET", "NOTICE_COMMENTS")
+
+
+def load_notice_comments() -> pd.DataFrame:
+    df = core.load_optional_sheet_as_dataframe(get_comment_sheet_name())
+    if df.empty:
+        return pd.DataFrame(columns=COMMENT_COLUMNS)
+
+    working = df.copy()
+    for column in COMMENT_COLUMNS:
+        if column not in working.columns:
+            working[column] = ""
+    working["created_at_sort"] = pd.to_datetime(working["created_at"], errors="coerce")
+    return working.sort_values(by=["created_at_sort"], ascending=False, na_position="last")
+
+
+def append_notice_comment(
+    *,
+    source_key: str,
+    notice_id: str,
+    notice_title: str,
+    author: str,
+    comment: str,
+) -> None:
+    notice_id = clean(notice_id)
+    comment = clean(comment)
+    if not notice_id:
+        raise RuntimeError("공고ID가 없어 댓글을 저장할 수 없습니다.")
+    if not comment:
+        raise RuntimeError("댓글 내용을 입력해 주세요.")
+
+    ws = get_or_create_worksheet(get_comment_sheet_name(), COMMENT_COLUMNS, rows=1000, cols=len(COMMENT_COLUMNS))
+    row = {
+        "comment_id": str(uuid.uuid4()),
+        "created_at": pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S"),
+        "source": clean(source_key) or "iris",
+        "notice_id": notice_id,
+        "notice_title": clean(notice_title),
+        "author": clean(author) or "익명",
+        "comment": comment[:5000],
+    }
+    ws.append_row([row[column] for column in COMMENT_COLUMNS], value_input_option="USER_ENTERED")
+    core.load_sheet_as_dataframe.clear()
+
+
+def resolve_notice_source_key(row: dict | None) -> str:
+    if row:
+        source_key = clean(row.get("_source_key"))
+        if source_key and source_key != "favorites":
+            return source_key
+    current_source = core.get_query_param("source") or "iris"
+    if current_source in {"tipa", "nipa"}:
+        return current_source
+    return "iris"
+
+
 def render_metric_row(items: list[tuple[str, str]]) -> None:
     columns = st.columns(len(items))
     for col, (label, value) in zip(columns, items):
         col.metric(label, value)
+
+
+def update_review_status_in_sheets(notice_id: str, review_status: str, sheet_names: list[str], *, source_label: str) -> None:
+    notice_id = clean(notice_id)
+    if not notice_id:
+        raise RuntimeError("공고ID가 없어 검토 여부를 저장할 수 없습니다.")
+
+    checked_sheets: list[str] = []
+    for sheet_name in dict.fromkeys([name for name in sheet_names if clean(name)]):
+        checked_sheets.append(sheet_name)
+        try:
+            ws = core.get_worksheet(sheet_name)
+        except Exception:
+            continue
+
+        values = ws.get_all_values()
+        if not values:
+            continue
+
+        header = [clean(x) for x in values[0]]
+        notice_id_col = None
+        for candidate in ["공고ID", "notice_id"]:
+            if candidate in header:
+                notice_id_col = header.index(candidate) + 1
+                break
+        if not notice_id_col:
+            continue
+
+        if "검토 여부" in header:
+            review_col = header.index("검토 여부") + 1
+        elif "검토여부" in header:
+            review_col = header.index("검토여부") + 1
+        elif "review_status" in header:
+            review_col = header.index("review_status") + 1
+        else:
+            review_col = len(header) + 1
+            ws.update_cell(1, review_col, "검토 여부")
+
+        for row_index, row in enumerate(values[1:], start=2):
+            current_notice_id = clean(row[notice_id_col - 1] if notice_id_col - 1 < len(row) else "")
+            if current_notice_id == notice_id:
+                ws.update_cell(row_index, review_col, clean(review_status))
+                core.load_sheet_as_dataframe.clear()
+                return
+
+    raise RuntimeError(f"{source_label} 시트({', '.join(checked_sheets)})에서 공고ID {notice_id}를 찾지 못했습니다.")
+
+
+def update_notice_review_status(notice_id: str, review_status: str, source_key: str = "iris") -> None:
+    source_key = clean(source_key) or "iris"
+    if source_key == "tipa":
+        update_review_status_in_sheets(
+            notice_id,
+            review_status,
+            [
+                core.get_env("MSS_CURRENT_SHEET") or core.get_env("MSS_NOTICE_SHEET", "MSS_CURRENT"),
+                core.get_env("MSS_PAST_SHEET", "MSS_PAST"),
+            ],
+            source_label="중소기업벤처부",
+        )
+        return
+    if source_key == "nipa":
+        update_review_status_in_sheets(
+            notice_id,
+            review_status,
+            [
+                core.get_env("NIPA_CURRENT_SHEET", "NIPA_CURRENT"),
+                core.get_env("NIPA_PAST_SHEET", "NIPA_PAST"),
+                core.get_env("NIPA_NOTICE_MASTER_SHEET", "NIPA_NOTICE_MASTER"),
+            ],
+            source_label="NIPA",
+        )
+        return
+
+    update_review_status_in_sheets(
+        notice_id,
+        review_status,
+        [core.get_env("NOTICE_MASTER_SHEET", "IRIS_NOTICE_MASTER")],
+        source_label="IRIS",
+    )
+
+
+def render_review_editor(notice_id: str, current_value: str, form_key: str, source_key: str = "iris") -> None:
+    st.markdown("### 검토 여부 수정")
+    normalized_value = clean(current_value)
+    options = REVIEW_OPTIONS.copy()
+    if normalized_value and normalized_value not in options:
+        options.append(normalized_value)
+    default_index = options.index(normalized_value) if normalized_value in options else 0
+
+    with st.form(form_key):
+        review_value = st.selectbox("검토 여부", options=options, index=default_index)
+        submitted = st.form_submit_button("저장")
+        if submitted:
+            try:
+                update_notice_review_status(notice_id, review_value, source_key=source_key)
+                st.success("검토 여부를 저장했습니다.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"저장 실패: {exc}")
+
+
+def render_notice_comments(row: dict, section_key: str) -> None:
+    notice_id = clean(row.get("공고ID") or row.get("notice_id"))
+    notice_title = clean(row.get("공고명") or row.get("notice_title"))
+    source_key = resolve_notice_source_key(row)
+
+    st.markdown("### 댓글")
+    if not notice_id:
+        st.info("공고ID가 없어 댓글을 연결할 수 없습니다.")
+        return
+
+    try:
+        comments_df = load_notice_comments()
+    except Exception as exc:
+        st.warning(f"댓글 이력을 불러오지 못했습니다: {exc}")
+        comments_df = pd.DataFrame(columns=COMMENT_COLUMNS)
+
+    matched = comments_df[
+        comments_df["source"].fillna("").astype(str).str.strip().eq(source_key)
+        & comments_df["notice_id"].fillna("").astype(str).str.strip().eq(notice_id)
+    ].copy()
+
+    with st.form(f"{section_key}_comment_form"):
+        author = st.text_input("작성자", value=core.get_env("DEFAULT_COMMENT_AUTHOR", ""), key=f"{section_key}_comment_author")
+        comment = st.text_area("의견", key=f"{section_key}_comment_text", height=110)
+        submitted = st.form_submit_button("댓글 저장")
+        if submitted:
+            try:
+                append_notice_comment(
+                    source_key=source_key,
+                    notice_id=notice_id,
+                    notice_title=notice_title,
+                    author=author,
+                    comment=comment,
+                )
+                st.success("댓글을 저장했습니다.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"댓글 저장 실패: {exc}")
+
+    if matched.empty:
+        st.info("아직 등록된 댓글이 없습니다.")
+        return
+
+    display_df = matched[["created_at", "author", "comment"]].rename(
+        columns={
+            "created_at": "작성일시",
+            "author": "작성자",
+            "comment": "의견",
+        }
+    )
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 
 def filter_df(
@@ -149,6 +419,8 @@ def add_period_alias(df: pd.DataFrame) -> pd.DataFrame:
     working = df.copy()
     if "공고기간" not in working.columns:
         working["공고기간"] = core.series_from_candidates(working, ["접수기간", "공고기간", "period"])
+    if "검토 여부" not in working.columns:
+        working["검토 여부"] = core.series_from_candidates(working, ["검토여부", "review_status"])
     return working
 
 
@@ -183,8 +455,9 @@ def render_notice_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
     related = core.find_related_opportunities_for_notice(row, opportunity_df)
     top_related = related.iloc[0].to_dict() if not related.empty else {}
     current_source = core.get_query_param("source") or "iris"
-    is_mss = current_source == "tipa"
-    is_nipa = current_source == "nipa"
+    source_key = resolve_notice_source_key(row)
+    is_mss = source_key == "tipa" or current_source == "tipa"
+    is_nipa = source_key == "nipa" or current_source == "nipa"
     if is_mss:
         detail_kicker = "중소기업벤처부 / Notice"
         detail_button_label = "중소기업벤처부 상세 바로가기"
@@ -202,6 +475,7 @@ def render_notice_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
             (clean(row.get("대표추천도")), "accent"),
             (first_non_empty(row, "전문기관", "담당부서"), "neutral"),
             (clean(row.get("공고상태")), "neutral"),
+            (f"검토: {clean(row.get('검토 여부') or '미지정')}", "neutral"),
         ],
     )
 
@@ -217,6 +491,7 @@ def render_notice_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
                 ("공고기간", first_non_empty(row, "공고기간", "접수기간", "신청기간")),
                 ("전문기관", first_non_empty(row, "전문기관", "담당부서")),
                 ("소관부처", row.get("소관부처")),
+                ("검토 여부", row.get("검토 여부")),
             ],
         )
     with right:
@@ -243,6 +518,20 @@ def render_notice_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
     detail_link = clean(row.get("상세링크"))
     if detail_link:
         st.link_button(detail_button_label, detail_link, use_container_width=True)
+
+    st.markdown("### 검토 상태")
+    left_review, right_review = st.columns([1, 1])
+    with left_review:
+        core.render_detail_card("현재 상태", [("검토 여부", row.get("검토 여부"))])
+    with right_review:
+        render_review_editor(
+            clean(row.get("공고ID") or row.get("notice_id")),
+            clean(row.get("검토 여부")),
+            form_key=f"notice_review_{source_key}_{clean(row.get('공고ID') or row.get('notice_id'))}",
+            source_key=source_key,
+        )
+
+    render_notice_comments(row, section_key=f"notice_{source_key}_{clean(row.get('공고ID') or row.get('notice_id'))}")
 
     st.markdown("### Related Opportunity")
     if related.empty:
@@ -531,6 +820,7 @@ def normalize_mss_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     working["status"] = core.series_from_candidates(working, ["status", "상태", "공고상태"])
     working["views"] = core.series_from_candidates(working, ["views", "조회"])
     working["detail_link"] = core.series_from_candidates(working, ["detail_link", "상세링크"])
+    working["review_status"] = core.series_from_candidates(working, ["review_status", "검토 여부", "검토여부"])
     working["notice_id"] = core.series_from_candidates(working, ["notice_id", "공고ID"])
     working["_sort_date"] = core.parse_date_column(working["registered_at"])
     working["등록일"] = working["registered_at"]
@@ -541,7 +831,9 @@ def normalize_mss_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     working["상태"] = working["status"]
     working["조회"] = working["views"]
     working["상세링크"] = working["detail_link"]
+    working["검토 여부"] = working["review_status"]
     working["공고ID"] = working["notice_id"]
+    working["_source_key"] = "tipa"
     return working.sort_values(by=["_sort_date", "공고번호", "공고명"], ascending=[False, False, True], na_position="last")
 
 
@@ -558,6 +850,7 @@ def normalize_nipa_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     working["notice_no"] = core.series_from_candidates(working, ["notice_no", "ancm_no", "공고번호", "row_number"])
     working["status"] = core.series_from_candidates(working, ["status", "상태", "공고상태"])
     working["detail_link"] = core.series_from_candidates(working, ["detail_link", "상세링크"])
+    working["review_status"] = core.series_from_candidates(working, ["review_status", "검토 여부", "검토여부"])
     working["notice_id"] = core.series_from_candidates(working, ["notice_id", "공고ID"])
     working["d_day"] = core.series_from_candidates(working, ["d_day", "남은신청기간"])
     working["author"] = core.series_from_candidates(working, ["author", "작성자"])
@@ -573,9 +866,11 @@ def normalize_nipa_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     working["상태"] = working["status"]
     working["공고상태"] = working["status"]
     working["상세링크"] = working["detail_link"]
+    working["검토 여부"] = working["review_status"]
     working["공고ID"] = working["notice_id"]
     working["작성자"] = working["author"]
     working["남은신청기간"] = working["d_day"]
+    working["_source_key"] = "nipa"
     return working.sort_values(by=["_sort_date", "공고번호", "공고명"], ascending=[False, False, True], na_position="last")
 
 
@@ -736,6 +1031,119 @@ def render_nipa_tab() -> None:
         render_nipa_table(current_df, prefix="nipa_current", title="NIPA 진행/예정")
 
 
+def normalize_favorite_notice_df(df: pd.DataFrame, *, source_key: str, source_label: str) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+
+    working = df.copy()
+    working["매체"] = source_label
+    working["_source_key"] = source_key
+    working["공고ID"] = core.series_from_candidates(working, ["공고ID", "notice_id"])
+    working["공고명"] = core.series_from_candidates(working, ["공고명", "notice_title", "title"])
+    working["공고번호"] = core.series_from_candidates(working, ["공고번호", "notice_no", "ancm_no"])
+    working["공고일자"] = core.series_from_candidates(working, ["공고일자", "등록일", "registered_at", "ancm_de"])
+    working["접수기간"] = core.series_from_candidates(working, ["접수기간", "신청기간", "공고기간", "period"])
+    working["전문기관"] = core.series_from_candidates(working, ["전문기관", "전문기관명", "agency"])
+    working["담당부서"] = core.series_from_candidates(working, ["담당부서", "department", "agency"])
+    working["소관부처"] = core.series_from_candidates(working, ["소관부처", "ministry"])
+    working["공고상태"] = core.series_from_candidates(working, ["공고상태", "상태", "status", "rcve_status"])
+    working["검토 여부"] = core.series_from_candidates(working, ["검토 여부", "검토여부", "review_status"])
+    working["상세링크"] = core.series_from_candidates(working, ["상세링크", "detail_link"])
+    working["_favorite_id"] = working.apply(
+        lambda row: f"{source_key}::{clean(row.get('공고ID'))}",
+        axis=1,
+    )
+    working["_sort_date"] = core.parse_date_column(working["공고일자"])
+    return working
+
+
+def build_favorite_notice_df(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> pd.DataFrame:
+    frames = []
+    iris_df = normalize_favorite_notice_df(
+        notice_df,
+        source_key="iris",
+        source_label="IRIS",
+    )
+    if not iris_df.empty:
+        frames.append(iris_df)
+
+    mss_current_df, mss_past_df = load_mss_notice_data()
+    mss_df = pd.concat([mss_current_df, mss_past_df], ignore_index=True) if not mss_current_df.empty or not mss_past_df.empty else pd.DataFrame()
+    if not mss_df.empty:
+        mss_df = mss_df.drop_duplicates(subset=["공고ID"], keep="first")
+        frames.append(normalize_favorite_notice_df(mss_df, source_key="tipa", source_label="중소기업벤처부"))
+
+    nipa_current_df, nipa_past_df = load_nipa_notice_data()
+    nipa_df = pd.concat([nipa_current_df, nipa_past_df], ignore_index=True) if not nipa_current_df.empty or not nipa_past_df.empty else pd.DataFrame()
+    if not nipa_df.empty:
+        nipa_df = nipa_df.drop_duplicates(subset=["공고ID"], keep="first")
+        frames.append(normalize_favorite_notice_df(nipa_df, source_key="nipa", source_label="NIPA"))
+
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined[
+        combined["검토 여부"].fillna("").astype(str).str.strip().eq(FAVORITE_REVIEW_STATUS)
+    ]
+    if combined.empty:
+        return combined
+    return combined.sort_values(
+        by=["_sort_date", "매체", "공고명"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+
+
+def render_favorite_notice_page(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
+    st.subheader("관심 공고")
+    page_key = "favorites"
+    source_df = build_favorite_notice_df(notice_df, opportunity_df)
+
+    current_view, selected_id = core.get_route_state(page_key)
+    if current_view == "detail":
+        selected_row = core.get_row_by_column_value(source_df, "_favorite_id", selected_id)
+        action_col, info_col = st.columns([1, 5])
+        with action_col:
+            if st.button("목록으로 돌아가기", key="favorites_back_to_table", use_container_width=True):
+                core.switch_to_table(page_key)
+        with info_col:
+            st.caption("'관심공고'로 지정된 공고만 모아보는 화면입니다.")
+        render_notice_detail(selected_row or {}, opportunity_df)
+        return
+
+    if source_df.empty:
+        st.info("'관심공고'로 지정된 공고가 아직 없습니다.")
+        return
+
+    filtered = source_df.copy()
+    st.sidebar.markdown("## 관심 공고 Filters")
+    search_text = st.sidebar.text_input("통합 검색", "", key="favorites_search")
+
+    sources = sorted(value for value in filtered["매체"].fillna("").astype(str).str.strip().unique().tolist() if clean(value))
+    source_value = st.sidebar.selectbox("매체", ["전체"] + sources, key="favorites_source")
+    statuses = sorted(value for value in filtered["공고상태"].fillna("").astype(str).str.strip().unique().tolist() if clean(value))
+    status_value = st.sidebar.selectbox("공고상태", ["전체"] + statuses, key="favorites_status")
+
+    if search_text:
+        filtered = filtered[core.build_contains_mask(filtered, ["공고명", "공고번호", "전문기관", "담당부서", "매체"], search_text)]
+    if source_value != "전체":
+        filtered = filtered[filtered["매체"].fillna("").astype(str).str.strip().eq(source_value)]
+    if status_value != "전체":
+        filtered = filtered[filtered["공고상태"].fillna("").astype(str).str.strip().eq(status_value)]
+
+    render_metric_row(
+        [
+            ("관심 공고 수", str(len(filtered))),
+            ("IRIS", str(int(filtered["매체"].fillna("").astype(str).str.strip().eq("IRIS").sum()))),
+            ("중소기업벤처부", str(int(filtered["매체"].fillna("").astype(str).str.strip().eq("중소기업벤처부").sum()))),
+            ("NIPA", str(int(filtered["매체"].fillna("").astype(str).str.strip().eq("NIPA").sum()))),
+        ]
+    )
+    st.caption(f"행을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    core.render_clickable_table(filtered, FAVORITE_COLUMNS, page_key=page_key, id_column="_favorite_id")
+
+
 def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
     if page in {"mss_current", "mss_past"}:
         current_df, past_df = load_mss_notice_data()
@@ -835,11 +1243,11 @@ def main() -> None:
         st.stop()
 
     current_source = core.get_query_param("source") or "iris"
-    source_index_map = {"iris": 0, "tipa": 1, "nipa": 2, "other": 3, "other_crawlers": 3}
+    source_index_map = {"iris": 0, "tipa": 1, "nipa": 2, "favorites": 3, "other": 4, "other_crawlers": 4}
     source_index = source_index_map.get(current_source, 0)
     selected_source = st.radio(
         "Source",
-        ["IRIS", "중소기업벤처부", "NIPA", "Other Crawlers"],
+        ["IRIS", "중소기업벤처부", "NIPA", "관심 공고", "Other Crawlers"],
         horizontal=True,
         index=source_index,
     )
@@ -849,6 +1257,8 @@ def main() -> None:
         selected_source_key = "tipa"
     elif selected_source == "NIPA":
         selected_source_key = "nipa"
+    elif selected_source == "관심 공고":
+        selected_source_key = "favorites"
     else:
         selected_source_key = "other_crawlers"
 
@@ -857,6 +1267,8 @@ def main() -> None:
             default_page = "mss_current"
         elif selected_source_key == "nipa":
             default_page = "nipa_current"
+        elif selected_source_key == "favorites":
+            default_page = "favorites"
         else:
             default_page = "notice"
         st.query_params.clear()
@@ -880,6 +1292,10 @@ def main() -> None:
 
     if selected_source_key == "nipa":
         render_nipa_tab()
+        return
+
+    if selected_source_key == "favorites":
+        render_favorite_notice_page(notice_df, opportunity_df)
         return
 
     if selected_source_key == "other_crawlers":
