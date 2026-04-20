@@ -196,6 +196,33 @@ def render_metric_row(items: list[tuple[str, str]]) -> None:
         col.metric(label, value)
 
 
+def render_notice_filter_sidebar(
+    key_prefix: str,
+    *,
+    current_only_default: bool = True,
+    status_default: str = "전체",
+) -> tuple[str, bool, str]:
+    status_options = ["전체", "접수중", "예정", "마감"]
+    if status_default not in status_options:
+        status_default = "전체"
+
+    st.sidebar.markdown("## Notice Filters")
+    search_text = st.sidebar.text_input("통합 검색", "", key=f"{key_prefix}_search")
+    current_only = st.sidebar.checkbox(
+        "현재 공고만 보기",
+        value=current_only_default,
+        key=f"{key_prefix}_current_only",
+    )
+    status_scope = st.sidebar.radio(
+        "공고 상태 보기",
+        status_options,
+        index=status_options.index(status_default),
+        key=f"{key_prefix}_status_scope",
+        horizontal=True,
+    )
+    return search_text, current_only, status_scope
+
+
 def update_review_status_in_sheets(notice_id: str, review_status: str, sheet_names: list[str], *, source_label: str) -> None:
     notice_id = clean(notice_id)
     if not notice_id:
@@ -364,9 +391,7 @@ def filter_df(
 
     working = df.copy()
 
-    st.sidebar.markdown(f"## {prefix.title()} Filters")
-    search_text = st.sidebar.text_input("검색", "", key=f"{prefix}_search")
-    current_only = st.sidebar.checkbox("현재 공고만", value=True, key=f"{prefix}_current")
+    search_text, current_only, status_scope = render_notice_filter_sidebar(prefix)
     if agency_column and agency_column in working.columns:
         agencies = sorted(
             x
@@ -376,16 +401,6 @@ def filter_df(
         agency_value = st.sidebar.selectbox("전문기관", ["전체"] + agencies, key=f"{prefix}_agency")
     else:
         agency_value = "전체"
-
-    if recommendation_column and recommendation_column in working.columns:
-        recommendation_values = sorted(
-            x
-            for x in working[recommendation_column].fillna("").astype(str).str.strip().unique().tolist()
-            if clean(x)
-        )
-        recommendation_value = st.sidebar.selectbox("추천도", ["전체"] + recommendation_values, key=f"{prefix}_recommendation")
-    else:
-        recommendation_value = "전체"
 
     if ministry_column and ministry_column in working.columns:
         ministries = sorted(
@@ -397,14 +412,53 @@ def filter_df(
     else:
         ministry_value = "전체"
 
+    if "공고상태" in working.columns:
+        status_values = sorted(
+            x
+            for x in working["공고상태"].fillna("").astype(str).str.strip().unique().tolist()
+            if clean(x)
+        )
+        status_value = st.sidebar.selectbox("공고상태", ["전체"] + status_values, key=f"{prefix}_status")
+    else:
+        status_value = "전체"
+
+    review_column = "검토 여부" if "검토 여부" in working.columns else "review_status" if "review_status" in working.columns else ""
+    if review_column:
+        review_values = sorted(
+            x
+            for x in working[review_column].fillna("").astype(str).str.strip().unique().tolist()
+            if clean(x)
+        )
+        review_value = st.sidebar.selectbox("검토 여부", ["전체"] + review_values, key=f"{prefix}_review")
+    else:
+        review_value = "전체"
+
+    if recommendation_column and recommendation_column in working.columns:
+        recommendation_values = sorted(
+            x
+            for x in working[recommendation_column].fillna("").astype(str).str.strip().unique().tolist()
+            if clean(x)
+        )
+        recommendation_value = st.sidebar.selectbox("추천도", ["전체"] + recommendation_values, key=f"{prefix}_recommendation")
+    else:
+        recommendation_value = "전체"
+
     if current_only and current_column in working.columns:
         working = working[working[current_column].fillna("").astype(str).str.strip().eq("Y")]
+    if status_scope != "전체" and "공고상태" in working.columns:
+        working = working[working["공고상태"].fillna("").astype(str).str.strip().eq(status_scope)]
 
     if agency_column and agency_column in working.columns and agency_value != "전체":
         working = working[working[agency_column].fillna("").astype(str).str.strip().eq(agency_value)]
 
     if ministry_column and ministry_column in working.columns and ministry_value != "전체":
         working = working[working[ministry_column].fillna("").astype(str).str.strip().eq(ministry_value)]
+
+    if "공고상태" in working.columns and status_value != "전체":
+        working = working[working["공고상태"].fillna("").astype(str).str.strip().eq(status_value)]
+
+    if review_column and review_value != "전체":
+        working = working[working[review_column].fillna("").astype(str).str.strip().eq(review_value)]
 
     if recommendation_column and recommendation_column in working.columns and recommendation_value != "전체":
         working = working[working[recommendation_column].fillna("").astype(str).str.strip().eq(recommendation_value)]
@@ -413,6 +467,21 @@ def filter_df(
         working = working[core.build_contains_mask(working, search_columns, search_text)]
 
     return working
+
+
+def apply_selectbox_filter(df: pd.DataFrame, column: str, label: str, key: str) -> pd.DataFrame:
+    if column not in df.columns:
+        return df
+
+    values = sorted(
+        value
+        for value in df[column].fillna("").astype(str).str.strip().unique().tolist()
+        if clean(value)
+    )
+    selected = st.sidebar.selectbox(label, ["전체"] + values, key=key)
+    if selected == "전체":
+        return df
+    return df[df[column].fillna("").astype(str).str.strip().eq(selected)]
 
 
 def add_period_alias(df: pd.DataFrame) -> pd.DataFrame:
@@ -698,14 +767,16 @@ def render_notice_table_with_scope(
     working = notice_df.copy()
     st.subheader(title)
 
-    st.sidebar.markdown("## Notice Filters")
-    search_text = st.sidebar.text_input("검색", "", key=f"{page_key}_search")
-    current_only = st.sidebar.checkbox("현재 공고만", value=current_only_default, key=f"{page_key}_current")
+    search_text, current_only, status_scope = render_notice_filter_sidebar(
+        page_key,
+        current_only_default=current_only_default,
+        status_default=status_scope,
+    )
 
     if current_only and "is_current" in working.columns:
         working = working[working["is_current"].fillna("").astype(str).str.strip().eq("Y")]
 
-    if "공고상태" in working.columns and status_scope:
+    if "공고상태" in working.columns and status_scope != "전체":
         working = working[working["공고상태"].fillna("").astype(str).str.strip().eq(status_scope)]
 
     agencies = sorted(
@@ -725,6 +796,25 @@ def render_notice_table_with_scope(
     ministry_value = st.sidebar.selectbox("소관부처", ["전체"] + ministries, key=f"{page_key}_ministry")
     if ministry_value != "전체" and "소관부처" in working.columns:
         working = working[working["소관부처"].fillna("").astype(str).str.strip().eq(ministry_value)]
+
+    statuses = sorted(
+        value
+        for value in core.series_from_candidates(working, ["공고상태"]).fillna("").astype(str).str.strip().unique().tolist()
+        if clean(value)
+    )
+    status_value = st.sidebar.selectbox("공고상태", ["전체"] + statuses, key=f"{page_key}_status")
+    if status_value != "전체" and "공고상태" in working.columns:
+        working = working[working["공고상태"].fillna("").astype(str).str.strip().eq(status_value)]
+
+    reviews = sorted(
+        value
+        for value in core.series_from_candidates(working, ["검토 여부", "검토여부", "review_status"]).fillna("").astype(str).str.strip().unique().tolist()
+        if clean(value)
+    )
+    review_value = st.sidebar.selectbox("검토 여부", ["전체"] + reviews, key=f"{page_key}_review")
+    if review_value != "전체":
+        review_series = core.series_from_candidates(working, ["검토 여부", "검토여부", "review_status"])
+        working = working[review_series.fillna("").astype(str).str.strip().eq(review_value)]
 
     if search_text:
         working = working[
@@ -826,9 +916,11 @@ def normalize_mss_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     working["등록일"] = working["registered_at"]
     working["신청기간"] = working["period"]
     working["담당부서"] = working["agency"]
+    working["전문기관"] = working["agency"]
     working["공고명"] = working["notice_title"]
     working["공고번호"] = working["notice_no"]
     working["상태"] = working["status"]
+    working["공고상태"] = working["status"]
     working["조회"] = working["views"]
     working["상세링크"] = working["detail_link"]
     working["검토 여부"] = working["review_status"]
@@ -916,27 +1008,24 @@ def render_source_notice_table(
         return
 
     filtered = df.copy()
-    st.sidebar.markdown(f"## {prefix} Filters")
-    search_text = st.sidebar.text_input("검색", "", key=f"{prefix}_search")
-    agencies = sorted(
-        value
-        for value in filtered["담당부서"].fillna("").astype(str).str.strip().unique().tolist()
-        if clean(value)
-    ) if "담당부서" in filtered.columns else []
-    agency_value = st.sidebar.selectbox("담당부서", ["전체"] + agencies, key=f"{prefix}_agency")
-    statuses = sorted(
-        value
-        for value in filtered["상태"].fillna("").astype(str).str.strip().unique().tolist()
-        if clean(value)
-    ) if "상태" in filtered.columns else []
-    status_value = st.sidebar.selectbox("상태", ["전체"] + statuses, key=f"{prefix}_status")
+    default_status = "마감" if "past" in prefix else "전체"
+    search_text, current_only, status_scope = render_notice_filter_sidebar(
+        prefix,
+        current_only_default=False,
+        status_default=default_status,
+    )
+    if current_only and "is_current" in filtered.columns:
+        filtered = filtered[filtered["is_current"].fillna("").astype(str).str.strip().eq("Y")]
+    if status_scope != "전체" and "공고상태" in filtered.columns:
+        filtered = filtered[filtered["공고상태"].fillna("").astype(str).str.strip().eq(status_scope)]
+
+    filtered = apply_selectbox_filter(filtered, "전문기관", "전문기관", f"{prefix}_agency")
+    filtered = apply_selectbox_filter(filtered, "소관부처", "소관부처", f"{prefix}_ministry")
+    filtered = apply_selectbox_filter(filtered, "공고상태", "공고상태", f"{prefix}_status")
+    filtered = apply_selectbox_filter(filtered, "검토 여부", "검토 여부", f"{prefix}_review")
 
     if search_text:
-        filtered = filtered[core.build_contains_mask(filtered, ["공고명", "공고번호", "사업명", "담당부서"], search_text)]
-    if agency_value != "전체" and "담당부서" in filtered.columns:
-        filtered = filtered[filtered["담당부서"].fillna("").astype(str).str.strip().eq(agency_value)]
-    if status_value != "전체" and "상태" in filtered.columns:
-        filtered = filtered[filtered["상태"].fillna("").astype(str).str.strip().eq(status_value)]
+        filtered = filtered[core.build_contains_mask(filtered, ["공고명", "공고번호", "사업명", "전문기관", "담당부서", "소관부처"], search_text)]
 
     render_metric_row(
         [
@@ -1117,20 +1206,23 @@ def render_favorite_notice_page(notice_df: pd.DataFrame, opportunity_df: pd.Data
         return
 
     filtered = source_df.copy()
-    st.sidebar.markdown("## 관심 공고 Filters")
-    search_text = st.sidebar.text_input("통합 검색", "", key="favorites_search")
+    search_text, current_only, status_scope = render_notice_filter_sidebar(
+        "favorites",
+        current_only_default=False,
+    )
+    if current_only and "is_current" in filtered.columns:
+        filtered = filtered[filtered["is_current"].fillna("").astype(str).str.strip().eq("Y")]
+    if status_scope != "전체" and "공고상태" in filtered.columns:
+        filtered = filtered[filtered["공고상태"].fillna("").astype(str).str.strip().eq(status_scope)]
 
-    sources = sorted(value for value in filtered["매체"].fillna("").astype(str).str.strip().unique().tolist() if clean(value))
-    source_value = st.sidebar.selectbox("매체", ["전체"] + sources, key="favorites_source")
-    statuses = sorted(value for value in filtered["공고상태"].fillna("").astype(str).str.strip().unique().tolist() if clean(value))
-    status_value = st.sidebar.selectbox("공고상태", ["전체"] + statuses, key="favorites_status")
+    filtered = apply_selectbox_filter(filtered, "전문기관", "전문기관", "favorites_agency")
+    filtered = apply_selectbox_filter(filtered, "소관부처", "소관부처", "favorites_ministry")
+    filtered = apply_selectbox_filter(filtered, "공고상태", "공고상태", "favorites_status")
+    filtered = apply_selectbox_filter(filtered, "검토 여부", "검토 여부", "favorites_review")
+    filtered = apply_selectbox_filter(filtered, "매체", "매체", "favorites_source")
 
     if search_text:
         filtered = filtered[core.build_contains_mask(filtered, ["공고명", "공고번호", "전문기관", "담당부서", "매체"], search_text)]
-    if source_value != "전체":
-        filtered = filtered[filtered["매체"].fillna("").astype(str).str.strip().eq(source_value)]
-    if status_value != "전체":
-        filtered = filtered[filtered["공고상태"].fillna("").astype(str).str.strip().eq(status_value)]
 
     render_metric_row(
         [
