@@ -53,6 +53,15 @@ def clean(value) -> str:
     return core.clean(value)
 
 
+def normalize_notice_id_for_match(value: object) -> str:
+    text = clean(value)
+    if not text:
+        return ""
+    if text.isdigit():
+        return text.lstrip("0") or "0"
+    return text
+
+
 MSS_COLUMNS = [
     "등록일",
     "신청기간",
@@ -148,6 +157,23 @@ def load_notice_comments() -> pd.DataFrame:
             working[column] = ""
     working["created_at_sort"] = pd.to_datetime(working["created_at"], errors="coerce")
     return working.sort_values(by=["created_at_sort"], ascending=False, na_position="last")
+
+
+def filter_notice_comments(comments_df: pd.DataFrame, *, source_key: str, notice_id: str) -> pd.DataFrame:
+    if comments_df.empty:
+        return pd.DataFrame(columns=COMMENT_COLUMNS)
+
+    working = comments_df.copy()
+    for column in COMMENT_COLUMNS:
+        if column not in working.columns:
+            working[column] = ""
+
+    comment_notice_keys = working["notice_id"].apply(normalize_notice_id_for_match)
+    current_notice_key = normalize_notice_id_for_match(notice_id)
+    return working[
+        working["source"].fillna("").astype(str).str.strip().eq(clean(source_key))
+        & comment_notice_keys.eq(current_notice_key)
+    ].copy()
 
 
 def append_notice_comment(
@@ -333,17 +359,7 @@ def render_notice_comments(row: dict, section_key: str) -> None:
         st.info("공고ID가 없어 댓글을 연결할 수 없습니다.")
         return
 
-    try:
-        comments_df = load_notice_comments()
-    except Exception as exc:
-        st.warning(f"댓글 이력을 불러오지 못했습니다: {exc}")
-        comments_df = pd.DataFrame(columns=COMMENT_COLUMNS)
-
-    matched = comments_df[
-        comments_df["source"].fillna("").astype(str).str.strip().eq(source_key)
-        & comments_df["notice_id"].fillna("").astype(str).str.strip().eq(notice_id)
-    ].copy()
-
+    saved_comment = False
     with st.form(f"{section_key}_comment_form"):
         author = st.text_input("작성자", value=core.get_env("DEFAULT_COMMENT_AUTHOR", ""), key=f"{section_key}_comment_author")
         comment = st.text_area("의견", key=f"{section_key}_comment_text", height=110)
@@ -357,23 +373,32 @@ def render_notice_comments(row: dict, section_key: str) -> None:
                     author=author,
                     comment=comment,
                 )
+                saved_comment = True
                 st.success("댓글을 저장했습니다.")
-                st.rerun()
             except Exception as exc:
                 st.error(f"댓글 저장 실패: {exc}")
 
+    try:
+        comments_df = load_notice_comments()
+    except Exception as exc:
+        st.warning(f"댓글 이력을 불러오지 못했습니다: {exc}")
+        comments_df = pd.DataFrame(columns=COMMENT_COLUMNS)
+
+    matched = filter_notice_comments(comments_df, source_key=source_key, notice_id=notice_id)
+
     if matched.empty:
-        st.info("아직 등록된 댓글이 없습니다.")
+        if not saved_comment:
+            st.info("아직 등록된 댓글이 없습니다.")
         return
 
-    display_df = matched[["created_at", "author", "comment"]].rename(
-        columns={
-            "created_at": "작성일시",
-            "author": "작성자",
-            "comment": "의견",
-        }
-    )
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.caption(f"댓글 이력 {len(matched)}건")
+    for _, comment_row in matched.iterrows():
+        created_at = clean(comment_row.get("created_at"))
+        author = clean(comment_row.get("author")) or "익명"
+        comment_text = clean(comment_row.get("comment"))
+        with st.container(border=True):
+            st.caption(" · ".join([value for value in [created_at, author] if value]))
+            st.write(comment_text)
 
 
 def filter_df(
