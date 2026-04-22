@@ -423,7 +423,7 @@ def filter_df(
             for x in working[agency_column].fillna("").astype(str).str.strip().unique().tolist()
             if clean(x)
         )
-        agency_value = st.sidebar.selectbox("전문기관", ["전체"] + agencies, key=unified_sidebar_filter_key(f"{prefix}_agency"))
+        agency_value = sidebar_selectbox("전문기관", ["전체"] + agencies, key=unified_sidebar_filter_key(f"{prefix}_agency"))
     else:
         agency_value = "전체"
 
@@ -433,7 +433,7 @@ def filter_df(
             for x in working[ministry_column].fillna("").astype(str).str.strip().unique().tolist()
             if clean(x)
         )
-        ministry_value = st.sidebar.selectbox("소관부처", ["전체"] + ministries, key=unified_sidebar_filter_key(f"{prefix}_ministry"))
+        ministry_value = sidebar_selectbox("소관부처", ["전체"] + ministries, key=unified_sidebar_filter_key(f"{prefix}_ministry"))
     else:
         ministry_value = "전체"
 
@@ -443,7 +443,7 @@ def filter_df(
             for x in working["공고상태"].fillna("").astype(str).str.strip().unique().tolist()
             if clean(x)
         )
-        status_value = st.sidebar.selectbox("공고상태", ["전체"] + status_values, key=unified_sidebar_filter_key(f"{prefix}_status"))
+        status_value = sidebar_selectbox("공고상태", ["전체"] + status_values, key=unified_sidebar_filter_key(f"{prefix}_status"))
     else:
         status_value = "전체"
 
@@ -454,7 +454,7 @@ def filter_df(
             for x in working[review_column].fillna("").astype(str).str.strip().unique().tolist()
             if clean(x)
         )
-        review_value = st.sidebar.selectbox("검토 여부", ["전체"] + review_values, key=unified_sidebar_filter_key(f"{prefix}_review"))
+        review_value = sidebar_selectbox("검토 여부", ["전체"] + review_values, key=unified_sidebar_filter_key(f"{prefix}_review"))
     else:
         review_value = "전체"
 
@@ -464,7 +464,7 @@ def filter_df(
             for x in working[recommendation_column].fillna("").astype(str).str.strip().unique().tolist()
             if clean(x)
         )
-        recommendation_value = st.sidebar.selectbox("추천도", ["전체"] + recommendation_values, key=unified_sidebar_filter_key(f"{prefix}_recommendation"))
+        recommendation_value = sidebar_selectbox("추천도", ["전체"] + recommendation_values, key=unified_sidebar_filter_key(f"{prefix}_recommendation"))
     else:
         recommendation_value = "전체"
 
@@ -503,10 +503,16 @@ def apply_selectbox_filter(df: pd.DataFrame, column: str, label: str, key: str) 
         for value in df[column].fillna("").astype(str).str.strip().unique().tolist()
         if clean(value)
     )
-    selected = st.sidebar.selectbox(label, ["전체"] + values, key=unified_sidebar_filter_key(key))
+    selected = sidebar_selectbox(label, ["전체"] + values, key=unified_sidebar_filter_key(key))
     if selected == "전체":
         return df
     return df[df[column].fillna("").astype(str).str.strip().eq(selected)]
+
+
+def sidebar_selectbox(label: str, options: list[str], *, key: str) -> str:
+    if key in st.session_state and st.session_state[key] not in options:
+        st.session_state[key] = options[0] if options else ""
+    return st.sidebar.selectbox(label, options, key=key)
 
 
 def unified_sidebar_filter_key(key: str) -> str:
@@ -816,7 +822,7 @@ def render_notice_table_with_scope(
         for value in core.series_from_candidates(working, ["전문기관"]).fillna("").astype(str).str.strip().unique().tolist()
         if clean(value)
     )
-    agency_value = st.sidebar.selectbox("전문기관", ["전체"] + agencies, key=unified_sidebar_filter_key(f"{page_key}_agency"))
+    agency_value = sidebar_selectbox("전문기관", ["전체"] + agencies, key=unified_sidebar_filter_key(f"{page_key}_agency"))
     if agency_value != "전체" and "전문기관" in working.columns:
         working = working[working["전문기관"].fillna("").astype(str).str.strip().eq(agency_value)]
 
@@ -825,7 +831,7 @@ def render_notice_table_with_scope(
         for value in core.series_from_candidates(working, ["소관부처"]).fillna("").astype(str).str.strip().unique().tolist()
         if clean(value)
     )
-    ministry_value = st.sidebar.selectbox("소관부처", ["전체"] + ministries, key=unified_sidebar_filter_key(f"{page_key}_ministry"))
+    ministry_value = sidebar_selectbox("소관부처", ["전체"] + ministries, key=unified_sidebar_filter_key(f"{page_key}_ministry"))
     if ministry_value != "전체" and "소관부처" in working.columns:
         working = working[working["소관부처"].fillna("").astype(str).str.strip().eq(ministry_value)]
 
@@ -834,7 +840,7 @@ def render_notice_table_with_scope(
         for value in core.series_from_candidates(working, ["공고상태"]).fillna("").astype(str).str.strip().unique().tolist()
         if clean(value)
     )
-    status_value = st.sidebar.selectbox("공고상태", ["전체"] + statuses, key=unified_sidebar_filter_key(f"{page_key}_status"))
+    status_value = sidebar_selectbox("공고상태", ["전체"] + statuses, key=unified_sidebar_filter_key(f"{page_key}_status"))
     if status_value != "전체" and "공고상태" in working.columns:
         working = working[working["공고상태"].fillna("").astype(str).str.strip().eq(status_value)]
 
@@ -843,7 +849,7 @@ def render_notice_table_with_scope(
         for value in core.series_from_candidates(working, ["검토 여부", "검토여부", "review_status"]).fillna("").astype(str).str.strip().unique().tolist()
         if clean(value)
     )
-    review_value = st.sidebar.selectbox("검토 여부", ["전체"] + reviews, key=unified_sidebar_filter_key(f"{page_key}_review"))
+    review_value = sidebar_selectbox("검토 여부", ["전체"] + reviews, key=unified_sidebar_filter_key(f"{page_key}_review"))
     if review_value != "전체":
         review_series = core.series_from_candidates(working, ["검토 여부", "검토여부", "review_status"])
         working = working[review_series.fillna("").astype(str).str.strip().eq(review_value)]
