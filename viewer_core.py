@@ -158,16 +158,28 @@ def enrich_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     enriched = df.copy()
-    if "대표점수" in enriched.columns:
-        enriched["대표점수"] = to_numeric_column(enriched["대표점수"])
+
+    title_col = "\uacf5\uace0\uba85"
+    score_col = "\ub300\ud45c\uc810\uc218"
+    date_col = "\uacf5\uace0\uc77c\uc790"
+
+    if title_col not in enriched.columns:
+        enriched[title_col] = series_from_candidates(enriched, [title_col, "notice_title", "title"])
+
+    if score_col in enriched.columns:
+        enriched[score_col] = to_numeric_column(enriched[score_col])
     else:
-        enriched["대표점수"] = 0
-    if "공고일자" in enriched.columns:
-        enriched["_sort_date"] = parse_date_column(enriched["공고일자"])
+        enriched[score_col] = 0
+
+    if date_col not in enriched.columns:
+        enriched[date_col] = series_from_candidates(enriched, [date_col, "registered_at", "ancm_de"])
+
+    if date_col in enriched.columns:
+        enriched["_sort_date"] = parse_date_column(enriched[date_col])
     else:
         enriched["_sort_date"] = pd.NaT
     return enriched.sort_values(
-        by=["_sort_date", "대표점수", "공고명"],
+        by=["_sort_date", score_col, title_col],
         ascending=[False, False, True],
         na_position="last",
     )
