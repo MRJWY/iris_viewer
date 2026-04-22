@@ -233,17 +233,17 @@ def render_notice_filter_sidebar(
         status_default = "전체"
 
     st.sidebar.markdown("## Notice Filters")
-    search_text = st.sidebar.text_input("통합 검색", "", key=f"{key_prefix}_search")
+    search_text = st.sidebar.text_input("통합 검색", "", key="sidebar_search")
     current_only = st.sidebar.checkbox(
         "현재 공고만 보기",
         value=current_only_default,
-        key=f"{key_prefix}_current_only",
+        key="sidebar_current_only",
     )
     status_scope = st.sidebar.radio(
         "공고 상태 보기",
         status_options,
         index=status_options.index(status_default),
-        key=f"{key_prefix}_status_scope",
+        key="sidebar_status_scope",
         horizontal=True,
     )
     return search_text, current_only, status_scope
@@ -423,7 +423,7 @@ def filter_df(
             for x in working[agency_column].fillna("").astype(str).str.strip().unique().tolist()
             if clean(x)
         )
-        agency_value = st.sidebar.selectbox("전문기관", ["전체"] + agencies, key=f"{prefix}_agency")
+        agency_value = st.sidebar.selectbox("전문기관", ["전체"] + agencies, key=unified_sidebar_filter_key(f"{prefix}_agency"))
     else:
         agency_value = "전체"
 
@@ -433,7 +433,7 @@ def filter_df(
             for x in working[ministry_column].fillna("").astype(str).str.strip().unique().tolist()
             if clean(x)
         )
-        ministry_value = st.sidebar.selectbox("소관부처", ["전체"] + ministries, key=f"{prefix}_ministry")
+        ministry_value = st.sidebar.selectbox("소관부처", ["전체"] + ministries, key=unified_sidebar_filter_key(f"{prefix}_ministry"))
     else:
         ministry_value = "전체"
 
@@ -443,7 +443,7 @@ def filter_df(
             for x in working["공고상태"].fillna("").astype(str).str.strip().unique().tolist()
             if clean(x)
         )
-        status_value = st.sidebar.selectbox("공고상태", ["전체"] + status_values, key=f"{prefix}_status")
+        status_value = st.sidebar.selectbox("공고상태", ["전체"] + status_values, key=unified_sidebar_filter_key(f"{prefix}_status"))
     else:
         status_value = "전체"
 
@@ -454,7 +454,7 @@ def filter_df(
             for x in working[review_column].fillna("").astype(str).str.strip().unique().tolist()
             if clean(x)
         )
-        review_value = st.sidebar.selectbox("검토 여부", ["전체"] + review_values, key=f"{prefix}_review")
+        review_value = st.sidebar.selectbox("검토 여부", ["전체"] + review_values, key=unified_sidebar_filter_key(f"{prefix}_review"))
     else:
         review_value = "전체"
 
@@ -464,7 +464,7 @@ def filter_df(
             for x in working[recommendation_column].fillna("").astype(str).str.strip().unique().tolist()
             if clean(x)
         )
-        recommendation_value = st.sidebar.selectbox("추천도", ["전체"] + recommendation_values, key=f"{prefix}_recommendation")
+        recommendation_value = st.sidebar.selectbox("추천도", ["전체"] + recommendation_values, key=unified_sidebar_filter_key(f"{prefix}_recommendation"))
     else:
         recommendation_value = "전체"
 
@@ -503,10 +503,17 @@ def apply_selectbox_filter(df: pd.DataFrame, column: str, label: str, key: str) 
         for value in df[column].fillna("").astype(str).str.strip().unique().tolist()
         if clean(value)
     )
-    selected = st.sidebar.selectbox(label, ["전체"] + values, key=key)
+    selected = st.sidebar.selectbox(label, ["전체"] + values, key=unified_sidebar_filter_key(key))
     if selected == "전체":
         return df
     return df[df[column].fillna("").astype(str).str.strip().eq(selected)]
+
+
+def unified_sidebar_filter_key(key: str) -> str:
+    suffix = clean(key).rsplit("_", 1)[-1]
+    if suffix in {"agency", "ministry", "status", "review", "recommendation", "source"}:
+        return f"sidebar_{suffix}"
+    return key
 
 
 def add_period_alias(df: pd.DataFrame) -> pd.DataFrame:
@@ -809,7 +816,7 @@ def render_notice_table_with_scope(
         for value in core.series_from_candidates(working, ["전문기관"]).fillna("").astype(str).str.strip().unique().tolist()
         if clean(value)
     )
-    agency_value = st.sidebar.selectbox("전문기관", ["전체"] + agencies, key=f"{page_key}_agency")
+    agency_value = st.sidebar.selectbox("전문기관", ["전체"] + agencies, key=unified_sidebar_filter_key(f"{page_key}_agency"))
     if agency_value != "전체" and "전문기관" in working.columns:
         working = working[working["전문기관"].fillna("").astype(str).str.strip().eq(agency_value)]
 
@@ -818,7 +825,7 @@ def render_notice_table_with_scope(
         for value in core.series_from_candidates(working, ["소관부처"]).fillna("").astype(str).str.strip().unique().tolist()
         if clean(value)
     )
-    ministry_value = st.sidebar.selectbox("소관부처", ["전체"] + ministries, key=f"{page_key}_ministry")
+    ministry_value = st.sidebar.selectbox("소관부처", ["전체"] + ministries, key=unified_sidebar_filter_key(f"{page_key}_ministry"))
     if ministry_value != "전체" and "소관부처" in working.columns:
         working = working[working["소관부처"].fillna("").astype(str).str.strip().eq(ministry_value)]
 
@@ -827,7 +834,7 @@ def render_notice_table_with_scope(
         for value in core.series_from_candidates(working, ["공고상태"]).fillna("").astype(str).str.strip().unique().tolist()
         if clean(value)
     )
-    status_value = st.sidebar.selectbox("공고상태", ["전체"] + statuses, key=f"{page_key}_status")
+    status_value = st.sidebar.selectbox("공고상태", ["전체"] + statuses, key=unified_sidebar_filter_key(f"{page_key}_status"))
     if status_value != "전체" and "공고상태" in working.columns:
         working = working[working["공고상태"].fillna("").astype(str).str.strip().eq(status_value)]
 
@@ -836,7 +843,7 @@ def render_notice_table_with_scope(
         for value in core.series_from_candidates(working, ["검토 여부", "검토여부", "review_status"]).fillna("").astype(str).str.strip().unique().tolist()
         if clean(value)
     )
-    review_value = st.sidebar.selectbox("검토 여부", ["전체"] + reviews, key=f"{page_key}_review")
+    review_value = st.sidebar.selectbox("검토 여부", ["전체"] + reviews, key=unified_sidebar_filter_key(f"{page_key}_review"))
     if review_value != "전체":
         review_series = core.series_from_candidates(working, ["검토 여부", "검토여부", "review_status"])
         working = working[review_series.fillna("").astype(str).str.strip().eq(review_value)]
@@ -991,20 +998,57 @@ def normalize_nipa_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     return working.sort_values(by=["_sort_date", "공고번호", "공고명"], ascending=[False, False, True], na_position="last")
 
 
+def split_source_notice_master(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if df.empty:
+        return df, df
+
+    working = df.copy()
+    status_column = "공고상태" if "공고상태" in working.columns else "status"
+    if status_column in working.columns:
+        status_values = working[status_column].fillna("").astype(str).str.strip()
+        if status_values.ne("").any():
+            return working[status_values.ne("마감")], working[status_values.eq("마감")]
+
+    if "is_current" in working.columns:
+        current_values = working["is_current"].fillna("").astype(str).str.strip()
+        if current_values.ne("").any():
+            return working[current_values.eq("Y")], working[current_values.ne("Y")]
+
+    return working, pd.DataFrame()
+
+
+def load_source_notice_data(
+    *,
+    current_sheet: str,
+    past_sheet: str,
+    master_sheet: str,
+    normalize_func,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    current_df = normalize_func(core.load_optional_sheet_as_dataframe(current_sheet))
+    past_df = normalize_func(core.load_optional_sheet_as_dataframe(past_sheet))
+    if not current_df.empty or not past_df.empty:
+        return current_df, past_df
+
+    master_df = normalize_func(core.load_optional_sheet_as_dataframe(master_sheet))
+    return split_source_notice_master(master_df)
+
+
 def load_mss_notice_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    current_sheet = core.get_env("MSS_CURRENT_SHEET", "MSS_CURRENT")
-    past_sheet = core.get_env("MSS_PAST_SHEET", "MSS_PAST")
-    current_df = normalize_mss_notice_df(core.load_optional_sheet_as_dataframe(current_sheet))
-    past_df = normalize_mss_notice_df(core.load_optional_sheet_as_dataframe(past_sheet))
-    return current_df, past_df
+    return load_source_notice_data(
+        current_sheet=core.get_env("MSS_CURRENT_SHEET", "MSS_CURRENT"),
+        past_sheet=core.get_env("MSS_PAST_SHEET", "MSS_PAST"),
+        master_sheet=core.get_env("MSS_NOTICE_MASTER_SHEET", "MSS_NOTICE_MASTER"),
+        normalize_func=normalize_mss_notice_df,
+    )
 
 
 def load_nipa_notice_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    current_sheet = core.get_env("NIPA_CURRENT_SHEET", "NIPA_CURRENT")
-    past_sheet = core.get_env("NIPA_PAST_SHEET", "NIPA_PAST")
-    current_df = normalize_nipa_notice_df(core.load_optional_sheet_as_dataframe(current_sheet))
-    past_df = normalize_nipa_notice_df(core.load_optional_sheet_as_dataframe(past_sheet))
-    return current_df, past_df
+    return load_source_notice_data(
+        current_sheet=core.get_env("NIPA_CURRENT_SHEET", "NIPA_CURRENT"),
+        past_sheet=core.get_env("NIPA_PAST_SHEET", "NIPA_PAST"),
+        master_sheet=core.get_env("NIPA_NOTICE_MASTER_SHEET", "NIPA_NOTICE_MASTER"),
+        normalize_func=normalize_nipa_notice_df,
+    )
 
 
 def render_source_notice_table(
