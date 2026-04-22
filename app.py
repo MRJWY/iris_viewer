@@ -228,25 +228,9 @@ def render_notice_filter_sidebar(
     current_only_default: bool = True,
     status_default: str = "전체",
 ) -> tuple[str, bool, str]:
-    status_options = ["전체", "접수중", "예정", "마감"]
-    if status_default not in status_options:
-        status_default = "전체"
-
     st.sidebar.markdown("## Notice Filters")
     search_text = st.sidebar.text_input("통합 검색", "", key="sidebar_search")
-    current_only = st.sidebar.checkbox(
-        "현재 공고만 보기",
-        value=current_only_default,
-        key="sidebar_current_only",
-    )
-    status_scope = st.sidebar.radio(
-        "공고 상태 보기",
-        status_options,
-        index=status_options.index(status_default),
-        key="sidebar_status_scope",
-        horizontal=True,
-    )
-    return search_text, current_only, status_scope
+    return search_text, current_only_default, status_default
 
 
 def update_review_status_in_sheets(notice_id: str, review_status: str, sheet_names: list[str], *, source_label: str) -> None:
@@ -437,15 +421,7 @@ def filter_df(
     else:
         ministry_value = "전체"
 
-    if "공고상태" in working.columns:
-        status_values = sorted(
-            x
-            for x in working["공고상태"].fillna("").astype(str).str.strip().unique().tolist()
-            if clean(x)
-        )
-        status_value = sidebar_selectbox("공고상태", ["전체"] + status_values, key=unified_sidebar_filter_key(f"{prefix}_status"))
-    else:
-        status_value = "전체"
+    status_value = "전체"
 
     review_column = "검토 여부" if "검토 여부" in working.columns else "review_status" if "review_status" in working.columns else ""
     if review_column:
@@ -478,9 +454,6 @@ def filter_df(
 
     if ministry_column and ministry_column in working.columns and ministry_value != "전체":
         working = working[working[ministry_column].fillna("").astype(str).str.strip().eq(ministry_value)]
-
-    if "공고상태" in working.columns and status_value != "전체":
-        working = working[working["공고상태"].fillna("").astype(str).str.strip().eq(status_value)]
 
     if review_column and review_value != "전체":
         working = working[working[review_column].fillna("").astype(str).str.strip().eq(review_value)]
@@ -835,15 +808,6 @@ def render_notice_table_with_scope(
     if ministry_value != "전체" and "소관부처" in working.columns:
         working = working[working["소관부처"].fillna("").astype(str).str.strip().eq(ministry_value)]
 
-    statuses = sorted(
-        value
-        for value in core.series_from_candidates(working, ["공고상태"]).fillna("").astype(str).str.strip().unique().tolist()
-        if clean(value)
-    )
-    status_value = sidebar_selectbox("공고상태", ["전체"] + statuses, key=unified_sidebar_filter_key(f"{page_key}_status"))
-    if status_value != "전체" and "공고상태" in working.columns:
-        working = working[working["공고상태"].fillna("").astype(str).str.strip().eq(status_value)]
-
     reviews = sorted(
         value
         for value in core.series_from_candidates(working, ["검토 여부", "검토여부", "review_status"]).fillna("").astype(str).str.strip().unique().tolist()
@@ -910,15 +874,40 @@ def render_summary_table(summary_df: pd.DataFrame) -> None:
     core.render_clickable_table(filtered, SUMMARY_COLUMNS, page_key="summary", id_column="_viewer_id")
 
 
-def render_opportunity_table(opportunity_df: pd.DataFrame) -> None:
+def filter_opportunity_archive_scope(df: pd.DataFrame, *, archive: bool) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    working = df.copy()
+    status = core.series_from_candidates(working, ["공고상태", "status", "notice_status"]).fillna("").astype(str).str.strip()
+    if status.ne("").any():
+        return working[status.eq("마감")] if archive else working[status.ne("마감")]
+
+    current = core.series_from_candidates(working, ["notice_is_current", "is_current"]).fillna("").astype(str).str.strip()
+    if current.ne("").any():
+        return working[current.ne("Y")] if archive else working[current.eq("Y")]
+
+    return pd.DataFrame() if archive else working
+
+
+def render_opportunity_table(
+    opportunity_df: pd.DataFrame,
+    *,
+    page_key: str = "opportunity",
+    title: str = "Opportunity",
+    archive: bool = False,
+) -> None:
+    st.subheader(title)
+    scoped_df = filter_opportunity_archive_scope(opportunity_df, archive=archive)
     filtered = build_opportunity_table_df(
         filter_df(
-            opportunity_df,
-            prefix="opportunity",
+            scoped_df,
+            prefix=page_key,
             search_columns=["notice_title", "공고명", "project_name", "rfp_title", "keywords", "budget", "notice_id"],
             agency_column="전문기관명",
             ministry_column="소관부처",
             recommendation_column="recommendation",
+            current_column="",
         )
     )
 
@@ -930,8 +919,8 @@ def render_opportunity_table(opportunity_df: pd.DataFrame) -> None:
         ]
     )
 
-    st.caption(f"Opportunity {len(filtered)}건")
-    core.render_clickable_table(filtered, OPPORTUNITY_COLUMNS, page_key="opportunity", id_column="_viewer_id")
+    st.caption(f"{title} {len(filtered)}건")
+    core.render_clickable_table(filtered, OPPORTUNITY_COLUMNS, page_key=page_key, id_column="_viewer_id")
 
 
 
@@ -1057,6 +1046,16 @@ def load_nipa_notice_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     )
 
 
+def load_mss_opportunity_df() -> pd.DataFrame:
+    sheet_name = core.get_env("MSS_OPPORTUNITY_MASTER_SHEET", "MSS_OPPORTUNITY_MASTER")
+    return core.enrich_opportunity_df(core.load_optional_sheet_as_dataframe(sheet_name))
+
+
+def load_nipa_opportunity_df() -> pd.DataFrame:
+    sheet_name = core.get_env("NIPA_OPPORTUNITY_MASTER_SHEET", "NIPA_OPPORTUNITY_MASTER")
+    return core.enrich_opportunity_df(core.load_optional_sheet_as_dataframe(sheet_name))
+
+
 def render_source_notice_table(
     df: pd.DataFrame,
     *,
@@ -1083,7 +1082,7 @@ def render_source_notice_table(
         return
 
     filtered = df.copy()
-    default_status = "마감" if "past" in prefix else "전체"
+    default_status = "예정" if "scheduled" in prefix else "접수중"
     search_text, current_only, status_scope = render_notice_filter_sidebar(
         prefix,
         current_only_default=False,
@@ -1096,7 +1095,6 @@ def render_source_notice_table(
 
     filtered = apply_selectbox_filter(filtered, "전문기관", "전문기관", f"{prefix}_agency")
     filtered = apply_selectbox_filter(filtered, "소관부처", "소관부처", f"{prefix}_ministry")
-    filtered = apply_selectbox_filter(filtered, "공고상태", "공고상태", f"{prefix}_status")
     filtered = apply_selectbox_filter(filtered, "검토 여부", "검토 여부", f"{prefix}_review")
 
     if search_text:
@@ -1142,10 +1140,13 @@ def render_other_crawlers_tab() -> None:
 def render_mss_tab() -> None:
     st.subheader("중소기업벤처부")
     current_df, past_df = load_mss_notice_data()
+    opportunity_df = load_mss_opportunity_df()
     current_page = core.get_query_param("page") or "mss_current"
     page_options = {
-        "mss_current": "중소기업벤처부 진행/예정",
-        "mss_past": "중소기업벤처부 마감",
+        "mss_current": "진행공고",
+        "mss_scheduled": "예정공고",
+        "mss_opportunity": "Opportunity",
+        "mss_opportunity_archive": "Opportunity archive",
     }
     if current_page not in page_options:
         current_page = "mss_current"
@@ -1161,19 +1162,31 @@ def render_mss_tab() -> None:
         st.query_params.update({"source": "tipa", "page": selected_page, "view": "table"})
         st.rerun()
 
-    if current_page == "mss_past":
-        render_mss_table(past_df, prefix="mss_past", title="중소기업벤처부 마감")
+    if current_page == "mss_scheduled":
+        render_mss_table(current_df, prefix="mss_scheduled", title="예정공고")
+    elif current_page == "mss_opportunity":
+        render_opportunity_table(opportunity_df, page_key="mss_opportunity", title="Opportunity")
+    elif current_page == "mss_opportunity_archive":
+        render_opportunity_table(
+            opportunity_df,
+            page_key="mss_opportunity_archive",
+            title="Opportunity archive",
+            archive=True,
+        )
     else:
-        render_mss_table(current_df, prefix="mss_current", title="중소기업벤처부 진행/예정")
+        render_mss_table(current_df, prefix="mss_current", title="진행공고")
 
 
 def render_nipa_tab() -> None:
     st.subheader("NIPA")
     current_df, past_df = load_nipa_notice_data()
+    opportunity_df = load_nipa_opportunity_df()
     current_page = core.get_query_param("page") or "nipa_current"
     page_options = {
-        "nipa_current": "NIPA 진행/예정",
-        "nipa_past": "NIPA 마감",
+        "nipa_current": "진행공고",
+        "nipa_scheduled": "예정공고",
+        "nipa_opportunity": "Opportunity",
+        "nipa_opportunity_archive": "Opportunity archive",
     }
     if current_page not in page_options:
         current_page = "nipa_current"
@@ -1189,10 +1202,19 @@ def render_nipa_tab() -> None:
         st.query_params.update({"source": "nipa", "page": selected_page, "view": "table"})
         st.rerun()
 
-    if current_page == "nipa_past":
-        render_nipa_table(past_df, prefix="nipa_past", title="NIPA 마감")
+    if current_page == "nipa_scheduled":
+        render_nipa_table(current_df, prefix="nipa_scheduled", title="예정공고")
+    elif current_page == "nipa_opportunity":
+        render_opportunity_table(opportunity_df, page_key="nipa_opportunity", title="Opportunity")
+    elif current_page == "nipa_opportunity_archive":
+        render_opportunity_table(
+            opportunity_df,
+            page_key="nipa_opportunity_archive",
+            title="Opportunity archive",
+            archive=True,
+        )
     else:
-        render_nipa_table(current_df, prefix="nipa_current", title="NIPA 진행/예정")
+        render_nipa_table(current_df, prefix="nipa_current", title="진행공고")
 
 
 def normalize_favorite_notice_df(df: pd.DataFrame, *, source_key: str, source_label: str) -> pd.DataFrame:
@@ -1312,33 +1334,32 @@ def render_favorite_notice_page(notice_df: pd.DataFrame, opportunity_df: pd.Data
 
 
 def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
-    if page in {"mss_current", "mss_past"}:
-        current_df, past_df = load_mss_notice_data()
-        source_df = past_df if page == "mss_past" else current_df
+    if page in {"mss_current", "mss_scheduled"}:
+        current_df, _ = load_mss_notice_data()
+        source_df = current_df
         selected_id = core.get_query_param("id")
         row = core.get_row_by_column_value(source_df, "공고ID", selected_id)
-        back_label = "중소기업벤처부 마감 목록" if page == "mss_past" else "중소기업벤처부 진행/예정 목록"
+        back_label = "예정공고 목록" if page == "mss_scheduled" else "진행공고 목록"
         if st.button(back_label, use_container_width=True):
             core.switch_to_table(page)
         render_notice_detail(row or {}, pd.DataFrame())
         return
 
-    if page in {"nipa_current", "nipa_past"}:
-        current_df, past_df = load_nipa_notice_data()
-        source_df = past_df if page == "nipa_past" else current_df
+    if page in {"nipa_current", "nipa_scheduled"}:
+        current_df, _ = load_nipa_notice_data()
+        source_df = current_df
         selected_id = core.get_query_param("id")
         row = core.get_row_by_column_value(source_df, "공고ID", selected_id)
-        back_label = "NIPA 마감 목록" if page == "nipa_past" else "NIPA 진행/예정 목록"
+        back_label = "예정공고 목록" if page == "nipa_scheduled" else "진행공고 목록"
         if st.button(back_label, use_container_width=True):
             core.switch_to_table(page)
         render_notice_detail(row or {}, pd.DataFrame())
         return
 
-    if page in {"notice", "notice_scheduled", "notice_closed"}:
+    if page in {"notice", "notice_scheduled"}:
         notice_back_labels = {
-            "notice": "진행 공고 테이블로 돌아가기",
-            "notice_scheduled": "예정 공고 테이블로 돌아가기",
-            "notice_closed": "마감 공고 테이블로 돌아가기",
+            "notice": "진행공고 테이블로 돌아가기",
+            "notice_scheduled": "예정공고 테이블로 돌아가기",
         }
         if st.button(notice_back_labels.get(page, "테이블로 돌아가기"), use_container_width=True):
             core.switch_to_table(page)
@@ -1348,31 +1369,20 @@ def render_detail_page(page: str, notice_df: pd.DataFrame, summary_df: pd.DataFr
         render_notice_detail(add_period_alias(pd.DataFrame([row])).iloc[0].to_dict() if row else {}, opportunity_df)
         return
 
-    nav1, nav2, nav3 = st.columns(3)
-    with nav1:
-        if st.button("Notice 목록", use_container_width=True):
-            core.switch_to_table("notice")
-    with nav2:
-        if st.button("Summary 목록", use_container_width=True):
-            core.switch_to_table("summary")
-    with nav3:
-        if st.button("Opportunity 목록", use_container_width=True):
-            core.switch_to_table("opportunity")
-
-    if page == "summary":
-        if st.button("Summary 테이블로 돌아가기", key="summary_back_to_table", use_container_width=True):
-            core.switch_to_table("summary")
+    source_opportunity_pages = {
+        "opportunity": (opportunity_df, "opportunity"),
+        "opportunity_archive": (opportunity_df, "opportunity_archive"),
+        "mss_opportunity": (load_mss_opportunity_df(), "mss_opportunity"),
+        "mss_opportunity_archive": (load_mss_opportunity_df(), "mss_opportunity_archive"),
+        "nipa_opportunity": (load_nipa_opportunity_df(), "nipa_opportunity"),
+        "nipa_opportunity_archive": (load_nipa_opportunity_df(), "nipa_opportunity_archive"),
+    }
+    if page in source_opportunity_pages:
+        source_df, back_page = source_opportunity_pages[page]
+        if st.button("Opportunity 테이블로 돌아가기", key=f"{page}_back_to_table", use_container_width=True):
+            core.switch_to_table(back_page)
         selected_id = core.get_query_param("id")
-        working = add_viewer_id(add_period_alias(summary_df), kind="summary")
-        row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
-        render_summary_detail(add_period_alias(pd.DataFrame([row])).iloc[0].to_dict() if row else {}, opportunity_df)
-        return
-
-    if page == "opportunity":
-        if st.button("Opportunity 테이블로 돌아가기", key="opportunity_back_to_table", use_container_width=True):
-            core.switch_to_table("opportunity")
-        selected_id = core.get_query_param("id")
-        working = build_opportunity_table_df(opportunity_df)
+        working = build_opportunity_table_df(source_df)
         row = core.get_row_by_column_value(working, "_viewer_id", selected_id)
         if row:
             row = add_period_alias(pd.DataFrame([row])).iloc[0].to_dict()
@@ -1410,11 +1420,13 @@ def main() -> None:
         st.stop()
 
     current_source = core.get_query_param("source") or "iris"
-    source_index_map = {"iris": 0, "tipa": 1, "nipa": 2, "favorites": 3, "other": 4, "other_crawlers": 4}
+    if current_source not in {"iris", "tipa", "nipa"}:
+        current_source = "iris"
+    source_index_map = {"iris": 0, "tipa": 1, "nipa": 2}
     source_index = source_index_map.get(current_source, 0)
     selected_source = st.radio(
         "Source",
-        ["IRIS", "중소기업벤처부", "NIPA", "관심 공고", "Other Crawlers"],
+        ["IRIS", "중소기업벤처부", "NIPA"],
         horizontal=True,
         index=source_index,
     )
@@ -1424,18 +1436,14 @@ def main() -> None:
         selected_source_key = "tipa"
     elif selected_source == "NIPA":
         selected_source_key = "nipa"
-    elif selected_source == "관심 공고":
-        selected_source_key = "favorites"
     else:
-        selected_source_key = "other_crawlers"
+        selected_source_key = "iris"
 
     if selected_source_key != current_source:
         if selected_source_key == "tipa":
             default_page = "mss_current"
         elif selected_source_key == "nipa":
             default_page = "nipa_current"
-        elif selected_source_key == "favorites":
-            default_page = "favorites"
         else:
             default_page = "notice"
         st.query_params.clear()
@@ -1461,21 +1469,11 @@ def main() -> None:
         render_nipa_tab()
         return
 
-    if selected_source_key == "favorites":
-        render_favorite_notice_page(notice_df, opportunity_df)
-        return
-
-    if selected_source_key == "other_crawlers":
-        render_other_crawlers_tab()
-        return
-
-    st.caption("선택한 화면 하나만 렌더링해서 사이드바를 app과 비슷하게 유지합니다.")
     page_options = {
-        "notice": "진행 공고",
-        "notice_scheduled": "예정 공고",
-        "notice_closed": "마감 공고",
-        "summary": "Summary",
+        "notice": "진행공고",
+        "notice_scheduled": "예정공고",
         "opportunity": "Opportunity",
+        "opportunity_archive": "Opportunity archive",
     }
     if current_page not in page_options:
         current_page = "notice"
@@ -1500,25 +1498,21 @@ def main() -> None:
             status_scope="예정",
             current_only_default=True,
         )
-    elif current_page == "notice_closed":
-        render_notice_table_with_scope(
-            notice_df,
-            opportunity_df,
-            page_key="notice_closed",
-            title="마감 공고",
-            status_scope="마감",
-            current_only_default=False,
-        )
-    elif current_page == "summary":
-        render_summary_table(summary_df)
     elif current_page == "opportunity":
-        render_opportunity_table(opportunity_df)
+        render_opportunity_table(opportunity_df, page_key="opportunity", title="Opportunity")
+    elif current_page == "opportunity_archive":
+        render_opportunity_table(
+            opportunity_df,
+            page_key="opportunity_archive",
+            title="Opportunity archive",
+            archive=True,
+        )
     else:
         render_notice_table_with_scope(
             notice_df,
             opportunity_df,
             page_key="notice",
-            title="진행 공고",
+            title="진행공고",
             status_scope="접수중",
             current_only_default=True,
         )

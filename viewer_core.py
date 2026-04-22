@@ -118,7 +118,7 @@ def load_optional_sheet_as_dataframe(sheet_name: str) -> pd.DataFrame:
     try:
         return load_sheet_as_dataframe(sheet_name)
     except Exception as exc:
-        if "WorksheetNotFound" in str(exc) or "not found" in str(exc).lower():
+        if isinstance(exc, gspread.WorksheetNotFound) or "WorksheetNotFound" in str(exc) or "not found" in str(exc).lower():
             return pd.DataFrame()
         raise
 
