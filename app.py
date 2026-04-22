@@ -263,6 +263,32 @@ def render_notice_filter_sidebar(
     return search_text, current_only_default, status_default
 
 
+def normalize_notice_status_label(value: object) -> str:
+    text = clean(value)
+    lowered = text.lower()
+    if not text:
+        return ""
+    if "예정" in text or "pre" in lowered:
+        return "예정"
+    if "접수중" in text or "공고중" in text or "진행" in text or "ing" in lowered or "open" in lowered:
+        return "접수중"
+    if "마감" in text or "종료" in text or "closed" in lowered or "end" in lowered:
+        return "마감"
+    return text
+
+
+def filter_notice_status_scope(df: pd.DataFrame, status_scope: str) -> pd.DataFrame:
+    if df.empty or status_scope == "전체":
+        return df
+
+    status_series = core.series_from_candidates(
+        df,
+        ["공고상태", "상태", "status", "rcve_status", "notice_status"],
+    )
+    normalized = status_series.fillna("").astype(str).apply(normalize_notice_status_label)
+    return df[normalized.eq(status_scope)].copy()
+
+
 def update_review_status_in_sheets(notice_id: str, review_status: str, sheet_names: list[str], *, source_label: str) -> None:
     notice_id = clean(notice_id)
     if not notice_id:
@@ -485,8 +511,7 @@ def filter_df(
 
     if current_only and current_column in working.columns:
         working = working[working[current_column].fillna("").astype(str).str.strip().eq("Y")]
-    if status_scope != "전체" and "공고상태" in working.columns:
-        working = working[working["공고상태"].fillna("").astype(str).str.strip().eq(status_scope)]
+    working = filter_notice_status_scope(working, status_scope)
 
     if agency_column and agency_column in working.columns and agency_value != "전체":
         working = working[working[agency_column].fillna("").astype(str).str.strip().eq(agency_value)]
@@ -867,8 +892,7 @@ def render_notice_table_with_scope(
     if current_only and "is_current" in working.columns:
         working = working[working["is_current"].fillna("").astype(str).str.strip().eq("Y")]
 
-    if "공고상태" in working.columns and status_scope != "전체":
-        working = working[working["공고상태"].fillna("").astype(str).str.strip().eq(status_scope)]
+    working = filter_notice_status_scope(working, status_scope)
 
     agencies = sorted(
         value
@@ -1170,8 +1194,7 @@ def render_source_notice_table(
     )
     if current_only and "is_current" in filtered.columns:
         filtered = filtered[filtered["is_current"].fillna("").astype(str).str.strip().eq("Y")]
-    if status_scope != "전체" and "공고상태" in filtered.columns:
-        filtered = filtered[filtered["공고상태"].fillna("").astype(str).str.strip().eq(status_scope)]
+    filtered = filter_notice_status_scope(filtered, status_scope)
 
     filtered = apply_selectbox_filter(filtered, "전문기관", "전문기관", f"{prefix}_agency")
     filtered = apply_selectbox_filter(filtered, "소관부처", "소관부처", f"{prefix}_ministry")
@@ -1389,8 +1412,7 @@ def render_favorite_notice_page(notice_df: pd.DataFrame, opportunity_df: pd.Data
     )
     if current_only and "is_current" in filtered.columns:
         filtered = filtered[filtered["is_current"].fillna("").astype(str).str.strip().eq("Y")]
-    if status_scope != "전체" and "공고상태" in filtered.columns:
-        filtered = filtered[filtered["공고상태"].fillna("").astype(str).str.strip().eq(status_scope)]
+    filtered = filter_notice_status_scope(filtered, status_scope)
 
     filtered = apply_selectbox_filter(filtered, "전문기관", "전문기관", "favorites_agency")
     filtered = apply_selectbox_filter(filtered, "소관부처", "소관부처", "favorites_ministry")
