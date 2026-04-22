@@ -16,6 +16,7 @@ NOTICE_COLUMNS = [
     "공고기간",
     "전문기관",
     "공고명",
+    "상세링크",
     "대표추천도",
     "대표과제명",
     "대표예산",
@@ -40,6 +41,7 @@ OPPORTUNITY_COLUMNS = [
     "공고기간",
     "전문기관",
     "공고명",
+    "상세링크",
     "과제명",
     "추천도",
     "점수",
@@ -67,6 +69,7 @@ MSS_COLUMNS = [
     "신청기간",
     "담당부서",
     "공고명",
+    "상세링크",
     "공고번호",
     "상태",
     "검토 여부",
@@ -77,6 +80,7 @@ NIPA_COLUMNS = [
     "신청기간",
     "사업명",
     "공고명",
+    "상세링크",
     "공고번호",
     "상태",
     "검토 여부",
@@ -89,6 +93,7 @@ FAVORITE_COLUMNS = [
     "전문기관",
     "담당부서",
     "공고명",
+    "상세링크",
     "공고번호",
     "공고상태",
     "검토 여부",
@@ -203,6 +208,31 @@ def append_notice_comment(
     }
     ws.append_row([row[column] for column in COMMENT_COLUMNS], value_input_option="USER_ENTERED")
     core.load_sheet_as_dataframe.clear()
+
+
+def delete_notice_comment(comment_id: str) -> None:
+    comment_id = clean(comment_id)
+    if not comment_id:
+        raise RuntimeError("삭제할 댓글 ID가 없습니다.")
+
+    ws = core.get_worksheet(get_comment_sheet_name())
+    values = ws.get_all_values()
+    if not values:
+        raise RuntimeError("댓글 이력 시트가 비어 있습니다.")
+
+    header = [clean(x) for x in values[0]]
+    if "comment_id" not in header:
+        raise RuntimeError("댓글 이력 시트에 comment_id 컬럼이 없습니다.")
+
+    comment_id_col = header.index("comment_id")
+    for row_index, sheet_row in enumerate(values[1:], start=2):
+        current_comment_id = clean(sheet_row[comment_id_col] if comment_id_col < len(sheet_row) else "")
+        if current_comment_id == comment_id:
+            ws.delete_rows(row_index)
+            core.load_sheet_as_dataframe.clear()
+            return
+
+    raise RuntimeError("삭제할 댓글을 찾지 못했습니다.")
 
 
 def resolve_notice_source_key(row: dict | None) -> str:
@@ -377,12 +407,21 @@ def render_notice_comments(row: dict, section_key: str) -> None:
 
     st.caption(f"댓글 이력 {len(matched)}건")
     for _, comment_row in matched.iterrows():
+        comment_id = clean(comment_row.get("comment_id"))
         created_at = clean(comment_row.get("created_at"))
         author = clean(comment_row.get("author")) or "익명"
         comment_text = clean(comment_row.get("comment"))
+        delete_key = f"{section_key}_delete_comment_{comment_id}"
         with st.container(border=True):
             st.caption(" · ".join([value for value in [created_at, author] if value]))
             st.write(comment_text)
+            if comment_id and st.button("댓글 삭제", key=delete_key):
+                try:
+                    delete_notice_comment(comment_id)
+                    st.success("댓글을 삭제했습니다.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"댓글 삭제 실패: {exc}")
 
 
 def filter_df(
@@ -684,11 +723,24 @@ def render_summary_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
     if detail_link:
         st.link_button("IRIS 상세 바로가기", detail_link, use_container_width=True)
 
+    render_notice_comments(row, section_key=f"summary_{clean(row.get('공고ID'))}")
+
 
 def render_opportunity_detail(row: dict) -> None:
+    source_key = resolve_notice_source_key(row)
+    if source_key == "tipa":
+        detail_button_label = "중소기업벤처부 상세 바로가기"
+        kicker = "중소기업벤처부 / Opportunity"
+    elif source_key == "nipa":
+        detail_button_label = "NIPA 상세 바로가기"
+        kicker = "NIPA / Opportunity"
+    else:
+        detail_button_label = "IRIS 상세 바로가기"
+        kicker = "IRIS / Opportunity"
+
     core.render_detail_header(
         title=first_non_empty(row, "project_name", "rfp_title", "공고명"),
-        kicker="IRIS / Opportunity",
+        kicker=kicker,
         chips=[
             (clean(row.get("recommendation")), "accent"),
             (f"점수 {clean(row.get('rfp_score'))}" if clean(row.get("rfp_score")) else "", "neutral"),
@@ -735,7 +787,35 @@ def render_opportunity_detail(row: dict) -> None:
 
     detail_link = first_non_empty(row, "상세링크", "detail_link")
     if detail_link:
-        st.link_button("IRIS 상세 바로가기", detail_link, use_container_width=True)
+        st.link_button(detail_button_label, detail_link, use_container_width=True)
+
+    notice_id = first_non_empty(row, "notice_id", "공고ID")
+    st.markdown("### 검토 상태")
+    left_review, right_review = st.columns([1, 1])
+    with left_review:
+        core.render_detail_card(
+            "현재 상태",
+            [
+                ("검토 여부", first_non_empty(row, "review_status", "검토 여부")),
+                ("공고상태", first_non_empty(row, "rcve_status", "공고상태")),
+            ],
+        )
+    with right_review:
+        render_review_editor(
+            notice_id,
+            first_non_empty(row, "review_status", "검토 여부"),
+            form_key=f"opportunity_review_{source_key}_{notice_id}",
+            source_key=source_key,
+        )
+
+    comment_row = {
+        **row,
+        "공고ID": notice_id,
+        "공고명": first_non_empty(row, "notice_title", "공고명"),
+        "검토 여부": first_non_empty(row, "review_status", "검토 여부"),
+        "_source_key": source_key,
+    }
+    render_notice_comments(comment_row, section_key=f"opportunity_{source_key}_{notice_id}")
 
 
 def render_notice_table(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
@@ -1420,13 +1500,13 @@ def main() -> None:
         st.stop()
 
     current_source = core.get_query_param("source") or "iris"
-    if current_source not in {"iris", "tipa", "nipa"}:
+    if current_source not in {"iris", "tipa", "nipa", "favorites"}:
         current_source = "iris"
-    source_index_map = {"iris": 0, "tipa": 1, "nipa": 2}
+    source_index_map = {"iris": 0, "tipa": 1, "nipa": 2, "favorites": 3}
     source_index = source_index_map.get(current_source, 0)
     selected_source = st.radio(
         "Source",
-        ["IRIS", "중소기업벤처부", "NIPA"],
+        ["IRIS", "중소기업벤처부", "NIPA", "관심 공고"],
         horizontal=True,
         index=source_index,
     )
@@ -1436,6 +1516,8 @@ def main() -> None:
         selected_source_key = "tipa"
     elif selected_source == "NIPA":
         selected_source_key = "nipa"
+    elif selected_source == "관심 공고":
+        selected_source_key = "favorites"
     else:
         selected_source_key = "iris"
 
@@ -1444,6 +1526,8 @@ def main() -> None:
             default_page = "mss_current"
         elif selected_source_key == "nipa":
             default_page = "nipa_current"
+        elif selected_source_key == "favorites":
+            default_page = "favorites"
         else:
             default_page = "notice"
         st.query_params.clear()
@@ -1456,6 +1540,10 @@ def main() -> None:
 
     current_page = core.get_query_param("page") or "notice"
     current_view = core.get_query_param("view") or "table"
+
+    if selected_source_key == "favorites":
+        render_favorite_notice_page(notice_df, opportunity_df)
+        return
 
     if current_view == "detail":
         render_detail_page(current_page, notice_df, summary_df, opportunity_df)

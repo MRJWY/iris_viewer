@@ -678,6 +678,13 @@ def render_clickable_table(df: pd.DataFrame, preferred_columns: list[str], page_
         cells = []
         for column in display_columns:
             value = compact_table_value(row.get(column), 100 if column in {"공고명", "project_name"} else 50)
+            if column in {"상세링크", "detail_link"}:
+                raw_link = clean(row.get(column))
+                if raw_link:
+                    cells.append(
+                        f'<td><a href="{escape(raw_link, quote=True)}" title="{escape(clean(row.get(column)))}" target="_blank" rel="noopener noreferrer">상세</a></td>'
+                    )
+                    continue
             cells.append(
                 f'<td><a href="{escape(href, quote=True)}" title="{escape(clean(row.get(column)))}" target="_self">{escape(value)}</a></td>'
             )
