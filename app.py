@@ -803,6 +803,30 @@ def render_opportunity_detail(row: dict) -> None:
         "분석 내용",
         [
             ("추천 이유", first_non_empty(row, "reason")),
+            ("전략적합도", first_non_empty(row, "llm_score_strategic_fit_score", "strategic_fit_score", "전략적합도")),
+            ("전략적합도 사유", first_non_empty(row, "llm_score_strategic_fit_reason", "strategic_fit_reason", "전략적합도사유")),
+            ("기술관련도", first_non_empty(row, "llm_score_tech_relevance_score", "tech_relevance_score", "기술관련도")),
+            ("기술관련도 사유", first_non_empty(row, "llm_score_tech_relevance_reason", "tech_relevance_reason", "기술관련도사유")),
+            ("긴급도", first_non_empty(row, "llm_score_urgency_score", "urgency_score", "긴급도")),
+            ("긴급도 사유", first_non_empty(row, "llm_score_urgency_reason", "urgency_reason", "긴급도사유")),
+            (
+                "시장정합도",
+                first_non_empty(
+                    row,
+                    "llm_score_market_alignment_score",
+                    "market_alignment_score",
+                    "시장정합도",
+                ),
+            ),
+            (
+                "시장정합도 사유",
+                first_non_empty(
+                    row,
+                    "llm_score_market_alignment_reason",
+                    "market_alignment_reason",
+                    "시장정합도사유",
+                ),
+            ),
             ("개념 및 개발 내용", first_non_empty(row, "concept_and_development", "development_content")),
             ("지원필요성", first_non_empty(row, "support_need", "support_necessity", "technical_background")),
             ("활용분야", first_non_empty(row, "application_field")),
