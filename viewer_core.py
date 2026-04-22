@@ -653,7 +653,7 @@ def compact_table_value(value: str, max_chars: int = 80) -> str:
 def build_route_href(page_key: str, identifier: str) -> str:
     params = {"page": page_key, "view": "detail", "id": clean(identifier)}
     current_source = get_query_param("source")
-    if current_source:
+    if current_source and not (current_source == "favorites" and page_key != "favorites"):
         params["source"] = current_source
     return f"?{urlencode(params)}"
 
