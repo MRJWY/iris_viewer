@@ -659,7 +659,7 @@ def render_notice_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
         ],
     )
 
-    detail_link = clean(row.get("상세링크"))
+    detail_link = core.resolve_external_detail_link(row, source_key=source_key)
     if detail_link:
         st.link_button(detail_button_label, detail_link, use_container_width=True)
 
@@ -744,7 +744,7 @@ def render_summary_detail(row: dict, opportunity_df: pd.DataFrame) -> None:
         ],
     )
 
-    detail_link = clean(row.get("상세링크"))
+    detail_link = core.resolve_external_detail_link(row)
     if detail_link:
         st.link_button("IRIS 상세 바로가기", detail_link, use_container_width=True)
 
@@ -803,6 +803,30 @@ def render_opportunity_detail(row: dict) -> None:
         "분석 내용",
         [
             ("추천 이유", first_non_empty(row, "reason")),
+            ("전략적합도", first_non_empty(row, "llm_score_strategic_fit_score", "strategic_fit_score", "전략적합도")),
+            ("전략적합도 사유", first_non_empty(row, "llm_score_strategic_fit_reason", "strategic_fit_reason", "전략적합도사유")),
+            ("기술관련도", first_non_empty(row, "llm_score_tech_relevance_score", "tech_relevance_score", "기술관련도")),
+            ("기술관련도 사유", first_non_empty(row, "llm_score_tech_relevance_reason", "tech_relevance_reason", "기술관련도사유")),
+            ("긴급도", first_non_empty(row, "llm_score_urgency_score", "urgency_score", "긴급도")),
+            ("긴급도 사유", first_non_empty(row, "llm_score_urgency_reason", "urgency_reason", "긴급도사유")),
+            (
+                "시장정합도",
+                first_non_empty(
+                    row,
+                    "llm_score_market_alignment_score",
+                    "market_alignment_score",
+                    "시장정합도",
+                ),
+            ),
+            (
+                "시장정합도 사유",
+                first_non_empty(
+                    row,
+                    "llm_score_market_alignment_reason",
+                    "market_alignment_reason",
+                    "시장정합도사유",
+                ),
+            ),
             ("개념 및 개발 내용", first_non_empty(row, "concept_and_development", "development_content")),
             ("지원필요성", first_non_empty(row, "support_need", "support_necessity", "technical_background")),
             ("활용분야", first_non_empty(row, "application_field")),
@@ -810,7 +834,7 @@ def render_opportunity_detail(row: dict) -> None:
         ],
     )
 
-    detail_link = first_non_empty(row, "상세링크", "detail_link")
+    detail_link = core.resolve_external_detail_link(row, source_key=source_key)
     if detail_link:
         st.link_button(detail_button_label, detail_link, use_container_width=True)
 

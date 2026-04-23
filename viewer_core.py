@@ -22,6 +22,49 @@ def clean(value) -> str:
     return str(value or "").strip()
 
 
+IRIS_DETAIL_BASE_URL = "https://www.iris.go.kr/contents/retrieveBsnsAncmView.do"
+
+
+def build_iris_detail_link(notice_id: object, status_key: object = "") -> str:
+    notice_id_text = clean(notice_id)
+    if not notice_id_text:
+        return ""
+    params = {
+        "ancmId": notice_id_text,
+        "ancmStsCd": clean(status_key) or "ancmIng",
+    }
+    return f"{IRIS_DETAIL_BASE_URL}?{urlencode(params)}"
+
+
+def row_first_non_empty(row: dict | pd.Series, *keys: str) -> str:
+    for key in keys:
+        value = clean(row.get(key))
+        if value:
+            return value
+    return ""
+
+
+def resolve_external_detail_link(row: dict | pd.Series, source_key: str = "") -> str:
+    link = row_first_non_empty(row, "상세링크", "detail_link")
+    normalized_source = clean(
+        source_key
+        or row.get("_source_key")
+        or row.get("source_site")
+        or row.get("출처사이트")
+    ).lower()
+    if normalized_source in {"tipa", "mss", "nipa"}:
+        return link
+
+    notice_id = row_first_non_empty(row, "공고ID", "notice_id")
+    if not notice_id:
+        return link
+
+    status_key = row_first_non_empty(row, "상태키", "status_key")
+    if not link or (IRIS_DETAIL_BASE_URL in link and "ancmStsCd=" not in link):
+        return build_iris_detail_link(notice_id, status_key)
+    return link
+
+
 def series_from_candidates(df: pd.DataFrame, candidates: list[str]) -> pd.Series:
     if df.empty:
         return pd.Series(dtype="object")
@@ -165,6 +208,11 @@ def enrich_notice_df(df: pd.DataFrame) -> pd.DataFrame:
 
     if title_col not in enriched.columns:
         enriched[title_col] = series_from_candidates(enriched, [title_col, "notice_title", "title"])
+    enriched["공고ID"] = series_from_candidates(enriched, ["공고ID", "notice_id"])
+    enriched["상태키"] = series_from_candidates(enriched, ["상태키", "status_key"])
+    enriched["상세링크"] = series_from_candidates(enriched, ["상세링크", "detail_link"])
+    enriched["상세링크"] = enriched.apply(resolve_external_detail_link, axis=1)
+    enriched["detail_link"] = enriched["상세링크"]
 
     if score_col in enriched.columns:
         enriched[score_col] = to_numeric_column(enriched[score_col])
@@ -208,6 +256,8 @@ def enrich_opportunity_df(df: pd.DataFrame) -> pd.DataFrame:
     enriched["ministry"] = series_from_candidates(enriched, ["소관부처", "ministry"])
     enriched["detail_link"] = series_from_candidates(enriched, ["상세링크", "detail_link"])
     enriched["notice_id"] = series_from_candidates(enriched, ["공고ID", "notice_id"])
+    enriched["상세링크"] = enriched.apply(resolve_external_detail_link, axis=1)
+    enriched["detail_link"] = enriched["상세링크"]
     enriched["document_id"] = series_from_candidates(enriched, ["문서ID", "document_id"])
     enriched["keywords"] = series_from_candidates(enriched, ["키워드", "keywords"])
     enriched["reason"] = series_from_candidates(enriched, ["추천이유", "reason"])
@@ -262,6 +312,8 @@ def enrich_opportunity_with_notice_meta(opportunity_df: pd.DataFrame, notice_df:
         "접수기간",
         "상세링크",
         "소관부처",
+        "상태키",
+        "status_key",
     ]
     available_columns = [column for column in keep_columns if column in notice_meta.columns]
     notice_meta = notice_meta[available_columns].drop_duplicates(subset=["공고ID"], keep="first")
@@ -279,6 +331,7 @@ def enrich_opportunity_with_notice_meta(opportunity_df: pd.DataFrame, notice_df:
         "접수기간": ["접수기간", "period"],
         "상세링크": ["상세링크", "detail_link"],
         "소관부처": ["소관부처", "ministry"],
+        "상태키": ["상태키", "status_key"],
     }
     for target, candidates in fallback_pairs.items():
         candidate_columns = [target]
@@ -290,6 +343,8 @@ def enrich_opportunity_with_notice_meta(opportunity_df: pd.DataFrame, notice_df:
                 candidate_columns.append(notice_candidate)
         merged[target] = series_from_candidates(merged, candidate_columns)
 
+    merged["상세링크"] = merged.apply(resolve_external_detail_link, axis=1)
+    merged["detail_link"] = merged["상세링크"]
     return merged
 
 
@@ -322,7 +377,7 @@ def enrich_summary_with_notice_meta(summary_df: pd.DataFrame, notice_df: pd.Data
 
     notice_meta = notice_df.copy()
     notice_meta["공고ID"] = notice_meta["공고ID"].fillna("").astype(str).str.strip()
-    keep_columns = ["공고ID", "상세링크", "전문기관", "소관부처", "공고상태", "접수기간", "공고일자"]
+    keep_columns = ["공고ID", "상세링크", "전문기관", "소관부처", "공고상태", "접수기간", "공고일자", "상태키", "status_key"]
     available_columns = [column for column in keep_columns if column in notice_meta.columns]
     notice_meta = notice_meta[available_columns].drop_duplicates(subset=["공고ID"], keep="first")
 
@@ -330,13 +385,15 @@ def enrich_summary_with_notice_meta(summary_df: pd.DataFrame, notice_df: pd.Data
     merged["공고ID"] = merged["공고ID"].fillna("").astype(str).str.strip()
     merged = merged.merge(notice_meta, on="공고ID", how="left", suffixes=("", "_notice"))
 
-    for target in ["상세링크", "전문기관", "소관부처", "공고상태", "접수기간", "공고일자"]:
+    for target in ["상세링크", "전문기관", "소관부처", "공고상태", "접수기간", "공고일자", "상태키", "status_key"]:
         candidate_columns = [target]
         notice_target = f"{target}_notice"
         if notice_target in merged.columns:
             candidate_columns.append(notice_target)
         merged[target] = series_from_candidates(merged, candidate_columns)
 
+    merged["상세링크"] = merged.apply(resolve_external_detail_link, axis=1)
+    merged["detail_link"] = merged["상세링크"]
     return merged
 
 
