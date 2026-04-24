@@ -1,6 +1,8 @@
 # IRIS Viewer
 
 Streamlit viewer for IRIS R&D notices and selected external crawler sources.
+This folder is prepared as a standalone viewer bundle that shares the same UI
+structure and routing model as the admin app.
 
 ## Structure
 
@@ -16,8 +18,12 @@ Streamlit viewer for IRIS R&D notices and selected external crawler sources.
   - `NIPA_PAST`: closed notices
 - `관심 공고`
   - unified view for notices whose review status is `관심공고`
-- `Other Crawlers`
-  - reserved for future sources
+- `shared_app.py`
+  - shared renderer and routing logic copied from the main app
+- `app.py`
+  - thin viewer entrypoint that runs `shared_app.main(app_mode="viewer")`
+- `app_config.py`
+  - mode/source/page config used by the shared app
 
 Notice detail pages support review status updates and comment history through Google Sheets.
 
@@ -42,4 +48,3 @@ Optional:
 pip install -r requirements.txt
 streamlit run app.py
 ```
-iris_analysis_viewer
