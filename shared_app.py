@@ -3141,8 +3141,6 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
             form_key=f"summary_review_form_{clean(row.get('공고ID'))}",
         )
 
-    render_notice_comments(row, section_key=f"summary_{clean(row.get('공고ID'))}")
-
     st.markdown('<div class="detail-section-title">대표 분석 요약</div>', unsafe_allow_html=True)
     render_detail_card(
         "대표 RFP 분석",
@@ -3191,6 +3189,8 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
             ("대표키워드", first_non_empty(top_related, "llm_keywords", "keywords", "대표키워드")),
         ],
     )
+
+    render_notice_comments(row, section_key=f"summary_{clean(row.get('공고ID'))}")
 
 
 def render_notice_page(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
