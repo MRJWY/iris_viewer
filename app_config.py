@@ -4,6 +4,21 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class NavItemConfig:
+    key: str
+    label: str
+    source_key: str
+    page_key: str
+
+
+@dataclass(frozen=True)
+class NavGroupConfig:
+    key: str
+    label: str
+    items: tuple[NavItemConfig, ...]
+
+
+@dataclass(frozen=True)
 class SourcePageConfig:
     key: str
     label: str
@@ -33,6 +48,7 @@ class AppModeConfig:
     header_title: str
     header_caption: str
     supports_summary: bool
+    nav_groups: tuple[NavGroupConfig, ...]
     sources: tuple[SourceRouteConfig, ...]
     default_source: str
     default_iris_page: str
@@ -91,10 +107,60 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
         ),
     )
     sources = (
+        SourceRouteConfig("dashboard", "Dashboard", "dashboard", True, "dashboard"),
         SourceRouteConfig("iris", "IRIS", "notice", False, "iris"),
         SourceRouteConfig("tipa", "중소기업벤처부", "tipa_current", True, "external", page_configs=tipa_pages),
         SourceRouteConfig("nipa", "NIPA", "nipa_current", True, "external", page_configs=nipa_pages),
         SourceRouteConfig("favorites", "관심 공고", "favorites", True, "favorites"),
+    )
+    common_nav_groups = (
+        NavGroupConfig(
+            "overview",
+            "Dashboard",
+            (
+                NavItemConfig("dashboard_home", "Overview", "dashboard", "dashboard"),
+            ),
+        ),
+        NavGroupConfig(
+            "notice",
+            "공고",
+            (
+                NavItemConfig("iris_notice", "IRIS 진행공고", "iris", "notice"),
+                NavItemConfig("iris_notice_scheduled", "IRIS 예정공고", "iris", "notice_scheduled"),
+                NavItemConfig("tipa_current", "TIPA 진행공고", "tipa", "tipa_current"),
+                NavItemConfig("tipa_scheduled", "TIPA 예정공고", "tipa", "tipa_scheduled"),
+                NavItemConfig("nipa_current", "NIPA 진행공고", "nipa", "nipa_current"),
+                NavItemConfig("nipa_scheduled", "NIPA 예정공고", "nipa", "nipa_scheduled"),
+                NavItemConfig("favorites", "관심 공고", "favorites", "favorites"),
+            ),
+        ),
+        NavGroupConfig(
+            "opportunity",
+            "Opportunity",
+            (
+                NavItemConfig("iris_opportunity", "IRIS Opportunity", "iris", "opportunity"),
+                NavItemConfig("tipa_opportunity", "TIPA Opportunity", "tipa", "tipa_opportunity"),
+                NavItemConfig("nipa_opportunity", "NIPA Opportunity", "nipa", "nipa_opportunity"),
+            ),
+        ),
+        NavGroupConfig(
+            "archive",
+            "Archive",
+            (
+                NavItemConfig("iris_archive", "IRIS Archive", "iris", "notice_archive"),
+                NavItemConfig("tipa_archive", "TIPA Archive", "tipa", "tipa_archive"),
+                NavItemConfig("nipa_archive", "NIPA Archive", "nipa", "nipa_archive"),
+            ),
+        ),
+    )
+    viewer_nav_groups = common_nav_groups + (
+        NavGroupConfig(
+            "analysis",
+            "분석",
+            (
+                NavItemConfig("iris_summary", "IRIS Summary", "iris", "summary"),
+            ),
+        ),
     )
 
     if normalized_mode == "viewer":
@@ -104,8 +170,9 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             header_title="Crawler Hub",
             header_caption="IRIS / SUMMARY / OPPORTUNITY 시트를 같은 화면 구조로 조회합니다.",
             supports_summary=True,
+            nav_groups=viewer_nav_groups,
             sources=sources,
-            default_source="iris",
+            default_source="dashboard",
             default_iris_page="notice",
             iris_tabs=(
                 ("notice", "진행공고"),
@@ -124,8 +191,9 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
         header_title="Crawler Hub Admin",
         header_caption="현재 요약, 검토 가능한 Opportunity, 누적 Opportunity, 오류 행을 조회합니다.",
         supports_summary=False,
+        nav_groups=common_nav_groups,
         sources=sources,
-        default_source="iris",
+        default_source="dashboard",
         default_iris_page="notice",
         iris_tabs=(
             ("notice", "진행공고"),
@@ -155,3 +223,11 @@ def get_default_page_for_source(mode_config: AppModeConfig, source_key: str) -> 
     if source_config is not None:
         return source_config.default_page
     return mode_config.default_iris_page
+
+
+def find_nav_group_for_route(mode_config: AppModeConfig, source_key: str, page_key: str) -> NavGroupConfig:
+    for group in mode_config.nav_groups:
+        for item in group.items:
+            if item.source_key == source_key and item.page_key == page_key:
+                return group
+    return mode_config.nav_groups[0]

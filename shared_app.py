@@ -14,10 +14,9 @@ from app_config import (
     SourcePageConfig,
     SourceRouteConfig,
     build_app_mode_config,
+    find_nav_group_for_route,
     get_default_page_for_source,
     get_source_config_map,
-    get_source_key_map,
-    get_source_label_map,
 )
 from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
@@ -209,11 +208,297 @@ def render_iris_page(page_key: str, datasets: dict[str, pd.DataFrame]) -> None:
         )
 
 
+def build_dashboard_notice_index(
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+    *,
+    archived: bool = False,
+) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+
+    def append_source(source_df: pd.DataFrame, *, source_key: str, source_label: str) -> None:
+        if source_df is None or source_df.empty:
+            return
+
+        working = source_df.copy()
+        normalized = pd.DataFrame(index=working.index.copy())
+        normalized["source_key"] = source_key
+        normalized["Source"] = source_label
+        normalized["Notice ID"] = series_from_candidates(working, ["notice_id", "공고ID"])
+        normalized["Title"] = series_from_candidates(working, ["notice_title", "title", "공고명"])
+        normalized["Notice No"] = series_from_candidates(working, ["notice_no", "ancm_no", "공고번호"])
+        normalized["Status"] = series_from_candidates(working, ["notice_status", "rcve_status", "status", "공고상태"])
+        normalized["Period"] = series_from_candidates(working, ["notice_period", "period", "접수기간", "신청기간"])
+        normalized["Review"] = series_from_candidates(working, ["review_status", "검토 여부", "검토여부"])
+        normalized["Agency"] = series_from_candidates(working, ["agency", "전문기관", "담당부서"])
+        normalized["Ministry"] = series_from_candidates(working, ["ministry", "소관부처", "주관부처"])
+        normalized["Date"] = series_from_candidates(working, ["registered_at", "ancm_de", "공고일자"])
+        normalized["Detail Link"] = working.apply(
+            lambda row: resolve_external_detail_link(row, source_key=source_key),
+            axis=1,
+        )
+        normalized["_sort_date"] = parse_date_column(normalized["Date"])
+        frames.append(normalized)
+
+    iris_df = datasets["notice_view"]
+    iris_df = filter_archived_notice_rows(iris_df) if archived else filter_current_notice_rows(iris_df)
+    append_source(iris_df, source_key="iris", source_label="IRIS")
+
+    if source_datasets:
+        tipa_base = combine_notice_frames(source_datasets["mss_current"], source_datasets["mss_past"])
+        tipa_df = filter_archived_notice_rows(tipa_base) if archived else filter_current_notice_rows(source_datasets["mss_current"])
+        append_source(tipa_df, source_key="tipa", source_label="TIPA")
+
+        nipa_base = combine_notice_frames(source_datasets["nipa_current"], source_datasets["nipa_past"])
+        nipa_df = filter_archived_notice_rows(nipa_base) if archived else filter_current_notice_rows(source_datasets["nipa_current"])
+        append_source(nipa_df, source_key="nipa", source_label="NIPA")
+
+    if not frames:
+        return pd.DataFrame(
+            columns=[
+                "source_key",
+                "Source",
+                "Notice ID",
+                "Title",
+                "Notice No",
+                "Status",
+                "Period",
+                "Review",
+                "Agency",
+                "Ministry",
+                "Date",
+                "Detail Link",
+                "_sort_date",
+            ]
+        )
+
+    combined = pd.concat(frames, ignore_index=True)
+    return combined.sort_values(
+        by=["_sort_date", "Source", "Title"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+
+
+def build_dashboard_source_snapshot_rows(
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+) -> pd.DataFrame:
+    current_notice_index = build_dashboard_notice_index(datasets, source_datasets, archived=False)
+    archive_notice_index = build_dashboard_notice_index(datasets, source_datasets, archived=True)
+
+    opportunity_map: dict[str, pd.DataFrame] = {
+        "iris": datasets["opportunity"],
+        "tipa": source_datasets["mss_opportunity"] if source_datasets else pd.DataFrame(),
+        "nipa": source_datasets["nipa_opportunity"] if source_datasets else pd.DataFrame(),
+    }
+    source_labels = {"iris": "IRIS", "tipa": "TIPA", "nipa": "NIPA"}
+
+    rows: list[dict[str, object]] = []
+    for source_key, source_label in source_labels.items():
+        current_slice = current_notice_index[current_notice_index["source_key"].eq(source_key)].copy()
+        archive_slice = archive_notice_index[archive_notice_index["source_key"].eq(source_key)].copy()
+        review_needed = int(current_slice["Review"].fillna("").astype(str).str.strip().eq("").sum()) if not current_slice.empty else 0
+
+        opportunity_df = opportunity_map.get(source_key, pd.DataFrame())
+        current_opportunities = len(filter_current_opportunity_rows(opportunity_df)) if not opportunity_df.empty else 0
+        archived_opportunities = len(filter_archived_opportunity_rows(opportunity_df)) if not opportunity_df.empty else 0
+
+        rows.append(
+            {
+                "Source": source_label,
+                "Current Notices": int(len(current_slice)),
+                "Archived Notices": int(len(archive_slice)),
+                "Review Needed": review_needed,
+                "Current Opportunities": int(current_opportunities),
+                "Archived Opportunities": int(archived_opportunities),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def build_dashboard_notice_table(df: pd.DataFrame, *, limit: int = 8) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["Source", "Title", "Status", "Period", "Review", "Date"])
+
+    working = df.copy()
+    if "_sort_date" in working.columns:
+        working = working.sort_values(by=["_sort_date", "Source", "Title"], ascending=[False, True, True], na_position="last")
+
+    view = working[["Source", "Title", "Status", "Period", "Review", "Date"]].head(limit).copy()
+    for column in ["Title", "Period"]:
+        view[column] = view[column].apply(lambda value: compact_table_value(value, max_chars=48))
+    return view
+
+
+def navigate_to_source_page(source_key: str, page_key: str) -> None:
+    st.query_params.clear()
+    st.query_params.update({
+        "source": source_key,
+        "page": page_key,
+        "view": "table",
+    })
+    st.rerun()
+
+
+def navigate_to_route(source_key: str, page_key: str) -> None:
+    st.query_params.clear()
+    st.query_params.update({
+        "source": source_key,
+        "page": page_key,
+        "view": "table",
+    })
+    st.rerun()
+
+
+def render_nav_tabs(current_key: str, options: list[tuple[str, str]], *, key: str, label: str = "Navigation") -> str:
+    option_map = {option_key: option_label for option_key, option_label in options}
+    if current_key not in option_map:
+        current_key = next(iter(option_map))
+    return_key = current_key
+    selected_label = st.radio(
+        label,
+        list(option_map.values()),
+        horizontal=True,
+        index=list(option_map.keys()).index(current_key),
+        key=key,
+        label_visibility="collapsed",
+    )
+    for option_key, option_label in option_map.items():
+        if option_label == selected_label:
+            return_key = option_key
+            break
+    return return_key
+
+
+def render_dashboard_quick_links(mode_config: AppModeConfig) -> None:
+    st.markdown("### Quick Links")
+
+    primary_links = [
+        ("IRIS Notices", "iris", "notice"),
+        ("IRIS Opportunity", "iris", "opportunity"),
+        ("TIPA Current", "tipa", "tipa_current"),
+        ("NIPA Current", "nipa", "nipa_current"),
+    ]
+    secondary_links = [("Favorites", "favorites", "favorites")]
+    if "summary" in mode_config.valid_iris_pages:
+        secondary_links.insert(0, ("IRIS Summary", "iris", "summary"))
+
+    for row_index, link_specs in enumerate([primary_links, secondary_links]):
+        if not link_specs:
+            continue
+        cols = st.columns(len(link_specs))
+        for col, (label, source_key, page_key) in zip(cols, link_specs):
+            with col:
+                if st.button(label, key=f"dashboard_link_{row_index}_{source_key}_{page_key}", use_container_width=True):
+                    navigate_to_source_page(source_key, page_key)
+
+
+def render_dashboard_source(
+    source_config: SourceRouteConfig,
+    mode_config: AppModeConfig,
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+    *,
+    show_internal_tabs: bool = True,
+) -> None:
+    del show_internal_tabs
+    del source_config
+
+    current_notice_index = build_dashboard_notice_index(datasets, source_datasets, archived=False)
+    archive_notice_index = build_dashboard_notice_index(datasets, source_datasets, archived=True)
+    snapshot_rows = build_dashboard_source_snapshot_rows(datasets, source_datasets)
+
+    total_current_notices = int(len(current_notice_index))
+    total_archive_notices = int(len(archive_notice_index))
+    total_review_needed = int(current_notice_index["Review"].fillna("").astype(str).str.strip().eq("").sum()) if not current_notice_index.empty else 0
+    total_current_opportunities = int(snapshot_rows["Current Opportunities"].sum()) if not snapshot_rows.empty else 0
+    total_errors = int(len(datasets["errors"]))
+
+    st.subheader("Dashboard")
+    render_metrics(
+        [
+            ("Current Notices", str(total_current_notices)),
+            ("Current Opportunities", str(total_current_opportunities)),
+            ("Review Needed", str(total_review_needed)),
+            ("Archive", str(total_archive_notices)),
+            ("Errors", str(total_errors)),
+        ]
+    )
+    render_dashboard_quick_links(mode_config)
+
+    st.markdown("### Source Snapshot")
+    if snapshot_rows.empty:
+        st.info("No dashboard snapshot data is available yet.")
+    else:
+        snapshot_columns = st.columns(len(snapshot_rows))
+        for column, row in zip(snapshot_columns, snapshot_rows.to_dict("records")):
+            with column:
+                render_detail_card(
+                    str(row["Source"]),
+                    [
+                        ("Current Notices", str(row["Current Notices"])),
+                        ("Archived Notices", str(row["Archived Notices"])),
+                        ("Review Needed", str(row["Review Needed"])),
+                        ("Current Opportunities", str(row["Current Opportunities"])),
+                    ],
+                )
+
+    review_needed_df = current_notice_index[
+        current_notice_index["Review"].fillna("").astype(str).str.strip().eq("")
+    ].copy()
+    recent_notice_df = current_notice_index.copy()
+
+    left_col, right_col = st.columns([2, 1])
+    with left_col:
+        st.markdown("### Review Needed")
+        if review_needed_df.empty:
+            st.info("All current notices already have a review status.")
+        else:
+            st.dataframe(
+                build_dashboard_notice_table(review_needed_df, limit=10),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.markdown("### Recent Notices")
+        if recent_notice_df.empty:
+            st.info("There are no current notices to show.")
+        else:
+            st.dataframe(
+                build_dashboard_notice_table(recent_notice_df, limit=10),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    with right_col:
+        pending_count = len(filter_current_notice_rows(datasets["pending"])) if not datasets["pending"].empty else 0
+        summary_count = len(filter_current_summary_rows(datasets["summary"])) if not datasets["summary"].empty else 0
+        iris_archive_count = len(filter_archived_notice_rows(datasets["notice_view"])) if not datasets["notice_view"].empty else 0
+        review_coverage = "-"
+        if total_current_notices > 0:
+            review_coverage = f"{((total_current_notices - total_review_needed) / total_current_notices) * 100:.0f}%"
+
+        render_detail_card(
+            "Pipeline Health",
+            [
+                ("Pending Notices", str(pending_count)),
+                ("Summary Rows", str(summary_count)),
+                ("IRIS Archive", str(iris_archive_count)),
+                ("Review Coverage", review_coverage),
+                ("Errors", str(total_errors)),
+            ],
+        )
+
+
 def render_iris_source(
     source_config: SourceRouteConfig,
     mode_config: AppModeConfig,
     datasets: dict[str, pd.DataFrame],
     source_datasets: dict[str, object] | None = None,
+    *,
+    show_internal_tabs: bool = True,
 ) -> None:
     del source_config
     del source_datasets
@@ -241,11 +526,12 @@ def render_iris_source(
             })
             st.rerun()
 
-    current_page_key = render_page_tabs(
-        current_page_key,
-        list(mode_config.iris_tabs),
-        key=mode_config.iris_tab_key,
-    )
+    if show_internal_tabs:
+        current_page_key = render_page_tabs(
+            current_page_key,
+            list(mode_config.iris_tabs),
+            key=mode_config.iris_tab_key,
+        )
 
     render_iris_page(current_page_key, datasets)
 
@@ -295,6 +581,8 @@ def render_external_source_page(
 def render_external_source(
     source_config: SourceRouteConfig,
     source_datasets: dict[str, object] | None,
+    *,
+    show_internal_tabs: bool = True,
 ) -> None:
     if not source_datasets:
         st.error(f"{source_config.label} 데이터를 불러오지 못했습니다.")
@@ -314,11 +602,12 @@ def render_external_source(
         })
         st.rerun()
 
-    current_page_key = render_page_tabs(
-        current_page_key,
-        [(page.key, page.label) for page in source_config.page_configs],
-        key=f"{source_config.key}_page_tabs",
-    )
+    if show_internal_tabs:
+        current_page_key = render_page_tabs(
+            current_page_key,
+            [(page.key, page.label) for page in source_config.page_configs],
+            key=f"{source_config.key}_page_tabs",
+        )
 
     page_config = next((page for page in source_config.page_configs if page.key == current_page_key), None)
     if page_config is None:
@@ -333,9 +622,11 @@ def render_tipa_source(
     mode_config: AppModeConfig,
     datasets: dict[str, pd.DataFrame],
     source_datasets: dict[str, object] | None,
+    *,
+    show_internal_tabs: bool = True,
 ) -> None:
     del mode_config, datasets
-    render_external_source(source_config, source_datasets)
+    render_external_source(source_config, source_datasets, show_internal_tabs=show_internal_tabs)
 
 
 def render_nipa_source(
@@ -343,9 +634,11 @@ def render_nipa_source(
     mode_config: AppModeConfig,
     datasets: dict[str, pd.DataFrame],
     source_datasets: dict[str, object] | None,
+    *,
+    show_internal_tabs: bool = True,
 ) -> None:
     del mode_config, datasets
-    render_external_source(source_config, source_datasets)
+    render_external_source(source_config, source_datasets, show_internal_tabs=show_internal_tabs)
 
 
 def render_favorites_source(
@@ -353,7 +646,10 @@ def render_favorites_source(
     mode_config: AppModeConfig,
     datasets: dict[str, pd.DataFrame],
     source_datasets: dict[str, object] | None,
+    *,
+    show_internal_tabs: bool = True,
 ) -> None:
+    del show_internal_tabs
     del source_config, mode_config
     render_favorite_notice_page(
         datasets["notice_view"],
@@ -363,6 +659,7 @@ def render_favorites_source(
 
 
 SOURCE_RENDERERS = {
+    "dashboard": render_dashboard_source,
     "iris": render_iris_source,
     "tipa": render_tipa_source,
     "nipa": render_nipa_source,
@@ -377,14 +674,15 @@ def render_selected_source(
     mode_config: AppModeConfig,
     datasets: dict[str, pd.DataFrame],
     source_datasets: dict[str, object] | None,
+    show_internal_tabs: bool = True,
 ) -> None:
     renderer = SOURCE_RENDERERS.get(source_config.renderer_key if source_config else source_key)
     if renderer is None:
         fallback_config = source_config or SourceRouteConfig("iris", "IRIS", mode_config.default_iris_page, False, "iris")
-        render_iris_source(fallback_config, mode_config, datasets)
+        render_iris_source(fallback_config, mode_config, datasets, show_internal_tabs=show_internal_tabs)
         return
     active_config = source_config or SourceRouteConfig(source_key, source_key, mode_config.default_iris_page, False, source_key)
-    renderer(active_config, mode_config, datasets, source_datasets)
+    renderer(active_config, mode_config, datasets, source_datasets, show_internal_tabs=show_internal_tabs)
 
 
 IRIS_DETAIL_BASE_URL = "https://www.iris.go.kr/contents/retrieveBsnsAncmView.do"
@@ -2053,20 +2351,28 @@ def inject_page_styles() -> None:
         .list-table tbody td a:hover {
           color: #2563eb;
         }
-        .list-action-col {
-          width: 112px;
-          min-width: 112px;
-          max-width: 112px;
-          text-align: center !important;
-        }
-        .list-action-cell,
+        .list-link-cell,
+        .list-title-cell,
         .list-link-cell {
           text-align: center;
         }
-        .list-action-link,
+        .list-title-cell {
+          text-align: left;
+        }
+        .list-row-link,
         .list-link-out {
           display: inline-flex;
           align-items: center;
+          max-width: 100%;
+          color: #0f172a !important;
+          font-weight: 700;
+          text-decoration: none !important;
+        }
+        .list-row-link:hover {
+          color: #2563eb !important;
+          text-decoration: underline !important;
+        }
+        .list-link-out {
           justify-content: center;
           min-width: 84px;
           min-height: 34px;
@@ -2078,7 +2384,6 @@ def inject_page_styles() -> None:
           font-weight: 700;
           white-space: nowrap;
         }
-        .list-action-link:hover,
         .list-link-out:hover {
           border-color: #93c5fd;
           background: #eff6ff;
@@ -2346,8 +2651,9 @@ def render_clickable_table(
         "예산": 40,
     }
 
-    header_cells = ['<th class="list-action-col">상세</th>']
-    header_cells.extend(f"<th>{escape(column)}</th>" for column in display_columns)
+    internal_link_columns = {"공고명", "notice_title", "해당 과제명", "project_name"}
+
+    header_cells = [f"<th>{escape(column)}</th>" for column in display_columns]
     header_html = "".join(header_cells)
 
     body_rows = []
@@ -2357,13 +2663,7 @@ def render_clickable_table(
             continue
 
         href = build_route_href(page_key, identifier)
-        cell_html = [
-            (
-                '<td class="list-action-cell">'
-                '<a class="list-action-link" href="{href}" target="_self">상세 보기</a>'
-                "</td>"
-            ).format(href=escape(href, quote=True))
-        ]
+        cell_html = []
         for column in display_columns:
             value = compact_table_value(row.get(column), max_chars=compact_limits.get(column, 70))
             width_style = ""
@@ -2388,6 +2688,16 @@ def render_clickable_table(
                             style=width_style,
                         )
                     )
+                continue
+            if column in internal_link_columns:
+                cell_html.append(
+                    '<td class="list-title-cell"{style} title="{title}"><a class="list-row-link" href="{href}" target="_self">{value}</a></td>'.format(
+                        style=width_style,
+                        title=full_value,
+                        href=escape(href, quote=True),
+                        value=escape(clean(value)),
+                    )
+                )
                 continue
             cell_html.append(
                 '<td{style} title="{title}"><span class="list-cell-text">{value}</span></td>'.format(
@@ -3317,7 +3627,7 @@ def render_notice_page_with_scope(
         render_notice_detail_from_row(selected_row, opportunity_df)
         return
 
-    st.caption(f"왼쪽 상세 보기 버튼으로 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    st.caption(f"공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
     render_clickable_table(
         filtered,
         NOTICE_PREFERRED_COLUMNS,
@@ -3416,7 +3726,7 @@ def render_opportunity_page(
         render_opportunity_detail_from_row(selected_row)
         return
 
-    st.caption(f"왼쪽 상세 보기 버튼으로 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    st.caption(f"공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
     render_clickable_table(
         filtered,
         OPPORTUNITY_PREFERRED_COLUMNS,
@@ -3497,7 +3807,7 @@ def render_pending_page(df: pd.DataFrame) -> None:
         render_pending_detail_from_row(selected_row)
         return
 
-    st.caption(f"왼쪽 상세 보기 버튼으로 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    st.caption(f"공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
     render_clickable_table(
         filtered,
         PENDING_PREFERRED_COLUMNS,
@@ -3562,7 +3872,7 @@ def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
         render_summary_detail_from_row(selected_row, opportunity_df)
         return
 
-    st.caption(f"왼쪽 상세 보기 버튼으로 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    st.caption(f"공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
     render_clickable_table(
         filtered,
         SUMMARY_PREFERRED_COLUMNS,
@@ -3670,7 +3980,7 @@ def render_source_notice_page(
     metric_cols[1].metric("접수중", str(open_count))
     metric_cols[2].metric("담당부서 수", str(filtered["담당부서"].nunique() if "담당부서" in filtered.columns else 0))
 
-    st.caption(f"왼쪽 상세 보기 버튼으로 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    st.caption(f"공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
     render_clickable_table(
         filtered,
         view_columns or MSS_VIEW_COLUMNS,
@@ -3798,7 +4108,7 @@ def render_favorite_notice_page(
         ]
     )
 
-    st.caption(f"왼쪽 상세 보기 버튼으로 공고 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    st.caption(f"공고명을 클릭하면 공고 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
     render_clickable_table(
         filtered,
         FAVORITE_NOTICE_COLUMNS,
@@ -3860,33 +4170,44 @@ def main(app_mode: str = "admin"):
         errors_df=errors_df,
     )
 
-    source_label_map = get_source_label_map(mode_config)
-    source_key_map = get_source_key_map(mode_config)
     source_config_map = get_source_config_map(mode_config)
     current_source = get_query_param("source") or mode_config.default_source
-    if current_source not in source_label_map:
+    if current_source not in source_config_map:
         current_source = mode_config.default_source
-    source_keys = list(source_label_map.keys())
-    source_labels = list(source_label_map.values())
-    source_index = source_keys.index(current_source)
-    selected_source = st.radio(
-        "Source",
-        source_labels,
-        horizontal=True,
-        index=source_index,
-    )
-    selected_source_key = source_key_map.get(selected_source, mode_config.default_source)
-    selected_source_config = source_config_map.get(selected_source_key)
+    current_page = get_query_param("page") or get_default_page_for_source(mode_config, current_source)
+    current_group = find_nav_group_for_route(mode_config, current_source, current_page)
 
-    if selected_source_key != current_source:
-        default_page = get_default_page_for_source(mode_config, selected_source_key)
-        st.query_params.clear()
-        st.query_params.update({
-            "source": selected_source_key,
-            "page": default_page,
-            "view": "table",
-        })
-        st.rerun()
+    selected_group_key = render_nav_tabs(
+        current_group.key,
+        [(group.key, group.label) for group in mode_config.nav_groups],
+        key=f"{mode_config.mode}_primary_nav",
+        label="Workspace",
+    )
+    selected_group = next((group for group in mode_config.nav_groups if group.key == selected_group_key), mode_config.nav_groups[0])
+    if selected_group.key != current_group.key:
+        target_item = selected_group.items[0]
+        navigate_to_route(target_item.source_key, target_item.page_key)
+
+    current_item = next(
+        (
+            item
+            for item in selected_group.items
+            if item.source_key == current_source and item.page_key == current_page
+        ),
+        selected_group.items[0],
+    )
+    selected_item_key = render_nav_tabs(
+        current_item.key,
+        [(item.key, item.label) for item in selected_group.items],
+        key=f"{mode_config.mode}_secondary_nav_{selected_group.key}",
+        label="Page",
+    )
+    selected_item = next((item for item in selected_group.items if item.key == selected_item_key), selected_group.items[0])
+    if selected_item.key != current_item.key:
+        navigate_to_route(selected_item.source_key, selected_item.page_key)
+
+    selected_source_key = selected_item.source_key
+    selected_source_config = source_config_map.get(selected_source_key)
 
     source_datasets = None
     if selected_source_config and selected_source_config.requires_source_datasets:
@@ -3898,6 +4219,7 @@ def main(app_mode: str = "admin"):
         mode_config=mode_config,
         datasets=datasets,
         source_datasets=source_datasets,
+        show_internal_tabs=False,
     )
 
 
