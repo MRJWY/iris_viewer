@@ -332,6 +332,371 @@ def build_dashboard_notice_table(df: pd.DataFrame, *, limit: int = 8) -> pd.Data
     return view
 
 
+def build_dashboard_trend_chart(
+    df: pd.DataFrame,
+    *,
+    date_column: str = "Date",
+    category_column: str = "Source",
+    days: int = 14,
+) -> pd.DataFrame:
+    if df.empty or date_column not in df.columns or category_column not in df.columns:
+        return pd.DataFrame()
+
+    working = df.copy()
+    working["_chart_date"] = parse_date_column(working[date_column]).dt.normalize()
+    working = working.dropna(subset=["_chart_date"])
+    if working.empty:
+        return pd.DataFrame()
+
+    end_date = pd.Timestamp.now().normalize()
+    start_date = end_date - pd.Timedelta(days=max(days - 1, 0))
+    working = working[working["_chart_date"].ge(start_date)]
+    grouped = (
+        working.groupby(["_chart_date", category_column])
+        .size()
+        .unstack(fill_value=0)
+        .sort_index()
+    )
+    if grouped.empty:
+        return pd.DataFrame()
+
+    all_dates = pd.date_range(start=start_date, end=end_date, freq="D")
+    grouped = grouped.reindex(all_dates, fill_value=0)
+    grouped.index.name = "Date"
+    return grouped
+
+
+def build_dashboard_source_count_chart(snapshot_rows: pd.DataFrame, column: str) -> pd.DataFrame:
+    if snapshot_rows.empty or column not in snapshot_rows.columns:
+        return pd.DataFrame()
+    chart_df = snapshot_rows[["Source", column]].copy()
+    chart_df = chart_df.set_index("Source")
+    chart_df.columns = ["Count"]
+    return chart_df
+
+
+def build_dashboard_status_chart(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "Status" not in df.columns:
+        return pd.DataFrame()
+    status_counts = (
+        df["Status"]
+        .fillna("")
+        .astype(str)
+        .apply(normalize_notice_status_label)
+        .replace("", "미지정")
+        .value_counts()
+        .rename_axis("Status")
+        .to_frame("Count")
+    )
+    return status_counts
+
+
+def build_dashboard_review_chart(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+    review_values = df["Review"].fillna("").astype(str).str.strip() if "Review" in df.columns else pd.Series("", index=df.index)
+    reviewed = int(review_values.ne("").sum())
+    pending = int(review_values.eq("").sum())
+    return pd.DataFrame(
+        {"Count": [reviewed, pending]},
+        index=["검토 완료", "미검토"],
+    )
+
+
+def build_dashboard_opportunity_index(
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+
+    def append_source(df: pd.DataFrame, *, source_key: str, source_label: str) -> None:
+        if df is None or df.empty:
+            return
+        working = filter_current_opportunity_rows(df)
+        if working.empty:
+            return
+
+        normalized = pd.DataFrame(index=working.index.copy())
+        normalized["Source"] = source_label
+        normalized["Notice ID"] = series_from_candidates(working, ["notice_id", "공고ID"])
+        normalized["Notice Title"] = series_from_candidates(working, ["notice_title", "공고명"])
+        normalized["Project"] = series_from_candidates(working, ["project_name", "해당 과제명", "llm_project_name"])
+        normalized["Recommendation"] = series_from_candidates(working, ["recommendation", "추천여부", "llm_recommendation"])
+        normalized["Score"] = to_numeric_column(series_from_candidates(working, ["rfp_score", "점수", "llm_fit_score"]))
+        normalized["Budget"] = series_from_candidates(working, ["budget", "예산", "llm_total_budget_text", "total_budget_text"])
+        normalized["Date"] = series_from_candidates(working, ["ancm_de", "공고일자", "registered_at"])
+        normalized["_sort_date"] = parse_date_column(normalized["Date"])
+        frames.append(normalized)
+
+    append_source(datasets["opportunity"], source_key="iris", source_label="IRIS")
+    if source_datasets:
+        append_source(source_datasets["mss_opportunity"], source_key="tipa", source_label="TIPA")
+        append_source(source_datasets["nipa_opportunity"], source_key="nipa", source_label="NIPA")
+
+    if not frames:
+        return pd.DataFrame(columns=["Source", "Notice ID", "Notice Title", "Project", "Recommendation", "Score", "Budget", "Date", "_sort_date"])
+
+    combined = pd.concat(frames, ignore_index=True)
+    return combined.sort_values(
+        by=["Score", "_sort_date", "Project"],
+        ascending=[False, False, True],
+        na_position="last",
+    )
+
+
+def build_dashboard_opportunity_table(df: pd.DataFrame, *, limit: int = 8) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["Source", "Project", "Recommendation", "Score", "Budget"])
+    view = df[["Source", "Project", "Recommendation", "Score", "Budget"]].head(limit).copy()
+    view["Project"] = view["Project"].apply(lambda value: compact_table_value(value, max_chars=42))
+    view["Budget"] = view["Budget"].apply(lambda value: compact_table_value(value, max_chars=24))
+    return view
+
+
+def build_dashboard_deadline_table(df: pd.DataFrame, *, limit: int = 8) -> pd.DataFrame:
+    if df.empty or "Period" not in df.columns:
+        return pd.DataFrame(columns=["Source", "Title", "Period", "D-Day"])
+
+    working = df.copy()
+    working["_period_end"] = working["Period"].apply(extract_period_end)
+    working = working.dropna(subset=["_period_end"])
+    if working.empty:
+        return pd.DataFrame(columns=["Source", "Title", "Period", "D-Day"])
+
+    today = pd.Timestamp.now().normalize()
+    working["D-Day"] = (working["_period_end"].dt.normalize() - today).dt.days
+    working = working[working["D-Day"].ge(0)]
+    if working.empty:
+        return pd.DataFrame(columns=["Source", "Title", "Period", "D-Day"])
+
+    working = working.sort_values(by=["D-Day", "_sort_date"], ascending=[True, False], na_position="last")
+    view = working[["Source", "Title", "Period", "D-Day"]].head(limit).copy()
+    view["Title"] = view["Title"].apply(lambda value: compact_table_value(value, max_chars=38))
+    return view
+
+
+def build_dashboard_recent_comments_table(limit: int = 5) -> pd.DataFrame:
+    try:
+        comments_df = load_notice_comments()
+    except Exception:
+        return pd.DataFrame(columns=["작성시각", "작성자", "댓글"])
+
+    if comments_df.empty:
+        return pd.DataFrame(columns=["작성시각", "작성자", "댓글"])
+
+    recent = comments_df.head(limit).copy()
+    recent["댓글"] = recent["comment"].apply(lambda value: compact_table_value(value, max_chars=42))
+    return recent.rename(
+        columns={
+            "created_at": "작성시각",
+            "author": "작성자",
+        }
+    )[["작성시각", "작성자", "댓글"]]
+
+
+def render_dashboard_chart_block(title: str, chart_df: pd.DataFrame, *, chart_type: str = "bar") -> None:
+    st.markdown(f"### {title}")
+    if chart_df.empty:
+        st.info("표시할 데이터가 없습니다.")
+        return
+
+    if chart_type == "line":
+        st.line_chart(chart_df, use_container_width=True)
+    elif chart_type == "area":
+        st.area_chart(chart_df, use_container_width=True)
+    else:
+        st.bar_chart(chart_df, use_container_width=True)
+
+
+def render_dashboard_table_block(title: str, df: pd.DataFrame) -> None:
+    st.markdown(f"### {title}")
+    if df.empty:
+        st.info("표시할 데이터가 없습니다.")
+        return
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def build_dashboard_notice_route(source_key: object, notice_id: object) -> str:
+    source = clean(source_key).lower()
+    notice_id_text = clean(notice_id)
+    if not notice_id_text:
+        return ""
+    page_map = {
+        "iris": "notice",
+        "tipa": "tipa_current",
+        "nipa": "nipa_current",
+    }
+    page_key = page_map.get(source, "notice")
+    params = {
+        "source": source or "iris",
+        "page": page_key,
+        "view": "detail",
+        "id": notice_id_text,
+    }
+    return f"?{urlencode(params)}"
+
+
+def render_dashboard_metrics_strip(items: list[tuple[str, str, str]]) -> None:
+    if not items:
+        return
+
+    cards = []
+    for label, value, caption in items:
+        cards.append(
+            """
+            <div class="dashboard-kpi-card">
+              <div class="dashboard-kpi-label">{label}</div>
+              <div class="dashboard-kpi-value">{value}</div>
+              <div class="dashboard-kpi-caption">{caption}</div>
+            </div>
+            """.format(
+                label=escape(clean(label)),
+                value=escape(clean(value)),
+                caption=escape(clean(caption) or " "),
+            )
+        )
+
+    st.markdown(
+        '<div class="dashboard-kpi-grid">{}</div>'.format("".join(cards)),
+        unsafe_allow_html=True,
+    )
+
+
+def render_dashboard_rank_list(
+    title: str,
+    rows: list[dict[str, str]],
+    *,
+    empty_message: str = "표시할 데이터가 없습니다.",
+) -> None:
+    st.markdown(f"### {title}")
+    if not rows:
+        st.info(empty_message)
+        return
+
+    item_html = []
+    for index, row in enumerate(rows, start=1):
+        title_text = clean(row.get("title"))
+        title_href = clean(row.get("href"))
+        if title_href and title_text:
+            title_html = '<a class="dashboard-rank-title-link" href="{href}" target="_self">{text}</a>'.format(
+                href=escape(title_href, quote=True),
+                text=escape(title_text),
+            )
+        else:
+            title_html = f'<span class="dashboard-rank-title">{escape(title_text)}</span>'
+
+        badges = []
+        for badge_text in row.get("badges", []):
+            badge_value = clean(badge_text)
+            if badge_value:
+                badges.append(f'<span class="dashboard-rank-badge">{escape(badge_value)}</span>')
+
+        meta_parts = []
+        left_meta = clean(row.get("meta_left"))
+        right_meta = clean(row.get("meta_right"))
+        if left_meta:
+            meta_parts.append(f'<span>{escape(left_meta)}</span>')
+        if right_meta:
+            meta_parts.append(f'<span>{escape(right_meta)}</span>')
+
+        item_html.append(
+            """
+            <div class="dashboard-rank-row">
+              <div class="dashboard-rank-order">{order}</div>
+              <div class="dashboard-rank-main">
+                <div class="dashboard-rank-head">
+                  {title_html}
+                  <div class="dashboard-rank-badges">{badges}</div>
+                </div>
+                <div class="dashboard-rank-meta">{meta}</div>
+              </div>
+              <div class="dashboard-rank-value">{value}</div>
+            </div>
+            """.format(
+                order=index,
+                title_html=title_html,
+                badges="".join(badges),
+                meta="".join(meta_parts),
+                value=escape(clean(row.get("value"))),
+            )
+        )
+
+    st.markdown(
+        '<div class="dashboard-rank-list">{}</div>'.format("".join(item_html)),
+        unsafe_allow_html=True,
+    )
+
+
+def build_notice_rank_rows(df: pd.DataFrame, *, limit: int = 8, value_column: str = "Status") -> list[dict[str, str]]:
+    if df.empty:
+        return []
+
+    rows: list[dict[str, str]] = []
+    for _, row in df.head(limit).iterrows():
+        rows.append(
+            {
+                "title": compact_table_value(row.get("Title"), max_chars=44),
+                "href": build_dashboard_notice_route(row.get("source_key"), row.get("Notice ID")),
+                "badges": [row.get("Source")],
+                "meta_left": compact_table_value(row.get("Period"), max_chars=34),
+                "meta_right": row.get("Date"),
+                "value": row.get(value_column),
+            }
+        )
+    return rows
+
+
+def build_deadline_rank_rows(df: pd.DataFrame, *, limit: int = 8) -> list[dict[str, str]]:
+    if df.empty:
+        return []
+    rows: list[dict[str, str]] = []
+    for _, row in df.head(limit).iterrows():
+        rows.append(
+            {
+                "title": compact_table_value(row.get("Title"), max_chars=40),
+                "badges": [row.get("Source")],
+                "meta_left": compact_table_value(row.get("Period"), max_chars=34),
+                "meta_right": "",
+                "value": f"D-{clean(row.get('D-Day'))}",
+            }
+        )
+    return rows
+
+
+def build_opportunity_rank_rows(df: pd.DataFrame, *, limit: int = 8) -> list[dict[str, str]]:
+    if df.empty:
+        return []
+    rows: list[dict[str, str]] = []
+    for _, row in df.head(limit).iterrows():
+        rows.append(
+            {
+                "title": compact_table_value(row.get("Project"), max_chars=40),
+                "badges": [row.get("Source"), row.get("Recommendation")],
+                "meta_left": compact_table_value(row.get("Budget"), max_chars=30),
+                "meta_right": row.get("Date"),
+                "value": str(row.get("Score")),
+            }
+        )
+    return rows
+
+
+def build_comment_rank_rows(df: pd.DataFrame, *, limit: int = 5) -> list[dict[str, str]]:
+    if df.empty:
+        return []
+    rows: list[dict[str, str]] = []
+    for _, row in df.head(limit).iterrows():
+        rows.append(
+            {
+                "title": compact_table_value(row.get("댓글"), max_chars=44),
+                "badges": [row.get("작성자")],
+                "meta_left": row.get("작성시각"),
+                "meta_right": "",
+                "value": "",
+            }
+        )
+    return rows
+
+
 def navigate_to_source_page(source_key: str, page_key: str) -> None:
     st.query_params.clear()
     st.query_params.update({
@@ -409,68 +774,151 @@ def render_dashboard_source(
     current_notice_index = build_dashboard_notice_index(datasets, source_datasets, archived=False)
     archive_notice_index = build_dashboard_notice_index(datasets, source_datasets, archived=True)
     snapshot_rows = build_dashboard_source_snapshot_rows(datasets, source_datasets)
+    opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
 
     total_current_notices = int(len(current_notice_index))
     total_archive_notices = int(len(archive_notice_index))
     total_review_needed = int(current_notice_index["Review"].fillna("").astype(str).str.strip().eq("").sum()) if not current_notice_index.empty else 0
     total_current_opportunities = int(snapshot_rows["Current Opportunities"].sum()) if not snapshot_rows.empty else 0
     total_errors = int(len(datasets["errors"]))
+    total_favorites = int(len(build_favorite_notice_df(datasets["notice_view"], source_datasets or {})))
+    total_scheduled = int(len(filter_notice_status_scope(current_notice_index, "??"))) if not current_notice_index.empty else 0
 
     st.subheader("Dashboard")
-    render_metrics(
+    render_dashboard_metrics_strip(
         [
-            ("Current Notices", str(total_current_notices)),
-            ("Current Opportunities", str(total_current_opportunities)),
-            ("Review Needed", str(total_review_needed)),
-            ("Archive", str(total_archive_notices)),
-            ("Errors", str(total_errors)),
+            ("?? ??", str(total_current_notices), "?? ?? ?"),
+            ("?? ??", str(total_scheduled), "?? ?? ??"),
+            ("Opportunity", str(total_current_opportunities), "?? ?? ??"),
+            ("???", str(total_review_needed), "?? ?? ??"),
+            ("??", str(total_errors), "????? ??"),
+            ("?? ??", str(total_favorites), "???? ??"),
         ]
     )
     render_dashboard_quick_links(mode_config)
-
-    st.markdown("### Source Snapshot")
-    if snapshot_rows.empty:
-        st.info("No dashboard snapshot data is available yet.")
-    else:
-        snapshot_columns = st.columns(len(snapshot_rows))
-        for column, row in zip(snapshot_columns, snapshot_rows.to_dict("records")):
-            with column:
-                render_detail_card(
-                    str(row["Source"]),
-                    [
-                        ("Current Notices", str(row["Current Notices"])),
-                        ("Archived Notices", str(row["Archived Notices"])),
-                        ("Review Needed", str(row["Review Needed"])),
-                        ("Current Opportunities", str(row["Current Opportunities"])),
-                    ],
-                )
 
     review_needed_df = current_notice_index[
         current_notice_index["Review"].fillna("").astype(str).str.strip().eq("")
     ].copy()
     recent_notice_df = current_notice_index.copy()
+    deadline_df = build_dashboard_deadline_table(current_notice_index, limit=8)
+    recent_comments_df = build_dashboard_recent_comments_table(limit=5)
 
-    left_col, right_col = st.columns([2, 1])
+    dashboard_views = [
+        ("realtime", "??? ??"),
+        ("trend", "??? ??"),
+        ("opportunity", "Opportunity"),
+        ("review", "??"),
+        ("errors", "??"),
+    ]
+    selected_view = render_nav_tabs(
+        "realtime",
+        dashboard_views,
+        key="dashboard_view_tabs",
+        label="Dashboard View",
+    )
+
+    left_col, center_col, right_col = st.columns([1.35, 1.35, 0.9])
+
     with left_col:
-        st.markdown("### Review Needed")
-        if review_needed_df.empty:
-            st.info("All current notices already have a review status.")
-        else:
-            st.dataframe(
-                build_dashboard_notice_table(review_needed_df, limit=10),
-                use_container_width=True,
-                hide_index=True,
+        if selected_view == "realtime":
+            render_dashboard_table_block(
+                "??? ?? ??",
+                snapshot_rows[["Source", "Current Notices", "Review Needed", "Current Opportunities"]] if not snapshot_rows.empty else pd.DataFrame(),
             )
-
-        st.markdown("### Recent Notices")
-        if recent_notice_df.empty:
-            st.info("There are no current notices to show.")
-        else:
-            st.dataframe(
+            render_dashboard_table_block(
+                "?? ?? ??",
                 build_dashboard_notice_table(recent_notice_df, limit=10),
-                use_container_width=True,
-                hide_index=True,
             )
+        elif selected_view == "trend":
+            render_dashboard_table_block(
+                "Source Snapshot",
+                snapshot_rows[["Source", "Current Notices", "Archived Notices", "Review Needed"]] if not snapshot_rows.empty else pd.DataFrame(),
+            )
+            render_dashboard_table_block(
+                "Archive ??",
+                build_dashboard_notice_table(archive_notice_index, limit=10),
+            )
+        elif selected_view == "opportunity":
+            render_dashboard_table_block(
+                "?? Opportunity TOP",
+                build_dashboard_opportunity_table(opportunity_index, limit=10),
+            )
+        elif selected_view == "review":
+            render_dashboard_table_block(
+                "?? ?? ??",
+                build_dashboard_notice_table(review_needed_df, limit=10),
+            )
+        else:
+            errors_df = datasets["errors"]
+            render_dashboard_table_block(
+                "??/?? ??",
+                errors_df[["source_site", "notice_id", "notice_title", "validation_errors"]].head(10)
+                if not errors_df.empty and {"source_site", "notice_id", "notice_title", "validation_errors"}.issubset(errors_df.columns)
+                else pd.DataFrame(),
+            )
+            if not errors_df.empty and "source_site" in errors_df.columns:
+                error_counts = (
+                    errors_df["source_site"]
+                    .fillna("")
+                    .astype(str)
+                    .replace("", "???")
+                    .value_counts()
+                    .rename_axis("Source")
+                    .to_frame("Count")
+                    .reset_index()
+                )
+            else:
+                error_counts = pd.DataFrame()
+            render_dashboard_table_block("?? ??", error_counts)
+
+    with center_col:
+        if selected_view == "realtime":
+            render_dashboard_table_block("?? ?? ??", deadline_df)
+            render_dashboard_table_block(
+                "?? Opportunity TOP",
+                build_dashboard_opportunity_table(opportunity_index, limit=8),
+            )
+        elif selected_view == "trend":
+            render_dashboard_table_block(
+                "Source Snapshot",
+                snapshot_rows[["Source", "Current Notices", "Archived Notices", "Current Opportunities"]] if not snapshot_rows.empty else pd.DataFrame(),
+            )
+            render_dashboard_table_block(
+                "?? ?? ??",
+                build_dashboard_notice_table(recent_notice_df, limit=8),
+            )
+        elif selected_view == "opportunity":
+            render_dashboard_table_block(
+                "?? Opportunity",
+                build_dashboard_opportunity_table(
+                    opportunity_index.sort_values(by=["_sort_date", "Score"], ascending=[False, False], na_position="last"),
+                    limit=10,
+                ),
+            )
+            if not opportunity_index.empty:
+                opportunity_summary = (
+                    opportunity_index.groupby("Source", dropna=False)
+                    .agg(
+                        Opportunities=("Project", "count"),
+                        Avg_Score=("Score", "mean"),
+                    )
+                    .reset_index()
+                )
+                opportunity_summary["Avg_Score"] = opportunity_summary["Avg_Score"].round(1)
+            else:
+                opportunity_summary = pd.DataFrame()
+            render_dashboard_table_block("??? ?? ??", opportunity_summary)
+        elif selected_view == "review":
+            review_snapshot = snapshot_rows[["Source", "Current Notices", "Review Needed"]] if not snapshot_rows.empty else pd.DataFrame()
+            render_dashboard_table_block("?? ????", review_snapshot)
+            render_dashboard_table_block("?? ?? ??", build_dashboard_notice_table(recent_notice_df, limit=8))
+        else:
+            render_dashboard_table_block(
+                "?? ?? ??",
+                build_dashboard_notice_table(review_needed_df, limit=8),
+            )
+            render_dashboard_table_block("?? ??", recent_comments_df)
 
     with right_col:
         pending_count = len(filter_current_notice_rows(datasets["pending"])) if not datasets["pending"].empty else 0
@@ -481,16 +929,25 @@ def render_dashboard_source(
             review_coverage = f"{((total_current_notices - total_review_needed) / total_current_notices) * 100:.0f}%"
 
         render_detail_card(
-            "Pipeline Health",
+            "?? ??",
             [
                 ("Pending Notices", str(pending_count)),
                 ("Summary Rows", str(summary_count)),
                 ("IRIS Archive", str(iris_archive_count)),
+                ("Total Archive", str(total_archive_notices)),
                 ("Review Coverage", review_coverage),
                 ("Errors", str(total_errors)),
             ],
         )
 
+        favorites_df = build_favorite_notice_df(datasets["notice_view"], source_datasets or {})
+        favorite_panel_df = (
+            favorites_df[["??", "???", "????"]].head(6)
+            if not favorites_df.empty and {"??", "???", "????"}.issubset(favorites_df.columns)
+            else pd.DataFrame()
+        )
+        render_dashboard_table_block("?? ??", favorite_panel_df)
+        render_dashboard_table_block("?? ??", recent_comments_df)
 
 def render_iris_source(
     source_config: SourceRouteConfig,
@@ -2174,39 +2631,350 @@ def render_notice_filter_sidebar(
     return search_text, current_only, status_scope
 
 
+def render_page_header(title: str, subtitle: str, *, eyebrow: str | None = None) -> None:
+    eyebrow_html = ""
+    if clean(eyebrow):
+        eyebrow_html = f'<div class="page-eyebrow">{escape(clean(eyebrow))}</div>'
+    st.markdown(
+        (
+            '<div class="page-header-block">'
+            f"{eyebrow_html}"
+            f'<div class="page-header-title">{escape(clean(title))}</div>'
+            f'<div class="page-header-subtitle">{escape(clean(subtitle))}</div>'
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def render_section_label(text: str) -> None:
+    st.markdown(
+        f'<div class="section-label">{escape(clean(text))}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_metrics(items: list[tuple[str, str]]) -> None:
-    cols = st.columns(len(items))
-    for column, (label, value) in zip(cols, items):
-        with column:
-            st.metric(label, value)
+    if not items:
+        return
+    cards = []
+    for label, value in items:
+        cards.append(
+            (
+                '<div class="stat-card">'
+                f'<div class="stat-label">{escape(clean(label))}</div>'
+                f'<div class="stat-value">{escape(clean(value))}</div>'
+                "</div>"
+            )
+        )
+    st.markdown(
+        '<div class="stat-grid">{}</div>'.format("".join(cards)),
+        unsafe_allow_html=True,
+    )
 
 
 def inject_page_styles() -> None:
     st.markdown(
         """
         <style>
+        :root {
+          --linear-bg: #08090a;
+          --linear-panel: #0f1011;
+          --linear-surface: #191a1b;
+          --linear-surface-hover: #202226;
+          --linear-border-subtle: rgba(255, 255, 255, 0.05);
+          --linear-border: rgba(255, 255, 255, 0.08);
+          --linear-text: #f7f8f8;
+          --linear-text-secondary: #d0d6e0;
+          --linear-text-muted: #8a8f98;
+          --linear-text-faint: #62666d;
+          --linear-accent: #7170ff;
+          --linear-accent-bg: #5e6ad2;
+          --linear-accent-hover: #828fff;
+          --linear-success: #10b981;
+          --linear-danger: #f87171;
+          --linear-shadow: rgba(0, 0, 0, 0.28) 0px 10px 30px;
+          --linear-radius-sm: 6px;
+          --linear-radius-md: 8px;
+          --linear-radius-lg: 12px;
+        }
+        html, body, [class*="css"], .stApp {
+          font-family: Inter, "Segoe UI", "Noto Sans KR", sans-serif;
+          font-feature-settings: "cv01", "ss03";
+        }
+        body {
+          background: var(--linear-bg);
+          color: var(--linear-text);
+        }
+        .stApp,
+        [data-testid="stAppViewContainer"],
+        [data-testid="stAppViewBlockContainer"] {
+          background: var(--linear-bg);
+          color: var(--linear-text);
+        }
+        .main .block-container {
+          max-width: 1440px;
+          padding-top: 1.25rem;
+          padding-bottom: 3rem;
+        }
+        h1 {
+          color: var(--linear-text) !important;
+          font-size: 2.55rem !important;
+          font-weight: 510 !important;
+          line-height: 1.02 !important;
+          letter-spacing: -0.065rem !important;
+          margin-bottom: 0.15rem !important;
+        }
+        h2, h3 {
+          color: var(--linear-text) !important;
+          letter-spacing: -0.02em;
+        }
+        [data-testid="stCaptionContainer"] p,
+        .stCaption p {
+          color: var(--linear-text-muted) !important;
+          font-size: 0.95rem !important;
+        }
+        [data-testid="stSidebar"] {
+          background: var(--linear-panel);
+          border-right: 1px solid var(--linear-border-subtle);
+        }
+        [data-testid="stHeader"] {
+          background: rgba(8, 9, 10, 0.88);
+          border-bottom: 1px solid var(--linear-border-subtle);
+        }
+        [data-testid="stToolbar"] {
+          right: 1rem;
+        }
+        [data-testid="stMetric"] {
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid var(--linear-border);
+          border-radius: var(--linear-radius-lg);
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.01);
+          padding: 0.9rem 1rem;
+        }
+        [data-testid="stMetricLabel"] p {
+          color: var(--linear-text-muted) !important;
+          font-size: 0.78rem !important;
+          font-weight: 510 !important;
+          letter-spacing: -0.01em;
+        }
+        [data-testid="stMetricValue"] {
+          color: var(--linear-text) !important;
+          font-size: 1.6rem !important;
+          font-weight: 590 !important;
+          letter-spacing: -0.04em !important;
+        }
+        [data-testid="stMetricDelta"] {
+          color: var(--linear-text-secondary) !important;
+        }
+        div.stButton > button {
+          background: rgba(255, 255, 255, 0.03) !important;
+          color: var(--linear-text) !important;
+          border: 1px solid var(--linear-border) !important;
+          border-radius: var(--linear-radius-sm) !important;
+          min-height: 38px !important;
+          font-weight: 510 !important;
+          box-shadow: none !important;
+        }
+        div.stButton > button:hover {
+          background: rgba(255, 255, 255, 0.06) !important;
+          border-color: rgba(255, 255, 255, 0.12) !important;
+          color: #ffffff !important;
+        }
+        div.stButton > button[kind="primary"] {
+          background: var(--linear-accent-bg) !important;
+          border-color: rgba(113, 112, 255, 0.65) !important;
+          color: #ffffff !important;
+        }
+        div.stButton > button[kind="primary"]:hover {
+          background: var(--linear-accent-hover) !important;
+          border-color: rgba(130, 143, 255, 0.85) !important;
+        }
+        div[data-baseweb="select"] > div,
+        div[data-testid="stTextInputRootElement"] > div,
+        div[data-testid="stTextArea"] textarea,
+        div[data-testid="stDateInputField"] input,
+        div[data-testid="stNumberInput"] input {
+          background: rgba(255, 255, 255, 0.02) !important;
+          color: var(--linear-text) !important;
+          border: 1px solid var(--linear-border) !important;
+          border-radius: var(--linear-radius-sm) !important;
+        }
+        div[data-baseweb="select"] * ,
+        div[data-testid="stTextInputRootElement"] input,
+        div[data-testid="stTextArea"] textarea,
+        div[data-testid="stNumberInput"] input {
+          color: var(--linear-text) !important;
+        }
+        div[data-baseweb="select"]:hover > div,
+        div[data-testid="stTextInputRootElement"] > div:hover,
+        div[data-testid="stTextArea"] textarea:hover {
+          border-color: rgba(255, 255, 255, 0.14) !important;
+        }
+        div[data-testid="stSelectbox"] label,
+        div[data-testid="stTextInput"] label,
+        div[data-testid="stTextArea"] label,
+        div[data-testid="stMultiSelect"] label,
+        div[data-testid="stDateInput"] label,
+        div[data-testid="stNumberInput"] label {
+          color: var(--linear-text-muted) !important;
+          font-size: 0.78rem !important;
+          font-weight: 510 !important;
+        }
+        div[data-testid="stRadio"] > div {
+          gap: 0.5rem;
+        }
+        div[data-testid="stRadio"] label[data-baseweb="radio"],
+        div[data-testid="stRadio"] div[role="radiogroup"] label {
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid var(--linear-border-subtle);
+          border-radius: var(--linear-radius-md);
+          padding: 0.35rem 0.75rem;
+          min-height: 36px;
+          transition: all 120ms ease;
+        }
+        div[data-testid="stRadio"] label[data-baseweb="radio"]:hover,
+        div[data-testid="stRadio"] div[role="radiogroup"] label:hover {
+          background: rgba(255, 255, 255, 0.05);
+          border-color: var(--linear-border);
+        }
+        div[data-testid="stRadio"] p {
+          color: var(--linear-text-secondary) !important;
+          font-size: 0.92rem !important;
+          font-weight: 510 !important;
+        }
+        div[data-testid="stRadio"] input:checked + div p,
+        div[data-testid="stRadio"] label[data-baseweb="radio"][aria-checked="true"] p {
+          color: var(--linear-text) !important;
+        }
+        div[data-testid="stTabs"] {
+          gap: 0.5rem;
+        }
+        div[data-testid="stTabs"] button {
+          background: rgba(255, 255, 255, 0.02) !important;
+          border: 1px solid var(--linear-border-subtle) !important;
+          border-radius: var(--linear-radius-md) !important;
+          color: var(--linear-text-secondary) !important;
+          font-weight: 510 !important;
+        }
+        div[data-testid="stTabs"] button[aria-selected="true"] {
+          background: rgba(94, 106, 210, 0.2) !important;
+          border-color: rgba(113, 112, 255, 0.45) !important;
+          color: var(--linear-text) !important;
+        }
+        [data-testid="stInfo"] {
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid var(--linear-border-subtle);
+          color: var(--linear-text-secondary);
+        }
+        [data-testid="stDataFrame"] > div {
+          border: 1px solid var(--linear-border);
+          border-radius: var(--linear-radius-lg);
+          background: rgba(255, 255, 255, 0.02);
+          overflow: hidden;
+        }
+        [data-testid="stDataFrameGlideDataEditor"] {
+          background: rgba(255, 255, 255, 0.02) !important;
+        }
+        [data-testid="stDataFrameGlideDataEditor"] * {
+          font-family: Inter, "Segoe UI", "Noto Sans KR", sans-serif !important;
+        }
+        [data-testid="stDataFrameGlideDataEditor"] [role="grid"] {
+          background: rgba(255, 255, 255, 0.02) !important;
+        }
+        [data-testid="stDataFrameGlideDataEditor"] [data-testid="stDataFrameResizable"] {
+          background: rgba(255, 255, 255, 0.02) !important;
+        }
+        [data-testid="stDataFrameGlideDataEditor"] canvas {
+          border-radius: var(--linear-radius-lg);
+        }
+        [data-testid="stVerticalBlockBorderWrapper"] {
+          border-radius: var(--linear-radius-lg);
+        }
+        .page-header-block {
+          margin: 0 0 22px 0;
+          padding: 0 0 18px 0;
+          border-bottom: 1px solid var(--linear-border-subtle);
+        }
+        .page-eyebrow,
+        .section-label {
+          font-size: 11px;
+          font-weight: 510;
+          color: var(--linear-text-faint);
+          text-transform: uppercase;
+          letter-spacing: 0.07em;
+          margin-bottom: 8px;
+        }
+        .page-header-title {
+          color: var(--linear-text);
+          font-size: 20px;
+          font-weight: 590;
+          letter-spacing: -0.02em;
+          margin-bottom: 4px;
+        }
+        .page-header-subtitle {
+          color: var(--linear-text-faint);
+          font-size: 13px;
+          font-weight: 400;
+          letter-spacing: -0.01em;
+        }
+        .page-note {
+          color: var(--linear-text-muted);
+          font-size: 12px;
+          font-family: ui-monospace, "SF Mono", Menlo, monospace;
+          margin: 10px 0 12px 0;
+        }
+        .stat-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+          gap: 10px;
+          margin: 0 0 22px 0;
+        }
+        .stat-card {
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid var(--linear-border);
+          border-radius: var(--linear-radius-md);
+          padding: 14px 16px;
+        }
+        .stat-label {
+          color: var(--linear-text-faint);
+          font-size: 11px;
+          font-weight: 510;
+          text-transform: uppercase;
+          letter-spacing: 0.07em;
+          margin-bottom: 10px;
+        }
+        .stat-value {
+          color: var(--linear-text);
+          font-size: 26px;
+          line-height: 1;
+          font-weight: 510;
+          letter-spacing: -0.03em;
+        }
         .detail-hero {
-          padding: 20px 22px;
-          border: 1px solid #e5e7eb;
+          padding: 22px 24px;
+          border: 1px solid var(--linear-border);
           border-radius: 18px;
           background:
-            radial-gradient(circle at top right, rgba(252, 211, 77, 0.18), transparent 28%),
-            linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+            radial-gradient(circle at top right, rgba(113, 112, 255, 0.18), transparent 26%),
+            linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.02) 100%);
+          box-shadow: var(--linear-shadow);
           margin: 8px 0 18px 0;
         }
         .detail-kicker {
-          font-size: 13px;
-          font-weight: 700;
-          letter-spacing: 0.04em;
+          font-size: 12px;
+          font-weight: 510;
+          letter-spacing: 0.08em;
           text-transform: uppercase;
-          color: #64748b;
+          color: var(--linear-text-faint);
           margin-bottom: 8px;
         }
         .detail-title {
           font-size: 34px;
-          font-weight: 800;
-          line-height: 1.18;
-          color: #0f172a;
+          font-weight: 510;
+          line-height: 1.04;
+          letter-spacing: -0.04em;
+          color: var(--linear-text);
           margin-bottom: 14px;
         }
         .detail-meta-row {
@@ -2219,32 +2987,35 @@ def inject_page_styles() -> None:
           align-items: center;
           padding: 6px 10px;
           border-radius: 999px;
-          font-size: 13px;
-          font-weight: 700;
-          background: #eef2ff;
-          color: #3730a3;
+          font-size: 12px;
+          font-weight: 510;
+          background: rgba(94, 106, 210, 0.18);
+          border: 1px solid rgba(113, 112, 255, 0.35);
+          color: var(--linear-text);
         }
         .detail-chip.neutral {
-          background: #f1f5f9;
-          color: #334155;
+          background: rgba(255, 255, 255, 0.03);
+          border-color: var(--linear-border-subtle);
+          color: var(--linear-text-secondary);
         }
         .detail-card {
-          border: 1px solid #e5e7eb;
-          border-radius: 16px;
+          border: 1px solid var(--linear-border);
+          border-radius: var(--linear-radius-lg);
           padding: 16px 18px;
-          background: white;
+          background: rgba(255, 255, 255, 0.025);
           height: 100%;
-          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.01);
         }
         .detail-card-title {
           font-size: 14px;
-          font-weight: 800;
-          color: #0f172a;
+          font-weight: 510;
+          color: var(--linear-text);
+          letter-spacing: -0.01em;
           margin-bottom: 12px;
         }
         .detail-field {
           padding: 10px 0;
-          border-bottom: 1px solid #f1f5f9;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
         .detail-field:last-child {
           border-bottom: none;
@@ -2252,19 +3023,19 @@ def inject_page_styles() -> None:
         }
         .detail-label {
           font-size: 12px;
-          font-weight: 700;
+          font-weight: 510;
           text-transform: uppercase;
-          letter-spacing: 0.03em;
-          color: #64748b;
+          letter-spacing: 0.07em;
+          color: var(--linear-text-faint);
           margin-bottom: 4px;
         }
         .detail-value {
           font-size: 17px;
-          font-weight: 500;
+          font-weight: 400;
           line-height: 1.6;
-          color: #111827;
+          color: var(--linear-text-secondary);
           word-break: break-word;
-          font-family: "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+          font-family: Inter, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
           white-space: pre-wrap;
         }
         .detail-more {
@@ -2274,18 +3045,18 @@ def inject_page_styles() -> None:
           cursor: pointer;
           font-size: 15px;
           line-height: 1.6;
-          color: #111827;
+          color: var(--linear-text-secondary);
           list-style: none;
         }
         .detail-more summary .detail-preview-text {
-          color: #111827;
-          font-weight: 500;
+          color: var(--linear-text-secondary);
+          font-weight: 400;
         }
         .detail-more summary .detail-toggle-text {
           margin-left: 6px;
           font-size: 13px;
-          font-weight: 700;
-          color: #2563eb;
+          font-weight: 510;
+          color: var(--linear-accent);
         }
         .detail-more summary::-webkit-details-marker {
           display: none;
@@ -2296,60 +3067,65 @@ def inject_page_styles() -> None:
         .detail-more-body {
           margin-top: 2px;
           font-size: 17px;
-          font-weight: 500;
+          font-weight: 400;
           line-height: 1.6;
-          color: #111827;
+          color: var(--linear-text-secondary);
           white-space: pre-wrap;
           word-break: break-word;
-          font-family: "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+          font-family: Inter, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
         }
         .detail-section-title {
           font-size: 22px;
-          font-weight: 800;
-          color: #0f172a;
+          font-weight: 510;
+          color: var(--linear-text);
+          letter-spacing: -0.02em;
           margin: 24px 0 12px 0;
         }
         .list-table-wrap {
           width: 100%;
           overflow-x: auto;
-          border: 1px solid #e5e7eb;
-          border-radius: 16px;
-          background: #ffffff;
+          border: 1px solid var(--linear-border);
+          border-radius: var(--linear-radius-lg);
+          background: rgba(255, 255, 255, 0.02);
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.01);
         }
         .list-table {
-          width: max-content;
-          min-width: 100%;
+          width: 100%;
+          min-width: 980px;
           border-collapse: collapse;
           table-layout: auto;
         }
         .list-table thead th {
-          background: #f8fafc;
-          color: #334155;
+          background: #111214;
+          color: var(--linear-text-muted);
           font-size: 13px;
-          font-weight: 800;
+          font-weight: 510;
           text-align: left;
           padding: 12px 14px;
-          border-bottom: 1px solid #e5e7eb;
+          border-bottom: 1px solid var(--linear-border-subtle);
           white-space: nowrap;
         }
         .list-table tbody td {
           padding: 10px 14px;
-          border-bottom: 1px solid #f1f5f9;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.04);
           vertical-align: middle;
           height: 52px;
-          white-space: nowrap;
+          color: var(--linear-text-secondary);
+        }
+        .list-table thead th,
+        .list-table tbody td {
           overflow: hidden;
           text-overflow: ellipsis;
         }
         .list-table tbody tr:hover {
-          background: #f8fbff;
+          background: rgba(255, 255, 255, 0.04);
         }
         .list-table tbody td a {
-          color: #0f172a;
+          color: var(--linear-text);
           text-decoration: none;
         }
         .list-table tbody td a:hover {
-          color: #2563eb;
+          color: var(--linear-accent);
         }
         .list-link-cell,
         .list-title-cell,
@@ -2364,47 +3140,52 @@ def inject_page_styles() -> None:
           display: inline-flex;
           align-items: center;
           max-width: 100%;
-          color: #0f172a !important;
-          font-weight: 700;
+          color: var(--linear-text) !important;
+          font-weight: 510;
           text-decoration: none !important;
         }
         .list-row-link:hover {
-          color: #2563eb !important;
-          text-decoration: underline !important;
+          color: var(--linear-accent-hover) !important;
         }
         .list-link-out {
           justify-content: center;
           min-width: 84px;
           min-height: 34px;
           padding: 0 12px;
-          border: 1px solid #d1d5db;
-          border-radius: 8px;
-          background: #ffffff;
+          border: 1px solid var(--linear-border);
+          border-radius: var(--linear-radius-sm);
+          background: rgba(255, 255, 255, 0.03);
           font-size: 13px;
-          font-weight: 700;
+          font-weight: 510;
           white-space: nowrap;
         }
         .list-link-out:hover {
-          border-color: #93c5fd;
-          background: #eff6ff;
+          border-color: rgba(113, 112, 255, 0.38);
+          background: rgba(94, 106, 210, 0.16);
         }
         .list-cell-text,
         .list-cell-empty {
           display: block;
-          color: #0f172a;
+          color: var(--linear-text-secondary);
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
         }
+        .list-title-cell .list-cell-text,
+        .list-title-cell .list-row-link {
+          white-space: normal;
+          line-height: 1.45;
+          word-break: keep-all;
+        }
         .list-cell-empty {
-          color: #94a3b8;
+          color: var(--linear-text-faint);
           text-align: center;
         }
         .faux-tabs-wrap {
           display: flex;
           gap: 8px;
           margin: 8px 0 14px 0;
-          border-bottom: 1px solid #e5e7eb;
+          border-bottom: 1px solid var(--linear-border-subtle);
           padding-bottom: 8px;
           flex-wrap: wrap;
         }
@@ -2413,23 +3194,145 @@ def inject_page_styles() -> None:
           align-items: center;
           justify-content: center;
           padding: 10px 14px;
-          border: 1px solid #d1d5db;
-          border-radius: 10px 10px 0 0;
-          background: #f8fafc;
-          color: #334155 !important;
+          border: 1px solid var(--linear-border-subtle);
+          border-radius: var(--linear-radius-md);
+          background: rgba(255, 255, 255, 0.02);
+          color: var(--linear-text-secondary) !important;
           text-decoration: none !important;
-          font-weight: 600;
+          font-weight: 510;
           min-width: 112px;
         }
         .faux-tab:hover {
-          background: #eef2ff;
-          color: #0f172a !important;
+          background: rgba(255, 255, 255, 0.05);
+          color: var(--linear-text) !important;
         }
         .faux-tab-active {
-          background: #ffffff;
-          border-color: #cbd5e1;
-          border-bottom: 2px solid #0f766e;
-          color: #0f172a !important;
+          background: rgba(94, 106, 210, 0.18);
+          border-color: rgba(113, 112, 255, 0.42);
+          color: var(--linear-text) !important;
+        }
+        .dashboard-kpi-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 12px;
+          margin: 8px 0 18px 0;
+        }
+        .dashboard-kpi-card {
+          border: 1px solid var(--linear-border);
+          border-radius: var(--linear-radius-lg);
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.02) 100%);
+          padding: 12px 14px;
+          min-height: 78px;
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.01);
+        }
+        .dashboard-kpi-label {
+          color: var(--linear-text-muted);
+          font-size: 12px;
+          font-weight: 510;
+          margin-bottom: 10px;
+        }
+        .dashboard-kpi-value {
+          color: var(--linear-text);
+          font-size: 24px;
+          line-height: 1;
+          font-weight: 590;
+          letter-spacing: -0.04em;
+          margin-bottom: 6px;
+        }
+        .dashboard-kpi-caption {
+          color: var(--linear-text-faint);
+          font-size: 12px;
+          font-weight: 400;
+        }
+        .dashboard-rank-list {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          margin: 8px 0 4px 0;
+        }
+        .dashboard-rank-row {
+          display: grid;
+          grid-template-columns: 28px minmax(0, 1fr) auto;
+          gap: 12px;
+          align-items: center;
+          border: 1px solid var(--linear-border);
+          border-radius: var(--linear-radius-lg);
+          padding: 12px 14px;
+          background: rgba(255, 255, 255, 0.025);
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.01);
+        }
+        .dashboard-rank-order {
+          color: var(--linear-accent);
+          font-size: 18px;
+          font-weight: 590;
+          text-align: center;
+        }
+        .dashboard-rank-main {
+          min-width: 0;
+        }
+        .dashboard-rank-head {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+          margin-bottom: 5px;
+        }
+        .dashboard-rank-title,
+        .dashboard-rank-title-link {
+          color: var(--linear-text);
+          font-size: 14px;
+          font-weight: 510;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          text-decoration: none;
+        }
+        .dashboard-rank-title-link:hover {
+          color: var(--linear-accent-hover);
+        }
+        .dashboard-rank-badges {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .dashboard-rank-badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 4px 8px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid var(--linear-border-subtle);
+          color: var(--linear-text-secondary);
+          font-size: 11px;
+          font-weight: 510;
+          white-space: nowrap;
+        }
+        .dashboard-rank-meta {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          color: var(--linear-text-muted);
+          font-size: 12px;
+          font-weight: 400;
+        }
+        .dashboard-rank-value {
+          color: var(--linear-accent-hover);
+          font-size: 18px;
+          font-weight: 590;
+          white-space: nowrap;
+          padding-left: 8px;
+        }
+        @media (max-width: 900px) {
+          h1 {
+            font-size: 2.1rem !important;
+          }
+          .detail-title {
+            font-size: 28px;
+          }
+          .dashboard-kpi-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
         }
         </style>
         """,
@@ -3576,7 +4479,12 @@ def render_notice_page_with_scope(
     current_only_default: bool,
     archive: bool = False,
 ) -> None:
-    st.subheader(title)
+    subtitle = "수집된 공고를 상태와 기관 기준으로 정리해 봅니다."
+    if archive:
+        subtitle = "종료되었거나 보관 대상으로 분류된 공고를 모아 봅니다."
+    elif default_status_scope == "예정":
+        subtitle = "예정 공고와 접수 예정 건을 먼저 확인합니다."
+    render_page_header(title, subtitle, eyebrow="Notice")
 
     filtered = source_df.copy()
     filtered = filter_archived_notice_rows(filtered) if archive else filter_current_notice_rows(filtered)
@@ -3616,18 +4524,21 @@ def render_notice_page_with_scope(
     current_view, selected_notice_id = get_route_state(page_key)
 
     if current_view == "detail":
-        st.caption(f"{title} / 상세")
         selected_row = get_row_by_column_value(source_df, "공고ID", selected_notice_id)
         action_col, info_col = st.columns([1, 5])
         with action_col:
             if st.button("테이블로 돌아가기", key=f"{page_key}_back_to_table", use_container_width=True):
                 switch_to_table(page_key)
         with info_col:
-            st.caption("브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.")
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
         render_notice_detail_from_row(selected_row, opportunity_df)
         return
 
-    st.caption(f"공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    render_section_label("Notice List")
+    st.markdown(
+        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
+        unsafe_allow_html=True,
+    )
     render_clickable_table(
         filtered,
         NOTICE_PREFERRED_COLUMNS,
@@ -3645,7 +4556,10 @@ def render_opportunity_page(
 ) -> None:
     page_key = page_key or ("opportunity_archive" if archive else "opportunity")
     title = title or ("Opportunity Archive" if archive else "Opportunity")
-    st.subheader(title)
+    subtitle = "RFP 기준 후보 과제를 점수와 추천도 중심으로 확인합니다."
+    if archive:
+        subtitle = "보관 대상으로 분류된 Opportunity를 모아 봅니다."
+    render_page_header(title, subtitle, eyebrow="Opportunity")
 
     source_df = ensure_opportunity_row_ids(df)
     filtered = filter_archived_opportunity_rows(source_df) if archive else filter_current_opportunity_rows(source_df)
@@ -3715,18 +4629,21 @@ def render_opportunity_page(
     current_view, selected_document_id = get_route_state(page_key)
 
     if current_view == "detail":
-        st.caption(f"{title} / 상세")
         selected_row = get_row_by_column_value(source_df, "_row_id", selected_document_id)
         action_col, info_col = st.columns([1, 5])
         with action_col:
             if st.button("테이블로 돌아가기", key=f"{page_key}_back_to_table", use_container_width=True):
                 switch_to_table(page_key)
         with info_col:
-            st.caption("브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.")
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
         render_opportunity_detail_from_row(selected_row)
         return
 
-    st.caption(f"공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    render_section_label("Opportunity List")
+    st.markdown(
+        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
+        unsafe_allow_html=True,
+    )
     render_clickable_table(
         filtered,
         OPPORTUNITY_PREFERRED_COLUMNS,
@@ -3771,7 +4688,7 @@ def prepare_notice_collection_rows(
 
 
 def render_pending_page(df: pd.DataFrame) -> None:
-    st.subheader("Pending Notice")
+    render_page_header("Pending Notice", "예정 공고와 접수 예정 건을 먼저 점검합니다.", eyebrow="Pending")
     page_key = "pending"
 
     source_df = df.copy()
@@ -3796,18 +4713,21 @@ def render_pending_page(df: pd.DataFrame) -> None:
     current_view, selected_notice_id = get_route_state(page_key)
 
     if current_view == "detail":
-        st.caption("Pending Notice / 상세")
         selected_row = get_row_by_column_value(source_df, "공고ID", selected_notice_id)
         action_col, info_col = st.columns([1, 5])
         with action_col:
             if st.button("테이블로 돌아가기", key="pending_back_to_table", use_container_width=True):
                 switch_to_table(page_key)
         with info_col:
-            st.caption("브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.")
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
         render_pending_detail_from_row(selected_row)
         return
 
-    st.caption(f"공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    render_section_label("Pending List")
+    st.markdown(
+        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
+        unsafe_allow_html=True,
+    )
     render_clickable_table(
         filtered,
         PENDING_PREFERRED_COLUMNS,
@@ -3817,7 +4737,7 @@ def render_pending_page(df: pd.DataFrame) -> None:
 
 
 def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
-    st.subheader("Summary")
+    render_page_header("Summary", "공고별 대표 과제와 추천 요약을 한눈에 봅니다.", eyebrow="Summary")
     page_key = "summary"
 
     source_df = df.copy()
@@ -3861,18 +4781,21 @@ def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
     current_view, selected_notice_id = get_route_state(page_key)
 
     if current_view == "detail":
-        st.caption("Summary / 상세")
         selected_row = get_row_by_column_value(source_df, "공고ID", selected_notice_id)
         action_col, info_col = st.columns([1, 5])
         with action_col:
             if st.button("테이블로 돌아가기", key="summary_back_to_table", use_container_width=True):
                 switch_to_table(page_key)
         with info_col:
-            st.caption("브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.")
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
         render_summary_detail_from_row(selected_row, opportunity_df)
         return
 
-    st.caption(f"공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
+    render_section_label("Summary List")
+    st.markdown(
+        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
+        unsafe_allow_html=True,
+    )
     render_clickable_table(
         filtered,
         SUMMARY_PREFERRED_COLUMNS,
