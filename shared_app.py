@@ -5460,9 +5460,11 @@ def main(app_mode: str = "admin"):
         "notice": get_env("NOTICE_MASTER_SHEET", "IRIS_NOTICE_MASTER"),
         "pending": get_env("PENDING_MASTER_SHEET", "IRIS_PENDING_MASTER"),
         "opportunity": (
-            get_env("IRIS_OPPORTUNITY_MASTER_SHEET")
+            get_env("IRIS_OPPORTUNITY_CURRENT_SHEET")
+            or get_env("OPPORTUNITY_CURRENT_SHEET")
+            or get_env("IRIS_OPPORTUNITY_MASTER_SHEET")
             or get_env("OPPORTUNITY_MASTER_SHEET")
-            or get_env("MASTER_SHEET", "OPPORTUNITY_MASTER")
+            or get_env("MASTER_SHEET", "IRIS_OPPORTUNITY_CURRENT")
         ),
         "summary": get_env("SUMMARY_SHEET", "SUMMARY"),
         "errors": get_env("ERROR_SHEET", "OPPORTUNITY_ERRORS"),
@@ -5480,74 +5482,23 @@ def main(app_mode: str = "admin"):
         st.error(f"시트 로딩 실패: {exc}")
         st.stop()
 
+    source_config_map = get_source_config_map(mode_config)
+    current_source = get_query_param("source") or mode_config.default_source
+    if current_source not in source_config_map:
+        current_source = mode_config.default_source
+    current_page = get_query_param("page") or get_default_page_for_source(mode_config, current_source)
+    current_group = find_nav_group_for_route(mode_config, current_source, current_page)
 
-source_config_map = get_source_config_map(mode_config)
-
-current_source = get_query_param("source") or mode_config.default_source
-current_source = clean(current_source).lower()
-
-source_alias_map = {
-    "iris": "iris",
-    "tipa": "tipa",
-    "mss": "tipa",
-    "nipa": "nipa",
-    "favorites": "favorites",
-    "proposal": "proposal",
-    "operations": "operations",
-    "dashboard": "dashboard",
-}
-
-current_source = source_alias_map.get(current_source, current_source)
-
-if current_source not in source_config_map:
-    current_source = mode_config.default_source
-
-current_page = get_query_param("page") or get_default_page_for_source(
-    mode_config,
-    current_source,
-)
-
-# ✅ Viewer/Main 앱에서만 source-page 불일치 보정
-# ✅ Admin 앱에는 영향 주지 않음
-if mode_config.mode != "admin":
-    if current_source == "tipa" and current_page in {
-        "notice",
-        "notice_scheduled",
-        "notice_archive",
-        "opportunity",
-        "summary",
-    }:
-        current_page = get_default_page_for_source(mode_config, "tipa")
-
-    if current_source == "iris" and current_page in {
-        "mss_current",
-        "mss_past",
-        "mss_archive",
-        "mss_opportunity",
-    }:
-        current_source = "tipa"
-
-current_group = find_nav_group_for_route(
-    mode_config,
-    current_source,
-    current_page,
-)
-
-selected_group_key = render_nav_tabs(
-    current_group.key,
-    [(group.key, group.label) for group in mode_config.nav_groups],
-    key=f"{mode_config.mode}_primary_nav",
-    label="",
-)
-
-selected_group = next(
-    (group for group in mode_config.nav_groups if group.key == selected_group_key),
-    mode_config.nav_groups[0],
-)
-
-if selected_group.key != current_group.key:
-    target_item = selected_group.items[0]
-    navigate_to_route(target_item.source_key, target_item.page_key)
+    selected_group_key = render_nav_tabs(
+        current_group.key,
+        [(group.key, group.label) for group in mode_config.nav_groups],
+        key=f"{mode_config.mode}_primary_nav",
+        label="",
+    )
+    selected_group = next((group for group in mode_config.nav_groups if group.key == selected_group_key), mode_config.nav_groups[0])
+    if selected_group.key != current_group.key:
+        target_item = selected_group.items[0]
+        navigate_to_route(target_item.source_key, target_item.page_key)
 
     current_item = next(
         (
