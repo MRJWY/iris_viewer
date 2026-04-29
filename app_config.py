@@ -110,7 +110,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
     sources = (
         SourceRouteConfig("dashboard", "Dashboard", "dashboard", True, "dashboard"),
         SourceRouteConfig("iris", "IRIS", "notice", False, "iris"),
-        SourceRouteConfig("tipa", "TIPA", "tipa_current", True, "external", page_configs=tipa_pages),
+        SourceRouteConfig("tipa", "중소기업벤처부", "tipa_current", True, "external", page_configs=tipa_pages),
         SourceRouteConfig("nipa", "NIPA", "nipa_current", True, "external", page_configs=nipa_pages),
         SourceRouteConfig("proposal", "제안관리", "proposal", False, "proposal"),
         SourceRouteConfig("operations", "운영관리", "operations", True, "operations"),
@@ -130,8 +130,8 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             (
                 NavItemConfig("iris_notice", "IRIS 진행", "iris", "notice"),
                 NavItemConfig("iris_notice_scheduled", "IRIS 예정", "iris", "notice_scheduled"),
-                NavItemConfig("tipa_current", "TIPA 진행", "tipa", "tipa_current"),
-                NavItemConfig("tipa_scheduled", "TIPA 예정", "tipa", "tipa_scheduled"),
+                NavItemConfig("tipa_current", "중소기업벤처부 진행", "tipa", "tipa_current"),
+                NavItemConfig("tipa_scheduled", "중소기업벤처부 예정", "tipa", "tipa_scheduled"),
                 NavItemConfig("nipa_current", "NIPA 진행", "nipa", "nipa_current"),
                 NavItemConfig("nipa_scheduled", "NIPA 예정", "nipa", "nipa_scheduled"),
             ),
@@ -141,7 +141,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             "추천기회",
             (
                 NavItemConfig("iris_opportunity", "IRIS Opportunity", "iris", "opportunity"),
-                NavItemConfig("tipa_opportunity", "TIPA Opportunity", "tipa", "tipa_opportunity"),
+                NavItemConfig("tipa_opportunity", "중소기업벤처부 Opportunity", "tipa", "tipa_opportunity"),
                 NavItemConfig("nipa_opportunity", "NIPA Opportunity", "nipa", "nipa_opportunity"),
             ),
         ),
@@ -165,7 +165,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             "Archive",
             (
                 NavItemConfig("iris_archive", "IRIS Archive", "iris", "notice_archive"),
-                NavItemConfig("tipa_archive", "TIPA Archive", "tipa", "tipa_archive"),
+                NavItemConfig("tipa_archive", "중소기업벤처부 Archive", "tipa", "tipa_archive"),
                 NavItemConfig("nipa_archive", "NIPA Archive", "nipa", "nipa_archive"),
             ),
         ),

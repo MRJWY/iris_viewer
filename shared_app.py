@@ -525,7 +525,7 @@ def build_dashboard_notice_route(source_key: object, notice_id: object) -> str:
         return ""
     page_map = {
         "iris": "notice",
-        "tipa": "mss_current",
+        "tipa": "tipa_current",
         "nipa": "nipa_current",
     }
     page_key = page_map.get(source, "notice")
@@ -701,7 +701,7 @@ def navigate_to_notice_detail(source_key: str, notice_id: str) -> None:
     source = clean(source_key).lower() or "iris"
     page_map = {
         "iris": "notice",
-        "tipa": "mss_current",
+        "tipa": "tipa_current",
         "nipa": "nipa_current",
     }
     st.query_params.clear()
@@ -744,7 +744,7 @@ def render_dashboard_quick_links(mode_config: AppModeConfig) -> None:
     primary_links = [
         ("IRIS Notices", "iris", "notice"),
         ("IRIS Opportunity", "iris", "opportunity"),
-        ("MSS Current", "tipa", "mss_current"),
+        ("중소기업벤처부 진행", "tipa", "tipa_current"),
         ("NIPA Current", "nipa", "nipa_current"),
     ]
     secondary_links = [("Favorites", "favorites", "favorites")]
@@ -1209,7 +1209,7 @@ def render_iris_source(
 ) -> None:
     del source_config
     del source_datasets
-    raw_page_key = get_query_param("page")
+    raw_page_key = normalize_route_page_key(get_query_param("page"))
     current_page_key = raw_page_key or mode_config.default_iris_page
     current_view = get_query_param("view") or "table"
 
@@ -1296,7 +1296,7 @@ def render_external_source(
         return
 
     st.subheader(source_config.label)
-    raw_page_key = get_query_param("page")
+    raw_page_key = normalize_route_page_key(get_query_param("page"))
     current_page_key = raw_page_key or source_config.default_page
     valid_page_keys = {page.key for page in source_config.page_configs}
 
@@ -3825,8 +3825,20 @@ def get_query_param(name: str) -> str:
     return clean(value)
 
 
+LEGACY_PAGE_KEY_MAP = {
+    "mss_current": "tipa_current",
+    "mss_past": "tipa_archive",
+    "mss_archive": "tipa_archive",
+    "mss_opportunity": "tipa_opportunity",
+}
+
+
+def normalize_route_page_key(page_key: str) -> str:
+    return LEGACY_PAGE_KEY_MAP.get(clean(page_key), clean(page_key))
+
+
 def get_route_state(page_key: str) -> tuple[str, str]:
-    current_page = get_query_param("page") or "notice"
+    current_page = normalize_route_page_key(get_query_param("page") or "notice")
     if current_page != page_key:
         return "table", ""
 
@@ -3836,7 +3848,7 @@ def get_route_state(page_key: str) -> tuple[str, str]:
 
 
 def build_page_href(page_key: str) -> str:
-    params = {"page": page_key, "view": "table"}
+    params = {"page": normalize_route_page_key(page_key), "view": "table"}
     current_source = get_query_param("source")
     if current_source and not (current_source == "favorites" and page_key != "favorites"):
         params["source"] = current_source
@@ -3875,7 +3887,7 @@ def render_page_tabs(current_page_key: str, tabs: list[tuple[str, str]], *, key:
 
 
 def build_route_href(page_key: str, identifier: str) -> str:
-    params = {"page": page_key, "view": "detail", "id": clean(identifier)}
+    params = {"page": normalize_route_page_key(page_key), "view": "detail", "id": clean(identifier)}
     current_source = get_query_param("source")
     if current_source and not (current_source == "favorites" and page_key != "favorites"):
         params["source"] = current_source
@@ -5486,7 +5498,7 @@ def main(app_mode: str = "admin"):
     current_source = get_query_param("source") or mode_config.default_source
     if current_source not in source_config_map:
         current_source = mode_config.default_source
-    current_page = get_query_param("page") or get_default_page_for_source(mode_config, current_source)
+    current_page = normalize_route_page_key(get_query_param("page")) or get_default_page_for_source(mode_config, current_source)
     current_group = find_nav_group_for_route(mode_config, current_source, current_page)
 
     selected_group_key = render_nav_tabs(
