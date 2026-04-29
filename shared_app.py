@@ -247,7 +247,7 @@ def build_dashboard_notice_index(
     if source_datasets:
         tipa_base = combine_notice_frames(source_datasets["mss_current"], source_datasets["mss_past"])
         tipa_df = filter_archived_notice_rows(tipa_base) if archived else filter_current_notice_rows(source_datasets["mss_current"])
-        append_source(tipa_df, source_key="tipa", source_label="TIPA")
+        append_source(tipa_df, source_key="tipa", source_label="중소기업벤처부")
 
         nipa_base = combine_notice_frames(source_datasets["nipa_current"], source_datasets["nipa_past"])
         nipa_df = filter_archived_notice_rows(nipa_base) if archived else filter_current_notice_rows(source_datasets["nipa_current"])
@@ -292,7 +292,7 @@ def build_dashboard_source_snapshot_rows(
         "tipa": source_datasets["mss_opportunity"] if source_datasets else pd.DataFrame(),
         "nipa": source_datasets["nipa_opportunity"] if source_datasets else pd.DataFrame(),
     }
-    source_labels = {"iris": "IRIS", "tipa": "TIPA", "nipa": "NIPA"}
+    source_labels = {"iris": "IRIS", "tipa": "중소기업벤처부", "nipa": "NIPA"}
 
     rows: list[dict[str, object]] = []
     for source_key, source_label in source_labels.items():
@@ -417,6 +417,7 @@ def build_dashboard_opportunity_index(
             return
 
         normalized = pd.DataFrame(index=working.index.copy())
+        normalized["source_key"] = source_key
         normalized["Source"] = source_label
         normalized["Notice ID"] = series_from_candidates(working, ["notice_id", "공고ID"])
         normalized["Notice Title"] = series_from_candidates(working, ["notice_title", "공고명"])
@@ -424,17 +425,18 @@ def build_dashboard_opportunity_index(
         normalized["Recommendation"] = series_from_candidates(working, ["recommendation", "추천여부", "llm_recommendation"])
         normalized["Score"] = to_numeric_column(series_from_candidates(working, ["rfp_score", "점수", "llm_fit_score"]))
         normalized["Budget"] = series_from_candidates(working, ["budget", "예산", "llm_total_budget_text", "total_budget_text"])
+        normalized["Reason"] = series_from_candidates(working, ["llm_reason", "reason", "관심사유"])
         normalized["Date"] = series_from_candidates(working, ["ancm_de", "공고일자", "registered_at"])
         normalized["_sort_date"] = parse_date_column(normalized["Date"])
         frames.append(normalized)
 
     append_source(datasets["opportunity"], source_key="iris", source_label="IRIS")
     if source_datasets:
-        append_source(source_datasets["mss_opportunity"], source_key="tipa", source_label="TIPA")
+        append_source(source_datasets["mss_opportunity"], source_key="tipa", source_label="중소기업벤처부")
         append_source(source_datasets["nipa_opportunity"], source_key="nipa", source_label="NIPA")
 
     if not frames:
-        return pd.DataFrame(columns=["Source", "Notice ID", "Notice Title", "Project", "Recommendation", "Score", "Budget", "Date", "_sort_date"])
+        return pd.DataFrame(columns=["source_key", "Source", "Notice ID", "Notice Title", "Project", "Recommendation", "Score", "Budget", "Reason", "Date", "_sort_date"])
 
     combined = pd.concat(frames, ignore_index=True)
     return combined.sort_values(
@@ -523,7 +525,7 @@ def build_dashboard_notice_route(source_key: object, notice_id: object) -> str:
         return ""
     page_map = {
         "iris": "notice",
-        "tipa": "tipa_current",
+        "tipa": "mss_current",
         "nipa": "nipa_current",
     }
     page_key = page_map.get(source, "notice")
@@ -537,29 +539,7 @@ def build_dashboard_notice_route(source_key: object, notice_id: object) -> str:
 
 
 def render_dashboard_metrics_strip(items: list[tuple[str, str, str]]) -> None:
-    if not items:
-        return
-
-    cards = []
-    for label, value, caption in items:
-        cards.append(
-            """
-            <div class="dashboard-kpi-card">
-              <div class="dashboard-kpi-label">{label}</div>
-              <div class="dashboard-kpi-value">{value}</div>
-              <div class="dashboard-kpi-caption">{caption}</div>
-            </div>
-            """.format(
-                label=escape(clean(label)),
-                value=escape(clean(value)),
-                caption=escape(clean(caption) or " "),
-            )
-        )
-
-    st.markdown(
-        '<div class="dashboard-kpi-grid">{}</div>'.format("".join(cards)),
-        unsafe_allow_html=True,
-    )
+    render_metrics([(label, value) for label, value, _caption in items])
 
 
 def render_dashboard_rank_list(
@@ -717,24 +697,45 @@ def navigate_to_route(source_key: str, page_key: str) -> None:
     st.rerun()
 
 
+def navigate_to_notice_detail(source_key: str, notice_id: str) -> None:
+    source = clean(source_key).lower() or "iris"
+    page_map = {
+        "iris": "notice",
+        "tipa": "mss_current",
+        "nipa": "nipa_current",
+    }
+    st.query_params.clear()
+    st.query_params.update({
+        "source": source,
+        "page": page_map.get(source, "notice"),
+        "view": "detail",
+        "id": clean(notice_id),
+    })
+    st.rerun()
+
+
 def render_nav_tabs(current_key: str, options: list[tuple[str, str]], *, key: str, label: str = "Navigation") -> str:
     option_map = {option_key: option_label for option_key, option_label in options}
     if current_key not in option_map:
         current_key = next(iter(option_map))
-    return_key = current_key
-    selected_label = st.radio(
-        label,
-        list(option_map.values()),
-        horizontal=True,
-        index=list(option_map.keys()).index(current_key),
-        key=key,
-        label_visibility="collapsed",
-    )
-    for option_key, option_label in option_map.items():
-        if option_label == selected_label:
-            return_key = option_key
-            break
-    return return_key
+    if clean(label):
+        st.markdown(
+            f'<div class="section-label" style="margin-top:6px">{escape(clean(label))}</div>',
+            unsafe_allow_html=True,
+        )
+    cols = st.columns(len(options))
+    selected_key = current_key
+    for col, (option_key, option_label) in zip(cols, options):
+        with col:
+            button_type = "primary" if option_key == current_key else "secondary"
+            if st.button(
+                option_label,
+                key=f"{key}_{option_key}",
+                type=button_type,
+                use_container_width=True,
+            ):
+                selected_key = option_key
+    return selected_key
 
 
 def render_dashboard_quick_links(mode_config: AppModeConfig) -> None:
@@ -743,7 +744,7 @@ def render_dashboard_quick_links(mode_config: AppModeConfig) -> None:
     primary_links = [
         ("IRIS Notices", "iris", "notice"),
         ("IRIS Opportunity", "iris", "opportunity"),
-        ("TIPA Current", "tipa", "tipa_current"),
+        ("MSS Current", "tipa", "mss_current"),
         ("NIPA Current", "nipa", "nipa_current"),
     ]
     secondary_links = [("Favorites", "favorites", "favorites")]
@@ -782,17 +783,21 @@ def render_dashboard_source(
     total_current_opportunities = int(snapshot_rows["Current Opportunities"].sum()) if not snapshot_rows.empty else 0
     total_errors = int(len(datasets["errors"]))
     total_favorites = int(len(build_favorite_notice_df(datasets["notice_view"], source_datasets or {})))
-    total_scheduled = int(len(filter_notice_status_scope(current_notice_index, "??"))) if not current_notice_index.empty else 0
+    total_scheduled = int(len(filter_notice_status_scope(current_notice_index, "예정"))) if not current_notice_index.empty else 0
 
-    st.subheader("Dashboard")
+    render_page_header(
+        "Dashboard",
+        "현재 요약, 검토 가능 공고, Opportunity, 오류 현황을 확인합니다.",
+        eyebrow="Overview",
+    )
     render_dashboard_metrics_strip(
         [
-            ("?? ??", str(total_current_notices), "?? ?? ?"),
-            ("?? ??", str(total_scheduled), "?? ?? ??"),
-            ("Opportunity", str(total_current_opportunities), "?? ?? ??"),
-            ("???", str(total_review_needed), "?? ?? ??"),
-            ("??", str(total_errors), "????? ??"),
-            ("?? ??", str(total_favorites), "???? ??"),
+            ("현재 공고", str(total_current_notices), "오늘 운영 중"),
+            ("예정 공고", str(total_scheduled), "접수 예정 포함"),
+            ("Opportunity", str(total_current_opportunities), "검토 가능한 후보"),
+            ("미검토", str(total_review_needed), "우선 확인 필요"),
+            ("오류", str(total_errors), "파이프라인 예외"),
+            ("관심 공고", str(total_favorites), "즐겨찾기 상태"),
         ]
     )
     render_dashboard_quick_links(mode_config)
@@ -805,17 +810,17 @@ def render_dashboard_source(
     recent_comments_df = build_dashboard_recent_comments_table(limit=5)
 
     dashboard_views = [
-        ("realtime", "??? ??"),
-        ("trend", "??? ??"),
+        ("realtime", "실시간 현황"),
+        ("trend", "소스별 흐름"),
         ("opportunity", "Opportunity"),
-        ("review", "??"),
-        ("errors", "??"),
+        ("review", "검토"),
+        ("errors", "오류"),
     ]
     selected_view = render_nav_tabs(
         "realtime",
         dashboard_views,
         key="dashboard_view_tabs",
-        label="Dashboard View",
+        label="Dashboard Tabs",
     )
 
     left_col, center_col, right_col = st.columns([1.35, 1.35, 0.9])
@@ -823,11 +828,11 @@ def render_dashboard_source(
     with left_col:
         if selected_view == "realtime":
             render_dashboard_table_block(
-                "??? ?? ??",
+                "소스별 공고 현황",
                 snapshot_rows[["Source", "Current Notices", "Review Needed", "Current Opportunities"]] if not snapshot_rows.empty else pd.DataFrame(),
             )
             render_dashboard_table_block(
-                "?? ?? ??",
+                "최근 유입 공고",
                 build_dashboard_notice_table(recent_notice_df, limit=10),
             )
         elif selected_view == "trend":
@@ -836,23 +841,23 @@ def render_dashboard_source(
                 snapshot_rows[["Source", "Current Notices", "Archived Notices", "Review Needed"]] if not snapshot_rows.empty else pd.DataFrame(),
             )
             render_dashboard_table_block(
-                "Archive ??",
+                "Archive 공고",
                 build_dashboard_notice_table(archive_notice_index, limit=10),
             )
         elif selected_view == "opportunity":
             render_dashboard_table_block(
-                "?? Opportunity TOP",
+                "추천 Opportunity TOP",
                 build_dashboard_opportunity_table(opportunity_index, limit=10),
             )
         elif selected_view == "review":
             render_dashboard_table_block(
-                "?? ?? ??",
+                "검토 필요 공고",
                 build_dashboard_notice_table(review_needed_df, limit=10),
             )
         else:
             errors_df = datasets["errors"]
             render_dashboard_table_block(
-                "??/?? ??",
+                "오류/누락 공고",
                 errors_df[["source_site", "notice_id", "notice_title", "validation_errors"]].head(10)
                 if not errors_df.empty and {"source_site", "notice_id", "notice_title", "validation_errors"}.issubset(errors_df.columns)
                 else pd.DataFrame(),
@@ -862,7 +867,7 @@ def render_dashboard_source(
                     errors_df["source_site"]
                     .fillna("")
                     .astype(str)
-                    .replace("", "???")
+                    .replace("", "미지정")
                     .value_counts()
                     .rename_axis("Source")
                     .to_frame("Count")
@@ -870,13 +875,13 @@ def render_dashboard_source(
                 )
             else:
                 error_counts = pd.DataFrame()
-            render_dashboard_table_block("?? ??", error_counts)
+            render_dashboard_table_block("오류 분포", error_counts)
 
     with center_col:
         if selected_view == "realtime":
-            render_dashboard_table_block("?? ?? ??", deadline_df)
+            render_dashboard_table_block("마감 임박 공고", deadline_df)
             render_dashboard_table_block(
-                "?? Opportunity TOP",
+                "추천 Opportunity TOP",
                 build_dashboard_opportunity_table(opportunity_index, limit=8),
             )
         elif selected_view == "trend":
@@ -885,12 +890,12 @@ def render_dashboard_source(
                 snapshot_rows[["Source", "Current Notices", "Archived Notices", "Current Opportunities"]] if not snapshot_rows.empty else pd.DataFrame(),
             )
             render_dashboard_table_block(
-                "?? ?? ??",
+                "최근 유입 공고",
                 build_dashboard_notice_table(recent_notice_df, limit=8),
             )
         elif selected_view == "opportunity":
             render_dashboard_table_block(
-                "?? Opportunity",
+                "최근 Opportunity",
                 build_dashboard_opportunity_table(
                     opportunity_index.sort_values(by=["_sort_date", "Score"], ascending=[False, False], na_position="last"),
                     limit=10,
@@ -908,17 +913,17 @@ def render_dashboard_source(
                 opportunity_summary["Avg_Score"] = opportunity_summary["Avg_Score"].round(1)
             else:
                 opportunity_summary = pd.DataFrame()
-            render_dashboard_table_block("??? ?? ??", opportunity_summary)
+            render_dashboard_table_block("소스별 평균 점수", opportunity_summary)
         elif selected_view == "review":
             review_snapshot = snapshot_rows[["Source", "Current Notices", "Review Needed"]] if not snapshot_rows.empty else pd.DataFrame()
-            render_dashboard_table_block("?? ????", review_snapshot)
-            render_dashboard_table_block("?? ?? ??", build_dashboard_notice_table(recent_notice_df, limit=8))
+            render_dashboard_table_block("검토 커버리지", review_snapshot)
+            render_dashboard_table_block("최근 유입 공고", build_dashboard_notice_table(recent_notice_df, limit=8))
         else:
             render_dashboard_table_block(
-                "?? ?? ??",
+                "검토 필요 공고",
                 build_dashboard_notice_table(review_needed_df, limit=8),
             )
-            render_dashboard_table_block("?? ??", recent_comments_df)
+            render_dashboard_table_block("최근 댓글", recent_comments_df)
 
     with right_col:
         pending_count = len(filter_current_notice_rows(datasets["pending"])) if not datasets["pending"].empty else 0
@@ -929,7 +934,7 @@ def render_dashboard_source(
             review_coverage = f"{((total_current_notices - total_review_needed) / total_current_notices) * 100:.0f}%"
 
         render_detail_card(
-            "?? ??",
+            "운영 상태",
             [
                 ("Pending Notices", str(pending_count)),
                 ("Summary Rows", str(summary_count)),
@@ -942,12 +947,257 @@ def render_dashboard_source(
 
         favorites_df = build_favorite_notice_df(datasets["notice_view"], source_datasets or {})
         favorite_panel_df = (
-            favorites_df[["??", "???", "????"]].head(6)
-            if not favorites_df.empty and {"??", "???", "????"}.issubset(favorites_df.columns)
+            favorites_df[["매체", "공고명", "공고일자"]].head(6)
+            if not favorites_df.empty and {"매체", "공고명", "공고일자"}.issubset(favorites_df.columns)
             else pd.DataFrame()
         )
-        render_dashboard_table_block("?? ??", favorite_panel_df)
-        render_dashboard_table_block("?? ??", recent_comments_df)
+        render_dashboard_table_block("관심 공고", favorite_panel_df)
+        render_dashboard_table_block("최근 댓글", recent_comments_df)
+
+def render_dashboard_source(
+    source_config: SourceRouteConfig,
+    mode_config: AppModeConfig,
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+    *,
+    show_internal_tabs: bool = True,
+) -> None:
+    del show_internal_tabs
+    del source_config, mode_config
+
+    current_notice_index = build_dashboard_notice_index(datasets, source_datasets, archived=False)
+    archive_notice_index = build_dashboard_notice_index(datasets, source_datasets, archived=True)
+    opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
+    favorites_df = build_favorite_notice_df(datasets["notice_view"], source_datasets or {})
+    recent_comments_df = build_dashboard_recent_comments_table(limit=5)
+    errors_df = datasets["errors"]
+
+    today = pd.Timestamp.now().normalize()
+    recent_threshold = today - pd.Timedelta(days=6)
+    delayed_threshold = today - pd.Timedelta(days=3)
+
+    total_current_notices = int(len(current_notice_index))
+    total_review_needed = int(current_notice_index["Review"].fillna("").astype(str).str.strip().eq("").sum()) if not current_notice_index.empty else 0
+    total_opportunities = int(len(opportunity_index))
+    total_archive_notices = int(len(archive_notice_index))
+    total_favorites = int(len(favorites_df))
+    total_errors = int(len(errors_df)) if errors_df is not None else 0
+
+    recent_notice_count = 0
+    if not current_notice_index.empty and "_sort_date" in current_notice_index.columns:
+        recent_notice_count = int(current_notice_index["_sort_date"].dt.normalize().ge(recent_threshold).sum())
+
+    review_needed_df = current_notice_index[
+        current_notice_index["Review"].fillna("").astype(str).str.strip().eq("")
+    ].copy() if not current_notice_index.empty else pd.DataFrame()
+
+    delayed_review_df = review_needed_df.copy()
+    if not delayed_review_df.empty and "_sort_date" in delayed_review_df.columns:
+        delayed_review_df = delayed_review_df[
+            delayed_review_df["_sort_date"].dt.normalize().le(delayed_threshold)
+        ].copy()
+    delayed_review_count = int(len(delayed_review_df))
+
+    urgent_notices_df = current_notice_index.copy()
+    if not urgent_notices_df.empty:
+        urgent_notices_df["_period_end"] = urgent_notices_df["Period"].apply(extract_period_end)
+        urgent_notices_df = urgent_notices_df.dropna(subset=["_period_end"])
+        if not urgent_notices_df.empty:
+            urgent_notices_df["D-Day"] = (urgent_notices_df["_period_end"].dt.normalize() - today).dt.days
+            urgent_notices_df = urgent_notices_df[urgent_notices_df["D-Day"].between(0, 7)]
+            urgent_notices_df = urgent_notices_df.sort_values(by=["D-Day", "_sort_date"], ascending=[True, False], na_position="last")
+    urgent_count = int(len(urgent_notices_df)) if not urgent_notices_df.empty else 0
+
+    high_priority_opportunities = opportunity_index.copy()
+    if not high_priority_opportunities.empty:
+        high_priority_opportunities = high_priority_opportunities.sort_values(
+            by=["Score", "_sort_date", "Project"],
+            ascending=[False, False, True],
+            na_position="last",
+        )
+    top_opportunity_count = int(high_priority_opportunities["Score"].fillna(0).ge(80).sum()) if not high_priority_opportunities.empty else 0
+
+    review_coverage = "-"
+    if total_current_notices > 0:
+        review_coverage = f"{((total_current_notices - total_review_needed) / total_current_notices) * 100:.0f}%"
+
+    render_page_header(
+        "Dashboard",
+        "오늘 반드시 확인해야 할 공고와 운영 상태를 한눈에 보여주는 메인 대시보드입니다.",
+        eyebrow="Overview",
+    )
+
+    render_section_label("오늘의 우선 작업")
+    with st.container(border=True):
+        task_cols = st.columns(4)
+        task_items = [
+            {
+                "title": "마감 7일 이내 공고",
+                "value": f"{urgent_count}건",
+                "caption": "즉시 확인 필요",
+                "button": "보기",
+                "route": ("iris", "notice"),
+            },
+            {
+                "title": "AI 추천 상위 공고",
+                "value": f"{top_opportunity_count}건",
+                "caption": "점수 80 이상 기준",
+                "button": "보기",
+                "route": ("iris", "opportunity"),
+            },
+            {
+                "title": "담당자 미지정 공고",
+                "value": "-",
+                "caption": "담당자 데이터 연동 전",
+                "button": "운영관리",
+                "route": ("operations", "operations"),
+            },
+            {
+                "title": "검토 지연 공고",
+                "value": f"{delayed_review_count}건",
+                "caption": "미검토 3일 이상",
+                "button": "확인하기",
+                "route": ("iris", "notice"),
+            },
+        ]
+        for index, (col, item) in enumerate(zip(task_cols, task_items)):
+            with col:
+                st.markdown(f"**{item['title']}**")
+                st.markdown(f"### {item['value']}")
+                st.caption(item["caption"])
+                if st.button(item["button"], key=f"dashboard_priority_{index}", use_container_width=True):
+                    navigate_to_route(*item["route"])
+
+    render_section_label("핵심 KPI")
+    with st.container(border=True):
+        kpi_cols = st.columns(4)
+        kpi_items = [
+            ("신규 공고", f"{recent_notice_count}건", "최근 7일"),
+            ("검토 필요", f"{total_review_needed}건", "미검토 기준"),
+            ("제안 진행", "-", "제안관리 연동 전"),
+            ("마감 임박", f"{urgent_count}건", "D-7 기준"),
+        ]
+        for index, (label, value, caption) in enumerate(kpi_items):
+            with kpi_cols[index]:
+                st.metric(label, value)
+                st.caption(caption)
+
+    section_left, section_right = st.columns([6, 4])
+    with section_left:
+        render_section_label("추천 Opportunity TOP 10")
+        top_cards = high_priority_opportunities.head(5)
+        if top_cards.empty:
+            st.info("표시할 추천 Opportunity가 없습니다.")
+        else:
+            for rank, (_, row) in enumerate(top_cards.iterrows(), start=1):
+                with st.container(border=True):
+                    head_cols = st.columns([7, 2])
+                    with head_cols[0]:
+                        st.markdown(f"**{rank}. {clean(row.get('Project')) or clean(row.get('Notice Title'))}**")
+                        reason_text = clean(row.get("Reason")) or clean(row.get("Recommendation")) or "추천 사유 데이터가 없습니다."
+                        st.caption(reason_text)
+                    with head_cols[1]:
+                        st.metric("적합도", str(int(row.get("Score") or 0)))
+
+                    meta_cols = st.columns(2)
+                    with meta_cols[0]:
+                        st.caption(f"예상예산: {clean(row.get('Budget')) or '-'}")
+                    with meta_cols[1]:
+                        st.caption(f"소스: {clean(row.get('Source')) or '-'}")
+
+                    action_cols = st.columns(2)
+                    with action_cols[0]:
+                        if st.button("검토하기", key=f"dashboard_opp_review_{rank}", use_container_width=True):
+                            navigate_to_notice_detail(clean(row.get("source_key")), clean(row.get("Notice ID")))
+                    with action_cols[1]:
+                        if st.button("추천기회 전체", key=f"dashboard_opp_all_{rank}", use_container_width=True):
+                            navigate_to_route("iris", "opportunity")
+
+        if st.button("추천기회 전체 보기", key="dashboard_go_opportunity_all", use_container_width=True):
+            navigate_to_route("iris", "opportunity")
+
+    with section_right:
+        render_section_label("마감 임박 공고")
+        urgent_cards = urgent_notices_df.head(5) if not urgent_notices_df.empty else pd.DataFrame()
+        if urgent_cards.empty:
+            st.info("마감 임박 공고가 없습니다.")
+        else:
+            for rank, (_, row) in enumerate(urgent_cards.iterrows(), start=1):
+                d_day = clean(row.get("D-Day"))
+                review_label = clean(row.get("Review")) or "미검토"
+                risk_label = "긴급" if d_day in {"0", "1", "2"} else "주의"
+                with st.container(border=True):
+                    st.markdown(f"**{compact_table_value(row.get('Title'), max_chars=48)}**")
+                    st.caption(f"D-{d_day} / {review_label} / {risk_label}")
+                    action_cols = st.columns(2)
+                    with action_cols[0]:
+                        if st.button("즉시 검토", key=f"dashboard_deadline_review_{rank}", use_container_width=True):
+                            navigate_to_notice_detail(clean(row.get("source_key")), clean(row.get("Notice ID")))
+                    with action_cols[1]:
+                        if st.button("공고탐색", key=f"dashboard_deadline_list_{rank}", use_container_width=True):
+                            navigate_to_route(clean(row.get("source_key")) or "iris", "notice")
+
+    pipeline_col, owner_col = st.columns([5, 5])
+    with pipeline_col:
+        render_section_label("제안 Pipeline")
+        with st.container(border=True):
+            top_row = st.columns(3)
+            bottom_row = st.columns(3)
+            pipeline_items = [
+                ("검토중", str(total_review_needed), "미검토 기준"),
+                ("Go", "-", "연동 전"),
+                ("No-Go", "-", "연동 전"),
+                ("제안서 작성중", "-", "연동 전"),
+                ("제출 완료", "-", "연동 전"),
+                ("결과 대기", "-", "연동 전"),
+            ]
+            for col, (label, value, caption) in zip(top_row + bottom_row, pipeline_items):
+                with col:
+                    st.metric(label, value)
+                    st.caption(caption)
+            if st.button("제안관리로 이동", key="dashboard_go_proposal", use_container_width=True):
+                navigate_to_route("proposal", "proposal")
+
+    with owner_col:
+        render_section_label("담당자별 업무 현황")
+        with st.container(border=True):
+            st.info("담당자 배정 데이터는 아직 연결되지 않았습니다. 운영관리 페이지에서 연동 범위를 확정해 주세요.")
+            owner_status_df = pd.DataFrame(columns=["담당자", "총 건수", "검토", "제안", "지연"])
+            st.dataframe(owner_status_df, use_container_width=True, hide_index=True)
+            if st.button("운영관리 보기", key="dashboard_go_operations", use_container_width=True):
+                navigate_to_route("operations", "operations")
+
+    render_section_label("운영 상태")
+    status_col, comment_col = st.columns([5, 5])
+    with status_col:
+        render_detail_card(
+            "운영 상태",
+            [
+                ("현재 공고", str(total_current_notices)),
+                ("Opportunity", str(total_opportunities)),
+                ("관심 공고", str(total_favorites)),
+                ("리뷰 커버리지", review_coverage),
+                ("Archive", str(total_archive_notices)),
+                ("오류", str(total_errors)),
+            ],
+        )
+    with comment_col:
+        render_dashboard_table_block("최근 댓글", recent_comments_df)
+
+    render_section_label("빠른 이동")
+    quick_cols = st.columns(5)
+    quick_actions = [
+        ("전체 공고 보기", ("iris", "notice")),
+        ("추천기회 전체 보기", ("iris", "opportunity")),
+        ("제안관리로 이동", ("proposal", "proposal")),
+        ("운영관리 보기", ("operations", "operations")),
+        ("Archive 열기", ("iris", "notice_archive")),
+    ]
+    for index, (label, route) in enumerate(quick_actions):
+        with quick_cols[index]:
+            if st.button(label, key=f"dashboard_quick_{index}", use_container_width=True):
+                navigate_to_route(*route)
+
 
 def render_iris_source(
     source_config: SourceRouteConfig,
@@ -1115,11 +1365,97 @@ def render_favorites_source(
     )
 
 
+def render_proposal_source(
+    source_config: SourceRouteConfig,
+    mode_config: AppModeConfig,
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+    *,
+    show_internal_tabs: bool = True,
+) -> None:
+    del source_config, mode_config, show_internal_tabs
+    opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
+    recommended_count = int(opportunity_index["Recommendation"].fillna("").astype(str).str.contains("추천").sum()) if not opportunity_index.empty else 0
+    high_score_count = int(opportunity_index["Score"].fillna(0).ge(80).sum()) if not opportunity_index.empty else 0
+
+    render_page_header(
+        "제안관리",
+        "제안 단계 데이터는 아직 분리 연동 전입니다. 현재는 추천기회와 관심 공고 중심으로 후보를 관리합니다.",
+        eyebrow="Proposal",
+    )
+    render_metrics(
+        [
+            ("추천 후보", str(recommended_count)),
+            ("고득점 후보", str(high_score_count)),
+            ("작성중", "-"),
+            ("제출 완료", "-"),
+        ]
+    )
+    st.info("제안 단계별 상태, 제출 이력, 결과 대기 현황은 후속 연동이 필요합니다.")
+    action_cols = st.columns(3)
+    with action_cols[0]:
+        if st.button("추천기회로 이동", key="proposal_go_opportunity", use_container_width=True):
+            navigate_to_route("iris", "opportunity")
+    with action_cols[1]:
+        if st.button("관심 공고 보기", key="proposal_go_favorites", use_container_width=True):
+            navigate_to_route("favorites", "favorites")
+    with action_cols[2]:
+        if st.button("대시보드로 이동", key="proposal_go_dashboard", use_container_width=True):
+            navigate_to_route("dashboard", "dashboard")
+
+
+def render_operations_source(
+    source_config: SourceRouteConfig,
+    mode_config: AppModeConfig,
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+    *,
+    show_internal_tabs: bool = True,
+) -> None:
+    del source_config, mode_config, show_internal_tabs
+    current_notice_index = build_dashboard_notice_index(datasets, source_datasets, archived=False)
+    total_current_notices = int(len(current_notice_index))
+    total_review_needed = int(current_notice_index["Review"].fillna("").astype(str).str.strip().eq("").sum()) if not current_notice_index.empty else 0
+    review_coverage = "-"
+    if total_current_notices > 0:
+        review_coverage = f"{((total_current_notices - total_review_needed) / total_current_notices) * 100:.0f}%"
+
+    favorites_df = build_favorite_notice_df(datasets["notice_view"], source_datasets or {})
+    recent_comments_df = build_dashboard_recent_comments_table(limit=8)
+
+    render_page_header(
+        "운영관리",
+        "관심 공고, 댓글, 오류, 검토 커버리지를 기준으로 운영 상태를 확인합니다.",
+        eyebrow="Operations",
+    )
+    render_metrics(
+        [
+            ("현재 공고", str(total_current_notices)),
+            ("미검토", str(total_review_needed)),
+            ("관심 공고", str(len(favorites_df))),
+            ("커버리지", review_coverage),
+        ]
+    )
+
+    left_col, right_col = st.columns([1.2, 1.0])
+    with left_col:
+        render_dashboard_table_block(
+            "관심 공고",
+            favorites_df[["매체", "공고명", "공고일자"]].head(10)
+            if not favorites_df.empty and {"매체", "공고명", "공고일자"}.issubset(favorites_df.columns)
+            else pd.DataFrame(),
+        )
+    with right_col:
+        render_dashboard_table_block("최근 댓글", recent_comments_df)
+
+
 SOURCE_RENDERERS = {
     "dashboard": render_dashboard_source,
     "iris": render_iris_source,
     "tipa": render_tipa_source,
     "nipa": render_nipa_source,
+    "proposal": render_proposal_source,
+    "operations": render_operations_source,
     "favorites": render_favorites_source,
 }
 
@@ -1527,6 +1863,7 @@ def get_service_account_info() -> dict | None:
     return None
 
 
+@st.cache_resource(show_spinner=False)
 def get_gspread_client():
     service_account_info = get_service_account_info()
     if service_account_info:
@@ -1555,6 +1892,7 @@ def get_worksheet(sheet_name: str):
     return sh.worksheet(sheet_name)
 
 
+@st.cache_resource(show_spinner=False)
 def get_spreadsheet():
     gc = get_gspread_client()
     sheet_id = get_env("GOOGLE_SHEET_ID")
@@ -1626,6 +1964,7 @@ def get_comment_sheet_name() -> str:
     return get_env("NOTICE_COMMENT_SHEET", "NOTICE_COMMENTS")
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_notice_comments() -> pd.DataFrame:
     df = load_optional_sheet_as_dataframe(get_comment_sheet_name())
     if df.empty:
@@ -1683,6 +2022,8 @@ def append_notice_comment(
     }
     ws.append_row([row[column] for column in COMMENT_COLUMNS], value_input_option="USER_ENTERED")
     load_sheet_as_dataframe.clear()
+    load_notice_comments.clear()
+    load_app_datasets.clear()
 
 
 def delete_notice_comment(comment_id: str) -> None:
@@ -1705,6 +2046,8 @@ def delete_notice_comment(comment_id: str) -> None:
         if current_comment_id == comment_id:
             ws.delete_rows(row_index)
             load_sheet_as_dataframe.clear()
+            load_notice_comments.clear()
+            load_app_datasets.clear()
             return
 
     raise RuntimeError("삭제할 댓글을 찾지 못했습니다.")
@@ -1942,6 +2285,7 @@ def update_notice_review_status(notice_id: str, review_status: str) -> None:
         if current_notice_id == notice_id:
             ws.update_cell(row_index, review_col, clean(review_status))
             load_sheet_as_dataframe.clear()
+            load_app_datasets.clear()
             return
 
     raise RuntimeError(f"IRIS_NOTICE_MASTER에서 공고ID {notice_id}를 찾지 못했습니다.")
@@ -1983,6 +2327,8 @@ def update_mss_review_status(notice_id: str, review_status: str) -> None:
             if current_notice_id == notice_id:
                 ws.update_cell(row_index, review_col, clean(review_status))
                 load_sheet_as_dataframe.clear()
+                build_source_datasets.clear()
+                load_app_datasets.clear()
                 return
 
     raise RuntimeError(f"중소기업벤처부 시트({', '.join(checked_sheets)})에서 공고ID {notice_id}를 찾지 못했습니다.")
@@ -2025,6 +2371,8 @@ def update_nipa_review_status(notice_id: str, review_status: str) -> None:
             if current_notice_id == notice_id:
                 ws.update_cell(row_index, review_col, clean(review_status))
                 load_sheet_as_dataframe.clear()
+                build_source_datasets.clear()
+                load_app_datasets.clear()
                 return
 
     raise RuntimeError(f"NIPA 시트({', '.join(checked_sheets)})에서 공고ID {notice_id}를 찾지 못했습니다.")
@@ -2647,6 +2995,28 @@ def render_page_header(title: str, subtitle: str, *, eyebrow: str | None = None)
     )
 
 
+def render_workspace_header(mode_config: AppModeConfig) -> None:
+    profile_options = ["기본 프로필", "검토 집중", "제안 집중"]
+    header_cols = st.columns([6, 2, 2])
+    with header_cols[0]:
+        st.title(mode_config.header_title)
+        st.caption(mode_config.header_caption)
+    with header_cols[1]:
+        st.selectbox(
+            "기준 프로필 선택",
+            profile_options,
+            key=f"{mode_config.mode}_workspace_profile",
+            label_visibility="collapsed",
+        )
+    with header_cols[2]:
+        st.markdown("<div style='height: 1.9rem;'></div>", unsafe_allow_html=True)
+        if st.button("새로고침", key=f"{mode_config.mode}_workspace_refresh", use_container_width=True):
+            st.rerun()
+
+    last_updated = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M")
+    st.caption(f"마지막 갱신: {last_updated}")
+
+
 def render_section_label(text: str) -> None:
     st.markdown(
         f'<div class="section-label">{escape(clean(text))}</div>',
@@ -2678,22 +3048,22 @@ def inject_page_styles() -> None:
         """
         <style>
         :root {
-          --linear-bg: #08090a;
-          --linear-panel: #0f1011;
-          --linear-surface: #191a1b;
-          --linear-surface-hover: #202226;
-          --linear-border-subtle: rgba(255, 255, 255, 0.05);
-          --linear-border: rgba(255, 255, 255, 0.08);
-          --linear-text: #f7f8f8;
-          --linear-text-secondary: #d0d6e0;
-          --linear-text-muted: #8a8f98;
-          --linear-text-faint: #62666d;
+          --linear-bg: #f7f8f8;
+          --linear-panel: #ffffff;
+          --linear-surface: #ffffff;
+          --linear-surface-hover: #f3f4f6;
+          --linear-border-subtle: rgba(15, 23, 42, 0.06);
+          --linear-border: rgba(15, 23, 42, 0.10);
+          --linear-text: #111827;
+          --linear-text-secondary: #374151;
+          --linear-text-muted: #6b7280;
+          --linear-text-faint: #94a3b8;
           --linear-accent: #7170ff;
           --linear-accent-bg: #5e6ad2;
           --linear-accent-hover: #828fff;
           --linear-success: #10b981;
           --linear-danger: #f87171;
-          --linear-shadow: rgba(0, 0, 0, 0.28) 0px 10px 30px;
+          --linear-shadow: rgba(15, 23, 42, 0.08) 0px 10px 30px;
           --linear-radius-sm: 6px;
           --linear-radius-md: 8px;
           --linear-radius-lg: 12px;
@@ -2739,17 +3109,17 @@ def inject_page_styles() -> None:
           border-right: 1px solid var(--linear-border-subtle);
         }
         [data-testid="stHeader"] {
-          background: rgba(8, 9, 10, 0.88);
+          background: rgba(255, 255, 255, 0.92);
           border-bottom: 1px solid var(--linear-border-subtle);
         }
         [data-testid="stToolbar"] {
           right: 1rem;
         }
         [data-testid="stMetric"] {
-          background: rgba(255, 255, 255, 0.02);
+          background: rgba(15, 23, 42, 0.02);
           border: 1px solid var(--linear-border);
           border-radius: var(--linear-radius-lg);
-          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.01);
+          box-shadow: var(--linear-shadow);
           padding: 0.9rem 1rem;
         }
         [data-testid="stMetricLabel"] p {
@@ -2768,7 +3138,7 @@ def inject_page_styles() -> None:
           color: var(--linear-text-secondary) !important;
         }
         div.stButton > button {
-          background: rgba(255, 255, 255, 0.03) !important;
+          background: rgba(15, 23, 42, 0.03) !important;
           color: var(--linear-text) !important;
           border: 1px solid var(--linear-border) !important;
           border-radius: var(--linear-radius-sm) !important;
@@ -2777,9 +3147,9 @@ def inject_page_styles() -> None:
           box-shadow: none !important;
         }
         div.stButton > button:hover {
-          background: rgba(255, 255, 255, 0.06) !important;
-          border-color: rgba(255, 255, 255, 0.12) !important;
-          color: #ffffff !important;
+          background: rgba(15, 23, 42, 0.06) !important;
+          border-color: rgba(15, 23, 42, 0.16) !important;
+          color: var(--linear-text) !important;
         }
         div.stButton > button[kind="primary"] {
           background: var(--linear-accent-bg) !important;
@@ -2795,7 +3165,7 @@ def inject_page_styles() -> None:
         div[data-testid="stTextArea"] textarea,
         div[data-testid="stDateInputField"] input,
         div[data-testid="stNumberInput"] input {
-          background: rgba(255, 255, 255, 0.02) !important;
+          background: #ffffff !important;
           color: var(--linear-text) !important;
           border: 1px solid var(--linear-border) !important;
           border-radius: var(--linear-radius-sm) !important;
@@ -2809,7 +3179,7 @@ def inject_page_styles() -> None:
         div[data-baseweb="select"]:hover > div,
         div[data-testid="stTextInputRootElement"] > div:hover,
         div[data-testid="stTextArea"] textarea:hover {
-          border-color: rgba(255, 255, 255, 0.14) !important;
+          border-color: rgba(15, 23, 42, 0.14) !important;
         }
         div[data-testid="stSelectbox"] label,
         div[data-testid="stTextInput"] label,
@@ -2826,7 +3196,7 @@ def inject_page_styles() -> None:
         }
         div[data-testid="stRadio"] label[data-baseweb="radio"],
         div[data-testid="stRadio"] div[role="radiogroup"] label {
-          background: rgba(255, 255, 255, 0.02);
+          background: rgba(15, 23, 42, 0.02);
           border: 1px solid var(--linear-border-subtle);
           border-radius: var(--linear-radius-md);
           padding: 0.35rem 0.75rem;
@@ -2835,7 +3205,7 @@ def inject_page_styles() -> None:
         }
         div[data-testid="stRadio"] label[data-baseweb="radio"]:hover,
         div[data-testid="stRadio"] div[role="radiogroup"] label:hover {
-          background: rgba(255, 255, 255, 0.05);
+          background: rgba(15, 23, 42, 0.05);
           border-color: var(--linear-border);
         }
         div[data-testid="stRadio"] p {
@@ -2851,7 +3221,7 @@ def inject_page_styles() -> None:
           gap: 0.5rem;
         }
         div[data-testid="stTabs"] button {
-          background: rgba(255, 255, 255, 0.02) !important;
+          background: rgba(15, 23, 42, 0.02) !important;
           border: 1px solid var(--linear-border-subtle) !important;
           border-radius: var(--linear-radius-md) !important;
           color: var(--linear-text-secondary) !important;
@@ -2863,27 +3233,27 @@ def inject_page_styles() -> None:
           color: var(--linear-text) !important;
         }
         [data-testid="stInfo"] {
-          background: rgba(255, 255, 255, 0.03);
+          background: rgba(15, 23, 42, 0.03);
           border: 1px solid var(--linear-border-subtle);
           color: var(--linear-text-secondary);
         }
         [data-testid="stDataFrame"] > div {
           border: 1px solid var(--linear-border);
           border-radius: var(--linear-radius-lg);
-          background: rgba(255, 255, 255, 0.02);
+          background: #ffffff;
           overflow: hidden;
         }
         [data-testid="stDataFrameGlideDataEditor"] {
-          background: rgba(255, 255, 255, 0.02) !important;
+          background: #ffffff !important;
         }
         [data-testid="stDataFrameGlideDataEditor"] * {
           font-family: Inter, "Segoe UI", "Noto Sans KR", sans-serif !important;
         }
         [data-testid="stDataFrameGlideDataEditor"] [role="grid"] {
-          background: rgba(255, 255, 255, 0.02) !important;
+          background: #ffffff !important;
         }
         [data-testid="stDataFrameGlideDataEditor"] [data-testid="stDataFrameResizable"] {
-          background: rgba(255, 255, 255, 0.02) !important;
+          background: #ffffff !important;
         }
         [data-testid="stDataFrameGlideDataEditor"] canvas {
           border-radius: var(--linear-radius-lg);
@@ -2931,10 +3301,11 @@ def inject_page_styles() -> None:
           margin: 0 0 22px 0;
         }
         .stat-card {
-          background: rgba(255, 255, 255, 0.02);
+          background: #ffffff;
           border: 1px solid var(--linear-border);
           border-radius: var(--linear-radius-md);
           padding: 14px 16px;
+          box-shadow: var(--linear-shadow);
         }
         .stat-label {
           color: var(--linear-text-faint);
@@ -2956,8 +3327,8 @@ def inject_page_styles() -> None:
           border: 1px solid var(--linear-border);
           border-radius: 18px;
           background:
-            radial-gradient(circle at top right, rgba(113, 112, 255, 0.18), transparent 26%),
-            linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.02) 100%);
+            radial-gradient(circle at top right, rgba(113, 112, 255, 0.10), transparent 26%),
+            linear-gradient(180deg, #ffffff 0%, #fbfbfd 100%);
           box-shadow: var(--linear-shadow);
           margin: 8px 0 18px 0;
         }
@@ -3002,9 +3373,9 @@ def inject_page_styles() -> None:
           border: 1px solid var(--linear-border);
           border-radius: var(--linear-radius-lg);
           padding: 16px 18px;
-          background: rgba(255, 255, 255, 0.025);
+          background: #ffffff;
           height: 100%;
-          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.01);
+          box-shadow: var(--linear-shadow);
         }
         .detail-card-title {
           font-size: 14px;
@@ -3015,7 +3386,7 @@ def inject_page_styles() -> None:
         }
         .detail-field {
           padding: 10px 0;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+          border-bottom: 1px solid rgba(15, 23, 42, 0.06);
         }
         .detail-field:last-child {
           border-bottom: none;
@@ -3086,8 +3457,8 @@ def inject_page_styles() -> None:
           overflow-x: auto;
           border: 1px solid var(--linear-border);
           border-radius: var(--linear-radius-lg);
-          background: rgba(255, 255, 255, 0.02);
-          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.01);
+          background: #ffffff;
+          box-shadow: var(--linear-shadow);
         }
         .list-table {
           width: 100%;
@@ -3096,7 +3467,7 @@ def inject_page_styles() -> None:
           table-layout: auto;
         }
         .list-table thead th {
-          background: #111214;
+          background: #f8fafc;
           color: var(--linear-text-muted);
           font-size: 13px;
           font-weight: 510;
@@ -3107,7 +3478,7 @@ def inject_page_styles() -> None:
         }
         .list-table tbody td {
           padding: 10px 14px;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+          border-bottom: 1px solid rgba(15, 23, 42, 0.05);
           vertical-align: middle;
           height: 52px;
           color: var(--linear-text-secondary);
@@ -3118,7 +3489,7 @@ def inject_page_styles() -> None:
           text-overflow: ellipsis;
         }
         .list-table tbody tr:hover {
-          background: rgba(255, 255, 255, 0.04);
+          background: rgba(15, 23, 42, 0.03);
         }
         .list-table tbody td a {
           color: var(--linear-text);
@@ -3154,7 +3525,7 @@ def inject_page_styles() -> None:
           padding: 0 12px;
           border: 1px solid var(--linear-border);
           border-radius: var(--linear-radius-sm);
-          background: rgba(255, 255, 255, 0.03);
+          background: #ffffff;
           font-size: 13px;
           font-weight: 510;
           white-space: nowrap;
@@ -3196,14 +3567,14 @@ def inject_page_styles() -> None:
           padding: 10px 14px;
           border: 1px solid var(--linear-border-subtle);
           border-radius: var(--linear-radius-md);
-          background: rgba(255, 255, 255, 0.02);
+          background: #ffffff;
           color: var(--linear-text-secondary) !important;
           text-decoration: none !important;
           font-weight: 510;
           min-width: 112px;
         }
         .faux-tab:hover {
-          background: rgba(255, 255, 255, 0.05);
+          background: rgba(15, 23, 42, 0.04);
           color: var(--linear-text) !important;
         }
         .faux-tab-active {
@@ -3220,10 +3591,10 @@ def inject_page_styles() -> None:
         .dashboard-kpi-card {
           border: 1px solid var(--linear-border);
           border-radius: var(--linear-radius-lg);
-          background: linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.02) 100%);
+          background: linear-gradient(180deg, #ffffff 0%, #fbfbfd 100%);
           padding: 12px 14px;
           min-height: 78px;
-          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.01);
+          box-shadow: var(--linear-shadow);
         }
         .dashboard-kpi-label {
           color: var(--linear-text-muted);
@@ -3258,8 +3629,8 @@ def inject_page_styles() -> None:
           border: 1px solid var(--linear-border);
           border-radius: var(--linear-radius-lg);
           padding: 12px 14px;
-          background: rgba(255, 255, 255, 0.025);
-          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.01);
+          background: #ffffff;
+          box-shadow: var(--linear-shadow);
         }
         .dashboard-rank-order {
           color: var(--linear-accent);
@@ -3301,7 +3672,7 @@ def inject_page_styles() -> None:
           align-items: center;
           padding: 4px 8px;
           border-radius: 999px;
-          background: rgba(255, 255, 255, 0.04);
+          background: rgba(15, 23, 42, 0.04);
           border: 1px solid var(--linear-border-subtle);
           color: var(--linear-text-secondary);
           font-size: 11px;
@@ -3477,17 +3848,18 @@ def render_page_tabs(current_page_key: str, tabs: list[tuple[str, str]], *, key:
     if current_page_key not in page_options:
         current_page_key = next(iter(page_options))
 
-    selected_label = st.radio(
-        "Page",
-        list(page_options.values()),
-        horizontal=True,
-        index=list(page_options.keys()).index(current_page_key),
-        key=key,
-        label_visibility="collapsed",
-    )
-    selected_page_key = next(
-        page_key for page_key, label in page_options.items() if label == selected_label
-    )
+    cols = st.columns(len(tabs))
+    selected_page_key = current_page_key
+    for col, (page_key, label) in zip(cols, tabs):
+        with col:
+            button_type = "primary" if page_key == current_page_key else "secondary"
+            if st.button(
+                label,
+                key=f"{key}_{page_key}",
+                type=button_type,
+                use_container_width=True,
+            ):
+                selected_page_key = page_key
     if selected_page_key != current_page_key:
         current_source = get_query_param("source")
         st.query_params.clear()
@@ -4436,6 +4808,30 @@ def build_app_datasets(
     }
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_app_datasets(
+    notice_sheet_name: str,
+    pending_sheet_name: str,
+    opportunity_sheet_name: str,
+    summary_sheet_name: str,
+    error_sheet_name: str,
+) -> dict[str, pd.DataFrame]:
+    notice_df = enrich_notice_df(load_sheet_as_dataframe(notice_sheet_name))
+    pending_df = enrich_notice_df(load_optional_sheet_as_dataframe(pending_sheet_name))
+    opportunity_df = enrich_opportunity_df(load_optional_sheet_as_dataframe(opportunity_sheet_name))
+    opportunity_df = enrich_opportunity_with_notice_meta(opportunity_df, notice_df)
+    summary_df = enrich_summary_df(load_optional_sheet_as_dataframe(summary_sheet_name))
+    summary_df = enrich_summary_with_notice_meta(summary_df, notice_df)
+    errors_df = enrich_error_df(load_optional_sheet_as_dataframe(error_sheet_name))
+    return build_app_datasets(
+        notice_df=notice_df,
+        pending_df=pending_df,
+        opportunity_df=opportunity_df,
+        summary_df=summary_df,
+        errors_df=errors_df,
+    )
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def build_source_datasets() -> dict[str, object]:
     mss_current_df, mss_current_origin = load_mss_notice_df()
@@ -5058,8 +5454,7 @@ def main(app_mode: str = "admin"):
         layout="wide",
     )
     inject_page_styles()
-    st.title(mode_config.header_title)
-    st.caption(mode_config.header_caption)
+    render_workspace_header(mode_config)
 
     sheet_names = {
         "notice": get_env("NOTICE_MASTER_SHEET", "IRIS_NOTICE_MASTER"),
@@ -5074,42 +5469,85 @@ def main(app_mode: str = "admin"):
     }
 
     try:
-        notice_df = enrich_notice_df(load_sheet_as_dataframe(sheet_names["notice"]))
-        pending_df = enrich_notice_df(load_optional_sheet_as_dataframe(sheet_names["pending"]))
-        opportunity_df = enrich_opportunity_df(load_optional_sheet_as_dataframe(sheet_names["opportunity"]))
-        opportunity_df = enrich_opportunity_with_notice_meta(opportunity_df, notice_df)
-        summary_df = enrich_summary_df(load_optional_sheet_as_dataframe(sheet_names["summary"]))
-        summary_df = enrich_summary_with_notice_meta(summary_df, notice_df)
-        errors_df = enrich_error_df(load_optional_sheet_as_dataframe(sheet_names["errors"]))
+        datasets = load_app_datasets(
+            sheet_names["notice"],
+            sheet_names["pending"],
+            sheet_names["opportunity"],
+            sheet_names["summary"],
+            sheet_names["errors"],
+        )
     except Exception as exc:
         st.error(f"시트 로딩 실패: {exc}")
         st.stop()
 
-    datasets = build_app_datasets(
-        notice_df=notice_df,
-        pending_df=pending_df,
-        opportunity_df=opportunity_df,
-        summary_df=summary_df,
-        errors_df=errors_df,
-    )
 
-    source_config_map = get_source_config_map(mode_config)
-    current_source = get_query_param("source") or mode_config.default_source
-    if current_source not in source_config_map:
-        current_source = mode_config.default_source
-    current_page = get_query_param("page") or get_default_page_for_source(mode_config, current_source)
-    current_group = find_nav_group_for_route(mode_config, current_source, current_page)
+source_config_map = get_source_config_map(mode_config)
 
-    selected_group_key = render_nav_tabs(
-        current_group.key,
-        [(group.key, group.label) for group in mode_config.nav_groups],
-        key=f"{mode_config.mode}_primary_nav",
-        label="Workspace",
-    )
-    selected_group = next((group for group in mode_config.nav_groups if group.key == selected_group_key), mode_config.nav_groups[0])
-    if selected_group.key != current_group.key:
-        target_item = selected_group.items[0]
-        navigate_to_route(target_item.source_key, target_item.page_key)
+current_source = get_query_param("source") or mode_config.default_source
+current_source = clean(current_source).lower()
+
+source_alias_map = {
+    "iris": "iris",
+    "tipa": "tipa",
+    "mss": "tipa",
+    "nipa": "nipa",
+    "favorites": "favorites",
+    "proposal": "proposal",
+    "operations": "operations",
+    "dashboard": "dashboard",
+}
+
+current_source = source_alias_map.get(current_source, current_source)
+
+if current_source not in source_config_map:
+    current_source = mode_config.default_source
+
+current_page = get_query_param("page") or get_default_page_for_source(
+    mode_config,
+    current_source,
+)
+
+# ✅ Viewer/Main 앱에서만 source-page 불일치 보정
+# ✅ Admin 앱에는 영향 주지 않음
+if mode_config.mode != "admin":
+    if current_source == "tipa" and current_page in {
+        "notice",
+        "notice_scheduled",
+        "notice_archive",
+        "opportunity",
+        "summary",
+    }:
+        current_page = get_default_page_for_source(mode_config, "tipa")
+
+    if current_source == "iris" and current_page in {
+        "mss_current",
+        "mss_past",
+        "mss_archive",
+        "mss_opportunity",
+    }:
+        current_source = "tipa"
+
+current_group = find_nav_group_for_route(
+    mode_config,
+    current_source,
+    current_page,
+)
+
+selected_group_key = render_nav_tabs(
+    current_group.key,
+    [(group.key, group.label) for group in mode_config.nav_groups],
+    key=f"{mode_config.mode}_primary_nav",
+    label="",
+)
+
+selected_group = next(
+    (group for group in mode_config.nav_groups if group.key == selected_group_key),
+    mode_config.nav_groups[0],
+)
+
+if selected_group.key != current_group.key:
+    target_item = selected_group.items[0]
+    navigate_to_route(target_item.source_key, target_item.page_key)
 
     current_item = next(
         (
@@ -5119,15 +5557,17 @@ def main(app_mode: str = "admin"):
         ),
         selected_group.items[0],
     )
-    selected_item_key = render_nav_tabs(
-        current_item.key,
-        [(item.key, item.label) for item in selected_group.items],
-        key=f"{mode_config.mode}_secondary_nav_{selected_group.key}",
-        label="Page",
-    )
-    selected_item = next((item for item in selected_group.items if item.key == selected_item_key), selected_group.items[0])
-    if selected_item.key != current_item.key:
-        navigate_to_route(selected_item.source_key, selected_item.page_key)
+    selected_item = current_item
+    if len(selected_group.items) > 1:
+        selected_item_key = render_nav_tabs(
+            current_item.key,
+            [(item.key, item.label) for item in selected_group.items],
+            key=f"{mode_config.mode}_secondary_nav_{selected_group.key}",
+            label="세부 페이지",
+        )
+        selected_item = next((item for item in selected_group.items if item.key == selected_item_key), selected_group.items[0])
+        if selected_item.key != current_item.key:
+            navigate_to_route(selected_item.source_key, selected_item.page_key)
 
     selected_source_key = selected_item.source_key
     selected_source_config = source_config_map.get(selected_source_key)

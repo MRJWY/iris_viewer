@@ -59,9 +59,10 @@ class AppModeConfig:
 
 def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] = ()) -> AppModeConfig:
     normalized_mode = "viewer" if str(app_mode or "").strip().lower() == "viewer" else "admin"
+
     tipa_pages = (
-        SourcePageConfig("tipa_current", "진행공고", "notice", "진행공고", data_key="mss_current", origin_key="mss_current_origin"),
-        SourcePageConfig("tipa_scheduled", "예정공고", "notice", "예정공고", data_key="mss_current", origin_key="mss_current_origin"),
+        SourcePageConfig("tipa_current", "진행 공고", "notice", "진행 공고", data_key="mss_current", origin_key="mss_current_origin"),
+        SourcePageConfig("tipa_scheduled", "예정 공고", "notice", "예정 공고", data_key="mss_current", origin_key="mss_current_origin"),
         SourcePageConfig("tipa_opportunity", "Opportunity", "opportunity", "Opportunity", data_key="mss_opportunity"),
         SourcePageConfig(
             "tipa_archive",
@@ -77,18 +78,18 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
     nipa_pages = (
         SourcePageConfig(
             "nipa_current",
-            "진행공고",
+            "진행 공고",
             "notice",
-            "진행공고",
+            "진행 공고",
             data_key="nipa_current",
             origin_key="nipa_current_origin",
             view_columns=tuple(nipa_view_columns),
         ),
         SourcePageConfig(
             "nipa_scheduled",
-            "예정공고",
+            "예정 공고",
             "notice",
-            "예정공고",
+            "예정 공고",
             data_key="nipa_current",
             origin_key="nipa_current_origin",
             view_columns=tuple(nipa_view_columns),
@@ -109,8 +110,10 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
     sources = (
         SourceRouteConfig("dashboard", "Dashboard", "dashboard", True, "dashboard"),
         SourceRouteConfig("iris", "IRIS", "notice", False, "iris"),
-        SourceRouteConfig("tipa", "중소기업벤처부", "tipa_current", True, "external", page_configs=tipa_pages),
+        SourceRouteConfig("tipa", "TIPA", "tipa_current", True, "external", page_configs=tipa_pages),
         SourceRouteConfig("nipa", "NIPA", "nipa_current", True, "external", page_configs=nipa_pages),
+        SourceRouteConfig("proposal", "제안관리", "proposal", False, "proposal"),
+        SourceRouteConfig("operations", "운영관리", "operations", True, "operations"),
         SourceRouteConfig("favorites", "관심 공고", "favorites", True, "favorites"),
     )
     common_nav_groups = (
@@ -118,29 +121,43 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             "overview",
             "Dashboard",
             (
-                NavItemConfig("dashboard_home", "Overview", "dashboard", "dashboard"),
+                NavItemConfig("dashboard_home", "대시보드", "dashboard", "dashboard"),
             ),
         ),
         NavGroupConfig(
             "notice",
-            "공고",
+            "공고탐색",
             (
-                NavItemConfig("iris_notice", "IRIS 진행공고", "iris", "notice"),
-                NavItemConfig("iris_notice_scheduled", "IRIS 예정공고", "iris", "notice_scheduled"),
-                NavItemConfig("tipa_current", "TIPA 진행공고", "tipa", "tipa_current"),
-                NavItemConfig("tipa_scheduled", "TIPA 예정공고", "tipa", "tipa_scheduled"),
-                NavItemConfig("nipa_current", "NIPA 진행공고", "nipa", "nipa_current"),
-                NavItemConfig("nipa_scheduled", "NIPA 예정공고", "nipa", "nipa_scheduled"),
-                NavItemConfig("favorites", "관심 공고", "favorites", "favorites"),
+                NavItemConfig("iris_notice", "IRIS 진행", "iris", "notice"),
+                NavItemConfig("iris_notice_scheduled", "IRIS 예정", "iris", "notice_scheduled"),
+                NavItemConfig("tipa_current", "TIPA 진행", "tipa", "tipa_current"),
+                NavItemConfig("tipa_scheduled", "TIPA 예정", "tipa", "tipa_scheduled"),
+                NavItemConfig("nipa_current", "NIPA 진행", "nipa", "nipa_current"),
+                NavItemConfig("nipa_scheduled", "NIPA 예정", "nipa", "nipa_scheduled"),
             ),
         ),
         NavGroupConfig(
             "opportunity",
-            "Opportunity",
+            "추천기회",
             (
                 NavItemConfig("iris_opportunity", "IRIS Opportunity", "iris", "opportunity"),
                 NavItemConfig("tipa_opportunity", "TIPA Opportunity", "tipa", "tipa_opportunity"),
                 NavItemConfig("nipa_opportunity", "NIPA Opportunity", "nipa", "nipa_opportunity"),
+            ),
+        ),
+        NavGroupConfig(
+            "proposal",
+            "제안관리",
+            (
+                NavItemConfig("proposal_home", "제안 현황", "proposal", "proposal"),
+            ),
+        ),
+        NavGroupConfig(
+            "operations",
+            "운영관리",
+            (
+                NavItemConfig("operations_home", "운영 현황", "operations", "operations"),
+                NavItemConfig("favorites", "관심 공고", "favorites", "favorites"),
             ),
         ),
         NavGroupConfig(
@@ -175,8 +192,8 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             default_source="dashboard",
             default_iris_page="notice",
             iris_tabs=(
-                ("notice", "진행공고"),
-                ("notice_scheduled", "예정공고"),
+                ("notice", "진행 공고"),
+                ("notice_scheduled", "예정 공고"),
                 ("summary", "Summary"),
                 ("opportunity", "Opportunity"),
                 ("notice_archive", "Archive"),
@@ -189,15 +206,15 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
         mode="admin",
         page_title="Crawler Hub Admin",
         header_title="Crawler Hub Admin",
-        header_caption="현재 요약, 검토 가능한 Opportunity, 누적 Opportunity, 오류 행을 조회합니다.",
+        header_caption="정부사업 공고 수집 · 추천 · 검토 · 제안관리 대시보드",
         supports_summary=False,
         nav_groups=common_nav_groups,
         sources=sources,
         default_source="dashboard",
         default_iris_page="notice",
         iris_tabs=(
-            ("notice", "진행공고"),
-            ("notice_scheduled", "예정공고"),
+            ("notice", "진행 공고"),
+            ("notice_scheduled", "예정 공고"),
             ("opportunity", "Opportunity"),
             ("notice_archive", "Archive"),
         ),
