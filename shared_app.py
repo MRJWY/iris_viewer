@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import os
 import re
+import base64
 import uuid
 from html import escape
 from pathlib import Path
@@ -710,21 +711,21 @@ def build_comment_rank_rows(df: pd.DataFrame, *, limit: int = 5) -> list[dict[st
 
 def navigate_to_source_page(source_key: str, page_key: str) -> None:
     st.query_params.clear()
-    st.query_params.update({
+    st.query_params.update(with_auth_params({
         "source": source_key,
         "page": page_key,
         "view": "table",
-    })
+    }))
     st.rerun()
 
 
 def navigate_to_route(source_key: str, page_key: str) -> None:
     st.query_params.clear()
-    st.query_params.update({
+    st.query_params.update(with_auth_params({
         "source": source_key,
         "page": page_key,
         "view": "table",
-    })
+    }))
     st.rerun()
 
 
@@ -736,12 +737,12 @@ def navigate_to_notice_detail(source_key: str, notice_id: str) -> None:
         "nipa": "nipa_current",
     }
     st.query_params.clear()
-    st.query_params.update({
+    st.query_params.update(with_auth_params({
         "source": source,
         "page": page_map.get(source, "notice"),
         "view": "detail",
         "id": clean(notice_id),
-    })
+    }))
     st.rerun()
 
 
@@ -1246,22 +1247,22 @@ def render_iris_source(
 
     if current_page_key not in mode_config.valid_iris_pages:
         st.query_params.clear()
-        st.query_params.update({
+        st.query_params.update(with_auth_params({
             "source": "iris",
             "page": mode_config.default_iris_page,
             "view": "table",
-        })
+        }))
         st.rerun()
 
     if not st.session_state.get("_initial_page_redirect_done"):
         st.session_state["_initial_page_redirect_done"] = True
         if current_view == "table" and not raw_page_key:
             st.query_params.clear()
-            st.query_params.update({
+            st.query_params.update(with_auth_params({
                 "source": "iris",
                 "page": mode_config.default_iris_page,
                 "view": "table",
-            })
+            }))
             st.rerun()
 
     if show_internal_tabs:
@@ -1333,11 +1334,11 @@ def render_external_source(
 
     if current_page_key not in valid_page_keys:
         st.query_params.clear()
-        st.query_params.update({
+        st.query_params.update(with_auth_params({
             "source": source_config.key,
             "page": source_config.default_page,
             "view": "table",
-        })
+        }))
         st.rerun()
 
     if show_internal_tabs:
@@ -1972,6 +1973,80 @@ def verify_password(password: str, stored_password: str) -> bool:
     return hmac.compare_digest(password, stored_password)
 
 
+def get_auth_signing_secret() -> str:
+    return (
+        get_env("APP_AUTH_TOKEN_SECRET")
+        or get_env("COOKIE_SECRET")
+        or get_env("GOOGLE_SHEET_ID")
+        or "crawler-hub-auth"
+    )
+
+
+def sign_auth_user_id(user_id: str) -> str:
+    return hmac.new(
+        get_auth_signing_secret().encode("utf-8"),
+        clean(user_id).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def encode_auth_token(user_id: str) -> str:
+    user_id = clean(user_id)
+    payload = f"{user_id}:{sign_auth_user_id(user_id)}"
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def decode_auth_token(token: str) -> str:
+    token = clean(token)
+    if not token:
+        return ""
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        payload = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        user_id, signature = payload.rsplit(":", 1)
+    except Exception:
+        return ""
+    expected = sign_auth_user_id(user_id)
+    return clean(user_id) if hmac.compare_digest(signature, expected) else ""
+
+
+def get_query_auth_token() -> str:
+    value = st.query_params.get("auth", "")
+    if isinstance(value, list):
+        return clean(value[0]) if value else ""
+    return clean(value)
+
+
+def get_current_auth_token() -> str:
+    return clean(st.session_state.get("auth_token")) or get_query_auth_token()
+
+
+def with_auth_params(params: dict[str, str]) -> dict[str, str]:
+    token = get_current_auth_token()
+    if token:
+        params = dict(params)
+        params["auth"] = token
+    return params
+
+
+def restore_auth_from_query(mode_config: AppModeConfig) -> None:
+    if get_current_user_id():
+        return
+    token = get_query_auth_token()
+    user_id = decode_auth_token(token)
+    if not user_id:
+        return
+    account = get_auth_account(user_id)
+    if not account or clean(account.get("status")).lower() != "approved":
+        return
+    st.session_state["auth_user"] = {
+        "user_id": clean(account.get("user_id")),
+        "display_name": clean(account.get("display_name")),
+        "role": clean(account.get("role")) or "viewer",
+    }
+    st.session_state["auth_token"] = token
+
+
 def get_service_account_info() -> dict | None:
     try:
         if "gcp_service_account" in st.secrets:
@@ -2190,7 +2265,12 @@ def is_user_scoped_operations_enabled() -> bool:
 
 def logout_current_user() -> None:
     st.session_state.pop("auth_user", None)
+    st.session_state.pop("auth_token", None)
+    params = dict(st.query_params)
+    params.pop("auth", None)
     st.query_params.clear()
+    if params:
+        st.query_params.update(params)
     st.rerun()
 
 
@@ -2508,6 +2588,9 @@ def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, 
                         "display_name": clean(account.get("display_name")),
                         "role": clean(account.get("role")) or "viewer",
                     }
+                    token = encode_auth_token(account.get("user_id", ""))
+                    st.session_state["auth_token"] = token
+                    st.query_params.update({"auth": token})
                     st.rerun()
                 elif account and clean(account.get("status")).lower() == "pending":
                     st.warning("가입 요청 승인 대기 중입니다.")
@@ -2523,6 +2606,7 @@ def require_login(mode_config: AppModeConfig) -> None:
     auth_required = get_bool_env("APP_AUTH_REQUIRED", default=True)
     if not auth_required:
         return
+    restore_auth_from_query(mode_config)
     if get_current_user_id():
         return
 
@@ -4282,7 +4366,7 @@ def switch_to_detail(page_key: str, identifier: str) -> None:
     }
     if current_source:
         params["source"] = current_source
-    st.query_params.update(params)
+    st.query_params.update(with_auth_params(params))
     st.session_state[f"{page_key}_view"] = "detail"
     st.session_state[f"{page_key}_selected_id"] = clean(identifier)
     st.rerun()
@@ -4297,7 +4381,7 @@ def switch_to_table(page_key: str) -> None:
     }
     if current_source:
         params["source"] = current_source
-    st.query_params.update(params)
+    st.query_params.update(with_auth_params(params))
     st.session_state[f"{page_key}_view"] = "table"
     st.rerun()
 
@@ -4336,6 +4420,7 @@ def build_page_href(page_key: str) -> str:
     current_source = get_query_param("source")
     if current_source and not (current_source == "favorites" and page_key != "favorites"):
         params["source"] = current_source
+    params = with_auth_params(params)
     return f"?{urlencode(params)}"
 
 
@@ -4365,7 +4450,7 @@ def render_page_tabs(current_page_key: str, tabs: list[tuple[str, str]], *, key:
         }
         if current_source:
             params["source"] = current_source
-        st.query_params.update(params)
+        st.query_params.update(with_auth_params(params))
         st.rerun()
     return selected_page_key
 
@@ -4375,6 +4460,7 @@ def build_route_href(page_key: str, identifier: str) -> str:
     current_source = get_query_param("source")
     if current_source and not (current_source == "favorites" and page_key != "favorites"):
         params["source"] = current_source
+    params = with_auth_params(params)
     return f"?{urlencode(params)}"
 
 
