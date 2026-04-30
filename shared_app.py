@@ -1882,9 +1882,26 @@ def get_bool_env(name: str, default: bool = False) -> bool:
 def get_secret_mapping(name: str) -> dict:
     try:
         value = st.secrets.get(name)
-        return dict(value) if isinstance(value, dict) else {}
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                return dict(parsed) if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        if hasattr(value, "items"):
+            return dict(value)
     except Exception:
-        return {}
+        pass
+    return {}
+
+
+def get_secret_value(name: str):
+    try:
+        if name in st.secrets:
+            return st.secrets[name]
+    except Exception:
+        pass
+    return None
 
 
 def parse_key_value_auth_users(raw_value: str) -> dict[str, str]:
@@ -1900,9 +1917,10 @@ def parse_key_value_auth_users(raw_value: str) -> dict[str, str]:
 
 
 def load_static_auth_users() -> dict[str, str]:
-    users = get_secret_mapping("app_users")
-    if users:
-        return {clean(user_id): clean(password) for user_id, password in users.items() if clean(user_id)}
+    for secret_name in ("app_users", "APP_USERS"):
+        users = get_secret_mapping(secret_name)
+        if users:
+            return {clean(user_id): clean(password) for user_id, password in users.items() if clean(user_id)}
 
     raw_users = get_env("APP_USERS")
     if not raw_users:
@@ -1922,14 +1940,16 @@ def parse_csv_values(raw_value: str) -> set[str]:
 
 def load_static_admin_ids(static_users: dict[str, str] | None = None) -> set[str]:
     static_users = static_users or load_static_auth_users()
-    try:
-        secret_admins = st.secrets.get("app_admins")
-        if isinstance(secret_admins, list):
-            return {clean(item) for item in secret_admins if clean(item)}
+    for secret_name in ("app_admins", "APP_ADMINS"):
+        secret_admins = get_secret_value(secret_name)
+        if isinstance(secret_admins, (list, tuple, set)):
+            admins = {clean(item) for item in secret_admins if clean(item)}
+            if admins:
+                return admins
         if isinstance(secret_admins, str):
-            return parse_csv_values(secret_admins)
-    except Exception:
-        pass
+            admins = parse_csv_values(secret_admins)
+            if admins:
+                return admins
 
     env_admins = parse_csv_values(get_env("APP_ADMINS"))
     if env_admins:
