@@ -8,7 +8,6 @@ structure and routing model as the admin app.
 
 - `IRIS`
   - `Notice`: all notices
-  - `Summary`: notice-level summary
   - `Opportunity`: opportunity-level rows
 - `중소기업벤처부`
   - `MSS_CURRENT`: active/scheduled notices

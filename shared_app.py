@@ -773,12 +773,12 @@ def render_dashboard_quick_links(mode_config: AppModeConfig) -> None:
     st.markdown("### Quick Links")
 
     primary_links = [
-        ("IRIS Notices", "iris", "notice"),
+        ("IRIS 진행", "iris", "notice"),
         ("IRIS Opportunity", "iris", "opportunity"),
         ("중소기업벤처부 진행", "tipa", "tipa_current"),
-        ("NIPA Current", "nipa", "nipa_current"),
+        ("NIPA 진행", "nipa", "nipa_current"),
     ]
-    secondary_links = [("Favorites", "favorites", "favorites")]
+    secondary_links = [("관심 공고", "favorites", "favorites")]
     if "summary" in mode_config.valid_iris_pages:
         secondary_links.insert(0, ("IRIS Summary", "iris", "summary"))
 
