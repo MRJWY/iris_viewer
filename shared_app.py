@@ -1,4 +1,6 @@
 import json
+import hashlib
+import hmac
 import os
 import re
 import uuid
@@ -168,11 +170,35 @@ FAVORITE_NOTICE_COLUMNS = [
 COMMENT_COLUMNS = [
     "comment_id",
     "created_at",
+    "user_id",
     "source",
     "notice_id",
     "notice_title",
     "author",
     "comment",
+]
+
+USER_REVIEW_COLUMNS = [
+    "user_id",
+    "source",
+    "notice_id",
+    "notice_title",
+    "review_status",
+    "updated_at",
+]
+
+AUTH_USER_COLUMNS = [
+    "user_id",
+    "password_hash",
+    "display_name",
+    "email",
+    "role",
+    "status",
+    "requested_at",
+    "approved_at",
+    "approved_by",
+    "rejected_at",
+    "rejected_by",
 ]
 
 
@@ -486,7 +512,12 @@ def build_dashboard_recent_comments_table(limit: int = 5) -> pd.DataFrame:
     if comments_df.empty:
         return pd.DataFrame(columns=["작성시각", "작성자", "댓글"])
 
-    recent = comments_df.head(limit).copy()
+    recent = comments_df.copy()
+    if is_user_scoped_operations_enabled() and "user_id" in recent.columns:
+        recent = recent[recent["user_id"].fillna("").astype(str).str.strip().eq(get_current_user_id())].copy()
+    recent = recent.head(limit).copy()
+    if recent.empty:
+        return pd.DataFrame(columns=["작성시각", "작성자", "댓글"])
     recent["댓글"] = recent["comment"].apply(lambda value: compact_table_value(value, max_chars=42))
     return recent.rename(
         columns={
@@ -1425,7 +1456,11 @@ def render_operations_source(
 
     render_page_header(
         "운영관리",
-        "관심 공고, 댓글, 오류, 검토 커버리지를 기준으로 운영 상태를 확인합니다.",
+        (
+            f"{get_current_user_id()} 계정의 관심 공고, 댓글, 오류, 검토 커버리지를 확인합니다."
+            if is_user_scoped_operations_enabled()
+            else "관심 공고, 댓글, 오류, 검토 커버리지를 기준으로 운영 상태를 확인합니다."
+        ),
         eyebrow="Operations",
     )
     render_metrics(
@@ -1844,6 +1879,79 @@ def get_bool_env(name: str, default: bool = False) -> bool:
     return value in {"1", "true", "y", "yes", "on"}
 
 
+def get_secret_mapping(name: str) -> dict:
+    try:
+        value = st.secrets.get(name)
+        return dict(value) if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def parse_key_value_auth_users(raw_value: str) -> dict[str, str]:
+    users: dict[str, str] = {}
+    for item in clean(raw_value).split(","):
+        if not clean(item) or ":" not in item:
+            continue
+        user_id, password = item.split(":", 1)
+        user_id = clean(user_id)
+        if user_id:
+            users[user_id] = clean(password)
+    return users
+
+
+def load_static_auth_users() -> dict[str, str]:
+    users = get_secret_mapping("app_users")
+    if users:
+        return {clean(user_id): clean(password) for user_id, password in users.items() if clean(user_id)}
+
+    raw_users = get_env("APP_USERS")
+    if not raw_users:
+        return {}
+    try:
+        parsed = json.loads(raw_users)
+        if isinstance(parsed, dict):
+            return {clean(user_id): clean(password) for user_id, password in parsed.items() if clean(user_id)}
+    except Exception:
+        pass
+    return parse_key_value_auth_users(raw_users)
+
+
+def parse_csv_values(raw_value: str) -> set[str]:
+    return {clean(item) for item in clean(raw_value).split(",") if clean(item)}
+
+
+def load_static_admin_ids(static_users: dict[str, str] | None = None) -> set[str]:
+    static_users = static_users or load_static_auth_users()
+    try:
+        secret_admins = st.secrets.get("app_admins")
+        if isinstance(secret_admins, list):
+            return {clean(item) for item in secret_admins if clean(item)}
+        if isinstance(secret_admins, str):
+            return parse_csv_values(secret_admins)
+    except Exception:
+        pass
+
+    env_admins = parse_csv_values(get_env("APP_ADMINS"))
+    if env_admins:
+        return env_admins
+    return set(static_users.keys())
+
+
+def hash_password(password: str) -> str:
+    digest = hashlib.sha256(clean(password).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def verify_password(password: str, stored_password: str) -> bool:
+    password = clean(password)
+    stored_password = clean(stored_password)
+    if stored_password.startswith("sha256:"):
+        expected = stored_password.removeprefix("sha256:")
+        actual = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        return hmac.compare_digest(actual, expected)
+    return hmac.compare_digest(password, stored_password)
+
+
 def get_service_account_info() -> dict | None:
     try:
         if "gcp_service_account" in st.secrets:
@@ -1925,6 +2033,16 @@ def get_or_create_worksheet(sheet_name: str, headers: list[str], rows: int = 100
     return ws
 
 
+def get_worksheet_header(ws) -> list[str]:
+    values = ws.get_all_values()
+    return [clean(x) for x in values[0]] if values else []
+
+
+def append_dict_row(ws, row: dict[str, object], fallback_headers: list[str]) -> None:
+    header = get_worksheet_header(ws) or fallback_headers
+    ws.append_row([clean(row.get(column)) for column in header], value_input_option="USER_ENTERED")
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def load_sheet_as_dataframe(sheet_name: str) -> pd.DataFrame:
     ws = get_worksheet(sheet_name)
@@ -1964,6 +2082,14 @@ def get_comment_sheet_name() -> str:
     return get_env("NOTICE_COMMENT_SHEET", "NOTICE_COMMENTS")
 
 
+def get_user_review_sheet_name() -> str:
+    return get_env("NOTICE_USER_REVIEW_SHEET", "NOTICE_USER_REVIEWS")
+
+
+def get_auth_user_sheet_name() -> str:
+    return get_env("APP_USER_ACCOUNT_SHEET", "APP_USER_ACCOUNTS")
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def load_notice_comments() -> pd.DataFrame:
     df = load_optional_sheet_as_dataframe(get_comment_sheet_name())
@@ -1978,6 +2104,168 @@ def load_notice_comments() -> pd.DataFrame:
     return working.sort_values(by=["created_at_sort"], ascending=False, na_position="last")
 
 
+def load_auth_user_accounts() -> pd.DataFrame:
+    try:
+        df = load_optional_sheet_as_dataframe(get_auth_user_sheet_name())
+    except Exception:
+        return pd.DataFrame(columns=AUTH_USER_COLUMNS)
+    if df.empty:
+        return pd.DataFrame(columns=AUTH_USER_COLUMNS)
+    working = df.copy()
+    for column in AUTH_USER_COLUMNS:
+        if column not in working.columns:
+            working[column] = ""
+    return working
+
+
+def load_auth_accounts() -> dict[str, dict[str, str]]:
+    accounts: dict[str, dict[str, str]] = {}
+    static_users = load_static_auth_users()
+    static_admin_ids = load_static_admin_ids(static_users)
+    for user_id, password in static_users.items():
+        accounts[user_id] = {
+            "user_id": user_id,
+            "password_hash": password,
+            "display_name": user_id,
+            "email": "",
+            "role": "admin" if user_id in static_admin_ids else "viewer",
+            "status": "approved",
+        }
+
+    sheet_accounts = load_auth_user_accounts()
+    for _, row in sheet_accounts.iterrows():
+        user_id = clean(row.get("user_id"))
+        if not user_id:
+            continue
+        accounts[user_id] = {
+            "user_id": user_id,
+            "password_hash": clean(row.get("password_hash")),
+            "display_name": clean(row.get("display_name")) or user_id,
+            "email": clean(row.get("email")),
+            "role": clean(row.get("role")) or "viewer",
+            "status": clean(row.get("status")) or "pending",
+        }
+    return accounts
+
+
+def get_auth_account(user_id: str) -> dict[str, str] | None:
+    return load_auth_accounts().get(clean(user_id))
+
+
+def get_current_user_id() -> str:
+    user = st.session_state.get("auth_user") or {}
+    return clean(user.get("user_id")) if isinstance(user, dict) else ""
+
+
+def get_current_user_label() -> str:
+    user = st.session_state.get("auth_user") or {}
+    display_name = clean(user.get("display_name")) if isinstance(user, dict) else ""
+    user_id = get_current_user_id()
+    return display_name or user_id or get_env("DEFAULT_COMMENT_AUTHOR") or get_env("USER") or "app"
+
+
+def is_user_scoped_operations_enabled() -> bool:
+    return bool(get_current_user_id()) and get_bool_env("USER_SCOPED_OPERATIONS", default=True)
+
+
+def logout_current_user() -> None:
+    st.session_state.pop("auth_user", None)
+    st.query_params.clear()
+    st.rerun()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_user_review_statuses(user_id: str) -> pd.DataFrame:
+    user_id = clean(user_id)
+    if not user_id:
+        return pd.DataFrame(columns=USER_REVIEW_COLUMNS)
+
+    df = load_optional_sheet_as_dataframe(get_user_review_sheet_name())
+    if df.empty:
+        return pd.DataFrame(columns=USER_REVIEW_COLUMNS)
+
+    working = df.copy()
+    for column in USER_REVIEW_COLUMNS:
+        if column not in working.columns:
+            working[column] = ""
+    return working[working["user_id"].fillna("").astype(str).str.strip().eq(user_id)].copy()
+
+
+def build_user_review_lookup(user_reviews_df: pd.DataFrame) -> dict[tuple[str, str], str]:
+    if user_reviews_df.empty:
+        return {}
+    lookup: dict[tuple[str, str], str] = {}
+    for _, row in user_reviews_df.iterrows():
+        source_key = clean(row.get("source")) or "iris"
+        notice_key = normalize_notice_id_for_match(row.get("notice_id"))
+        if not notice_key:
+            continue
+        lookup[(source_key, notice_key)] = clean(row.get("review_status"))
+    return lookup
+
+
+def apply_user_review_statuses_to_df(df: pd.DataFrame, source_key: str, user_reviews_df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or user_reviews_df.empty:
+        return df
+
+    working = df.copy()
+    lookup = build_user_review_lookup(user_reviews_df)
+    if not lookup:
+        return working
+
+    notice_ids = series_from_candidates(working, ["공고ID", "notice_id"])
+    override_values = [
+        lookup.get((source_key, normalize_notice_id_for_match(notice_id)), None)
+        for notice_id in notice_ids
+    ]
+    override_series = pd.Series(override_values, index=working.index, dtype=object)
+    override_mask = override_series.notna()
+    if not override_mask.any():
+        return working
+
+    for column in ["검토 여부", "검토여부", "review_status"]:
+        if column in working.columns:
+            working.loc[override_mask, column] = override_series[override_mask].fillna("")
+    return working
+
+
+def apply_user_review_statuses(
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+    user_id: str,
+) -> tuple[dict[str, pd.DataFrame], dict[str, object] | None]:
+    if not user_id:
+        return datasets, source_datasets
+
+    user_reviews_df = load_user_review_statuses(user_id)
+    if user_reviews_df.empty:
+        return datasets, source_datasets
+
+    scoped_datasets = dict(datasets)
+    for key in ["notice", "notice_view", "pending", "opportunity", "opportunity_archive", "summary"]:
+        if key in scoped_datasets:
+            scoped_datasets[key] = apply_user_review_statuses_to_df(scoped_datasets[key], "iris", user_reviews_df)
+
+    scoped_source_datasets = dict(source_datasets) if source_datasets else source_datasets
+    if scoped_source_datasets:
+        source_key_map = {
+            "mss_current": "tipa",
+            "mss_past": "tipa",
+            "mss_opportunity": "tipa",
+            "mss_opportunity_archive": "tipa",
+            "nipa_current": "nipa",
+            "nipa_past": "nipa",
+            "nipa_opportunity": "nipa",
+            "nipa_opportunity_archive": "nipa",
+        }
+        for dataset_key, source_key in source_key_map.items():
+            value = scoped_source_datasets.get(dataset_key)
+            if isinstance(value, pd.DataFrame):
+                scoped_source_datasets[dataset_key] = apply_user_review_statuses_to_df(value, source_key, user_reviews_df)
+
+    return scoped_datasets, scoped_source_datasets
+
+
 def filter_notice_comments(comments_df: pd.DataFrame, *, source_key: str, notice_id: str) -> pd.DataFrame:
     if comments_df.empty:
         return pd.DataFrame(columns=COMMENT_COLUMNS)
@@ -1989,10 +2277,13 @@ def filter_notice_comments(comments_df: pd.DataFrame, *, source_key: str, notice
 
     comment_notice_keys = working["notice_id"].apply(normalize_notice_id_for_match)
     current_notice_key = normalize_notice_id_for_match(notice_id)
-    return working[
+    filtered = working[
         working["source"].fillna("").astype(str).str.strip().eq(clean(source_key))
         & comment_notice_keys.eq(current_notice_key)
     ].copy()
+    if is_user_scoped_operations_enabled() and "user_id" in filtered.columns:
+        filtered = filtered[filtered["user_id"].fillna("").astype(str).str.strip().eq(get_current_user_id())].copy()
+    return filtered
 
 
 def append_notice_comment(
@@ -2014,13 +2305,14 @@ def append_notice_comment(
     row = {
         "comment_id": str(uuid.uuid4()),
         "created_at": pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S"),
+        "user_id": get_current_user_id(),
         "source": clean(source_key) or "iris",
         "notice_id": notice_id,
         "notice_title": clean(notice_title),
-        "author": clean(author) or "익명",
+        "author": clean(author) or get_current_user_label() or "익명",
         "comment": comment[:5000],
     }
-    ws.append_row([row[column] for column in COMMENT_COLUMNS], value_input_option="USER_ENTERED")
+    append_dict_row(ws, row, COMMENT_COLUMNS)
     load_sheet_as_dataframe.clear()
     load_notice_comments.clear()
     load_app_datasets.clear()
@@ -2051,6 +2343,172 @@ def delete_notice_comment(comment_id: str) -> None:
             return
 
     raise RuntimeError("삭제할 댓글을 찾지 못했습니다.")
+
+
+def upsert_user_review_status(
+    *,
+    user_id: str,
+    source_key: str,
+    notice_id: str,
+    notice_title: str,
+    review_status: str,
+) -> None:
+    user_id = clean(user_id)
+    source_key = clean(source_key) or "iris"
+    notice_id = clean(notice_id)
+    if not user_id:
+        raise RuntimeError("로그인 사용자 정보가 없어 검토 여부를 저장할 수 없습니다.")
+    if not notice_id:
+        raise RuntimeError("공고ID가 없어 검토 여부를 저장할 수 없습니다.")
+
+    ws = get_or_create_worksheet(get_user_review_sheet_name(), USER_REVIEW_COLUMNS, rows=1000, cols=len(USER_REVIEW_COLUMNS))
+    values = ws.get_all_values()
+    header = [clean(x) for x in values[0]] if values else USER_REVIEW_COLUMNS.copy()
+
+    def col_index(column: str) -> int | None:
+        return header.index(column) if column in header else None
+
+    user_col = col_index("user_id")
+    source_col = col_index("source")
+    notice_col = col_index("notice_id")
+    review_col = col_index("review_status")
+    title_col = col_index("notice_title")
+    updated_col = col_index("updated_at")
+    if user_col is None or source_col is None or notice_col is None or review_col is None:
+        raise RuntimeError("사용자 검토 시트의 필수 컬럼이 없습니다.")
+
+    timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
+    notice_key = normalize_notice_id_for_match(notice_id)
+    target_row_index = None
+    for row_index, row in enumerate(values[1:], start=2):
+        current_user = clean(row[user_col] if user_col < len(row) else "")
+        current_source = clean(row[source_col] if source_col < len(row) else "")
+        current_notice_key = normalize_notice_id_for_match(row[notice_col] if notice_col < len(row) else "")
+        if current_user == user_id and current_source == source_key and current_notice_key == notice_key:
+            target_row_index = row_index
+            break
+
+    if target_row_index:
+        ws.update_cell(target_row_index, review_col + 1, clean(review_status))
+        if title_col is not None:
+            ws.update_cell(target_row_index, title_col + 1, clean(notice_title))
+        if updated_col is not None:
+            ws.update_cell(target_row_index, updated_col + 1, timestamp)
+    else:
+        row = {
+            "user_id": user_id,
+            "source": source_key,
+            "notice_id": notice_id,
+            "notice_title": clean(notice_title),
+            "review_status": clean(review_status),
+            "updated_at": timestamp,
+        }
+        append_dict_row(ws, row, USER_REVIEW_COLUMNS)
+
+    load_sheet_as_dataframe.clear()
+    load_user_review_statuses.clear()
+    build_source_datasets.clear()
+    load_app_datasets.clear()
+
+
+def submit_signup_request(*, user_id: str, password: str, display_name: str, email: str) -> None:
+    user_id = clean(user_id)
+    password = clean(password)
+    if not user_id:
+        raise RuntimeError("아이디를 입력해 주세요.")
+    if len(user_id) < 3:
+        raise RuntimeError("아이디는 3자 이상이어야 합니다.")
+    if not re.match(r"^[A-Za-z0-9_.-]+$", user_id):
+        raise RuntimeError("아이디는 영문, 숫자, 점, 밑줄, 하이픈만 사용할 수 있습니다.")
+    if len(password) < 6:
+        raise RuntimeError("비밀번호는 6자 이상이어야 합니다.")
+    if get_auth_account(user_id):
+        raise RuntimeError("이미 등록되었거나 승인 대기 중인 아이디입니다.")
+
+    ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
+    timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
+    append_dict_row(
+        ws,
+        {
+            "user_id": user_id,
+            "password_hash": hash_password(password),
+            "display_name": clean(display_name) or user_id,
+            "email": clean(email),
+            "role": "viewer",
+            "status": "pending",
+            "requested_at": timestamp,
+        },
+        AUTH_USER_COLUMNS,
+    )
+    load_sheet_as_dataframe.clear()
+
+
+def render_signup_form() -> None:
+    st.markdown("#### 가입 요청")
+    with st.form("signup_form"):
+        user_id = st.text_input("아이디", key="signup_user_id")
+        display_name = st.text_input("이름", key="signup_display_name")
+        email = st.text_input("이메일", key="signup_email")
+        password = st.text_input("비밀번호", type="password", key="signup_password")
+        password_confirm = st.text_input("비밀번호 확인", type="password", key="signup_password_confirm")
+        submitted = st.form_submit_button("가입 요청", use_container_width=True)
+    if submitted:
+        if clean(password) != clean(password_confirm):
+            st.error("비밀번호 확인이 일치하지 않습니다.")
+            return
+        try:
+            submit_signup_request(
+                user_id=user_id,
+                password=password,
+                display_name=display_name,
+                email=email,
+            )
+            st.success("가입 요청을 보냈습니다. 관리자가 승인하면 로그인할 수 있습니다.")
+        except Exception as exc:
+            st.error(f"가입 요청 실패: {exc}")
+
+
+def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, str]]) -> None:
+    st.markdown("<div style='height: 12vh;'></div>", unsafe_allow_html=True)
+    _, center_col, _ = st.columns([1.2, 1, 1.2])
+    with center_col:
+        st.title(mode_config.header_title)
+        st.caption("계정으로 로그인하면 운영관리와 검토 상태가 사용자별로 분리됩니다.")
+        login_tab, signup_tab = st.tabs(["로그인", "가입 요청"])
+        with login_tab:
+            with st.form("login_form"):
+                user_id = st.text_input("아이디")
+                password = st.text_input("비밀번호", type="password")
+                submitted = st.form_submit_button("로그인", use_container_width=True)
+            if submitted:
+                account = accounts.get(clean(user_id))
+                if account and clean(account.get("status")).lower() == "approved" and verify_password(password, account.get("password_hash", "")):
+                    st.session_state["auth_user"] = {
+                        "user_id": clean(account.get("user_id")),
+                        "display_name": clean(account.get("display_name")),
+                        "role": clean(account.get("role")) or "viewer",
+                    }
+                    st.rerun()
+                elif account and clean(account.get("status")).lower() == "pending":
+                    st.warning("가입 요청 승인 대기 중입니다.")
+                elif account and clean(account.get("status")).lower() == "rejected":
+                    st.error("가입 요청이 거절된 계정입니다.")
+                else:
+                    st.error("아이디 또는 비밀번호를 확인해 주세요.")
+        with signup_tab:
+            render_signup_form()
+
+
+def require_login(mode_config: AppModeConfig) -> None:
+    auth_required = get_bool_env("APP_AUTH_REQUIRED", default=True)
+    if not auth_required:
+        return
+    if get_current_user_id():
+        return
+
+    accounts = load_auth_accounts()
+    render_login_page(mode_config, accounts)
+    st.stop()
 
 
 def resolve_notice_source_key(row: dict | None) -> str:
@@ -2997,7 +3455,7 @@ def render_page_header(title: str, subtitle: str, *, eyebrow: str | None = None)
 
 def render_workspace_header(mode_config: AppModeConfig) -> None:
     profile_options = ["기본 프로필", "검토 집중", "제안 집중"]
-    header_cols = st.columns([6, 2, 2])
+    header_cols = st.columns([6, 2, 2, 1.2])
     with header_cols[0]:
         st.title(mode_config.header_title)
         st.caption(mode_config.header_caption)
@@ -3012,6 +3470,12 @@ def render_workspace_header(mode_config: AppModeConfig) -> None:
         st.markdown("<div style='height: 1.9rem;'></div>", unsafe_allow_html=True)
         if st.button("새로고침", key=f"{mode_config.mode}_workspace_refresh", use_container_width=True):
             st.rerun()
+    with header_cols[3]:
+        user_id = get_current_user_id()
+        if user_id:
+            st.caption(f"로그인: {user_id}")
+            if st.button("로그아웃", key=f"{mode_config.mode}_logout", use_container_width=True):
+                logout_current_user()
 
     last_updated = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M")
     st.caption(f"마지막 갱신: {last_updated}")
@@ -4107,7 +4571,13 @@ def find_related_opportunities_for_notice(row: dict, opportunity_df: pd.DataFram
     return pd.DataFrame()
 
 
-def render_review_editor(notice_id: str, current_value: str, form_key: str, source_key: str = "iris") -> None:
+def render_review_editor(
+    notice_id: str,
+    current_value: str,
+    form_key: str,
+    source_key: str = "iris",
+    notice_title: str = "",
+) -> None:
     if not get_bool_env("ENABLE_REVIEW_EDIT", default=True):
         st.info("공개 배포에서는 검토 여부 수정이 비활성화되어 있습니다.")
         return
@@ -4126,7 +4596,15 @@ def render_review_editor(notice_id: str, current_value: str, form_key: str, sour
 
         if submitted:
             try:
-                if clean(source_key) == "tipa":
+                if is_user_scoped_operations_enabled():
+                    upsert_user_review_status(
+                        user_id=get_current_user_id(),
+                        source_key=source_key,
+                        notice_id=notice_id,
+                        notice_title=notice_title,
+                        review_status=review_value,
+                    )
+                elif clean(source_key) == "tipa":
                     update_mss_review_status(notice_id, review_value)
                 elif clean(source_key) == "nipa":
                     update_nipa_review_status(notice_id, review_value)
@@ -4150,7 +4628,8 @@ def render_notice_comments(row: dict, section_key: str) -> None:
 
     saved_comment = False
     with st.form(f"{section_key}_comment_form"):
-        author = st.text_input("작성자", value=get_env("DEFAULT_COMMENT_AUTHOR", ""), key=f"{section_key}_comment_author")
+        default_author = get_current_user_label() if is_user_scoped_operations_enabled() else get_env("DEFAULT_COMMENT_AUTHOR", "")
+        author = st.text_input("작성자", value=default_author, key=f"{section_key}_comment_author")
         comment = st.text_area("의견", key=f"{section_key}_comment_text", height=110)
         submitted = st.form_submit_button("댓글 저장")
         if submitted:
@@ -4220,6 +4699,8 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
         detail_kicker = "Notice Master Detail"
         detail_button_label = "IRIS 상세 바로가기"
         review_caption = "공고 검토 상태를 바꾸면 IRIS_NOTICE_MASTER에 즉시 반영됩니다."
+    if is_user_scoped_operations_enabled():
+        review_caption = "검토 상태는 로그인한 사용자 전용 운영관리 데이터로 저장됩니다."
 
     render_detail_header(
         title=clean(row.get("공고명")),
@@ -4363,6 +4844,7 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
             current_value=clean(row.get("검토 여부")),
             form_key=f"notice_review_form_{clean(row.get('공고ID'))}",
             source_key=source_key,
+            notice_title=clean(row.get("공고명")),
         )
 
     render_notice_comments(row, section_key=f"notice_{clean(row.get('공고ID'))}")
@@ -4641,6 +5123,7 @@ def render_opportunity_detail_from_row(row: dict) -> None:
             current_value=clean(row.get("review_status")),
             form_key=f"opportunity_review_form_{clean(row.get('notice_id'))}",
             source_key=source_key,
+            notice_title=clean(row.get("notice_title")),
         )
 
     comment_row = {
@@ -4736,6 +5219,7 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
             notice_id=clean(row.get("공고ID")),
             current_value=clean(row.get("검토 여부")),
             form_key=f"summary_review_form_{clean(row.get('공고ID'))}",
+            notice_title=clean(row.get("공고명")),
         )
 
     st.markdown('<div class="detail-section-title">대표 분석 요약</div>', unsafe_allow_html=True)
@@ -5466,6 +5950,7 @@ def main(app_mode: str = "admin"):
         layout="wide",
     )
     inject_page_styles()
+    require_login(mode_config)
     render_workspace_header(mode_config)
 
     sheet_names = {
@@ -5538,6 +6023,8 @@ def main(app_mode: str = "admin"):
     source_datasets = None
     if selected_source_config and selected_source_config.requires_source_datasets:
         source_datasets = build_source_datasets()
+    if is_user_scoped_operations_enabled():
+        datasets, source_datasets = apply_user_review_statuses(datasets, source_datasets, get_current_user_id())
 
     render_selected_source(
         selected_source_key,

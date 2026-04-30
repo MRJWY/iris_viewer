@@ -170,36 +170,25 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             ),
         ),
     )
-    viewer_nav_groups = common_nav_groups + (
-        NavGroupConfig(
-            "analysis",
-            "분석",
-            (
-                NavItemConfig("iris_summary", "IRIS Summary", "iris", "summary"),
-            ),
-        ),
-    )
-
     if normalized_mode == "viewer":
         return AppModeConfig(
             mode="viewer",
-            page_title="Crawler Hub",
-            header_title="Crawler Hub",
-            header_caption="IRIS / SUMMARY / OPPORTUNITY 시트를 같은 화면 구조로 조회합니다.",
-            supports_summary=True,
-            nav_groups=viewer_nav_groups,
+            page_title="Crawler Hub Viewer",
+            header_title="Crawler Hub Viewer",
+            header_caption="정부사업 공고 수집 · 추천 · 검토 · 제안관리 대시보드",
+            supports_summary=False,
+            nav_groups=common_nav_groups,
             sources=sources,
             default_source="dashboard",
             default_iris_page="notice",
             iris_tabs=(
                 ("notice", "진행 공고"),
                 ("notice_scheduled", "예정 공고"),
-                ("summary", "Summary"),
                 ("opportunity", "Opportunity"),
                 ("notice_archive", "Archive"),
             ),
-            valid_iris_pages=frozenset({"opportunity", "notice", "notice_scheduled", "notice_archive", "summary"}),
-            iris_tab_key="viewer_iris_page_tabs",
+            valid_iris_pages=frozenset({"opportunity", "notice", "notice_scheduled", "notice_archive"}),
+            iris_tab_key="iris_page_tabs",
         )
 
     return AppModeConfig(

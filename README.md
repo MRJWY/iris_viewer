@@ -26,6 +26,9 @@ structure and routing model as the admin app.
   - mode/source/page config used by the shared app
 
 Notice detail pages support review status updates and comment history through Google Sheets.
+Viewer login is enabled by default. Users can request signup from the viewer login
+screen; requests are stored in `APP_USER_ACCOUNTS` with `pending` status and can
+be approved from the admin app.
 
 ## Required Secrets
 
@@ -36,6 +39,11 @@ Use Streamlit secrets or environment variables for:
 
 Optional:
 
+- `APP_USERS`: bootstrap accounts, for example `{"admin":"password"}`
+- `APP_ADMINS`: comma-separated bootstrap admin IDs, for example `admin`
+- `APP_USER_ACCOUNT_SHEET`: defaults to `APP_USER_ACCOUNTS`
+- `NOTICE_USER_REVIEW_SHEET`: defaults to `NOTICE_USER_REVIEWS`
+- `USER_SCOPED_OPERATIONS`: defaults to `1`
 - `GOOGLE_CREDENTIALS_JSON`
 - `GOOGLE_CREDENTIALS_JSON_CONTENT`
 - `MSS_CURRENT_SHEET` / `MSS_PAST_SHEET`
