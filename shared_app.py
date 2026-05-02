@@ -2237,16 +2237,6 @@ def load_auth_accounts() -> dict[str, dict[str, str]]:
     accounts: dict[str, dict[str, str]] = {}
     static_users = load_static_auth_users()
     static_admin_ids = load_static_admin_ids(static_users)
-    for user_id, password in static_users.items():
-        accounts[user_id] = {
-            "user_id": user_id,
-            "password_hash": password,
-            "display_name": user_id,
-            "email": "",
-            "role": "admin" if user_id in static_admin_ids else "viewer",
-            "status": "approved",
-        }
-
     sheet_accounts = load_auth_user_accounts()
     for _, row in sheet_accounts.iterrows():
         user_id = clean(row.get("user_id"))
@@ -2259,6 +2249,15 @@ def load_auth_accounts() -> dict[str, dict[str, str]]:
             "email": clean(row.get("email")),
             "role": clean(row.get("role")) or "viewer",
             "status": clean(row.get("status")) or "pending",
+        }
+    for user_id, password in static_users.items():
+        accounts[user_id] = {
+            "user_id": user_id,
+            "password_hash": password,
+            "display_name": user_id,
+            "email": clean(accounts.get(user_id, {}).get("email")),
+            "role": "admin" if user_id in static_admin_ids else "viewer",
+            "status": "approved",
         }
     return accounts
 
