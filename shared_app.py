@@ -2036,16 +2036,37 @@ def get_query_auth_token() -> str:
     return clean(value)
 
 
+def get_query_params_dict() -> dict[str, str]:
+    params: dict[str, str] = {}
+    try:
+        keys = st.query_params.keys()
+    except Exception:
+        return params
+    for key in keys:
+        value = st.query_params.get(key, "")
+        if isinstance(value, list):
+            value = value[0] if value else ""
+        params[clean(key)] = clean(value)
+    return params
+
+
 def get_current_auth_token() -> str:
     return clean(st.session_state.get("auth_token")) or get_query_auth_token()
 
 
 def with_auth_params(params: dict[str, str]) -> dict[str, str]:
+    params = {clean(key): clean(value) for key, value in dict(params).items()}
     token = get_current_auth_token()
     if token:
-        params = dict(params)
         params["auth"] = token
     return params
+
+
+def replace_query_params(params: dict[str, str]) -> None:
+    st.query_params.clear()
+    clean_params = {clean(key): clean(value) for key, value in params.items() if clean(key)}
+    if clean_params:
+        st.query_params.update(clean_params)
 
 
 def restore_auth_from_query(mode_config: AppModeConfig) -> None:
@@ -2320,11 +2341,9 @@ def is_user_scoped_operations_enabled() -> bool:
 def logout_current_user() -> None:
     st.session_state.pop("auth_user", None)
     st.session_state.pop("auth_token", None)
-    params = dict(st.query_params)
+    params = get_query_params_dict()
     params.pop("auth", None)
-    st.query_params.clear()
-    if params:
-        st.query_params.update(params)
+    replace_query_params(params)
     st.rerun()
 
 
@@ -2653,7 +2672,7 @@ def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, 
                     }
                     token = encode_auth_token(account.get("user_id", ""))
                     st.session_state["auth_token"] = token
-                    st.query_params.update({"auth": token})
+                    replace_query_params(with_auth_params(get_query_params_dict()))
                     st.rerun()
                 elif account and clean(account.get("status")).lower() == "pending":
                     st.warning("가입 요청 승인 대기 중입니다.")
