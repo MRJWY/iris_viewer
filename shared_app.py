@@ -515,7 +515,7 @@ def build_dashboard_recent_comments_table(limit: int = 5) -> pd.DataFrame:
 
     recent = comments_df.copy()
     if is_user_scoped_operations_enabled() and "user_id" in recent.columns:
-        recent = recent[recent["user_id"].fillna("").astype(str).str.strip().eq(get_current_user_id())].copy()
+        recent = recent[recent["user_id"].fillna("").astype(str).str.strip().eq(get_current_operation_scope_key())].copy()
     recent = recent.head(limit).copy()
     if recent.empty:
         return pd.DataFrame(columns=["작성시각", "작성자", "댓글"])
@@ -1458,7 +1458,7 @@ def render_operations_source(
     render_page_header(
         "운영관리",
         (
-            f"{get_current_user_id()} 계정의 관심 공고, 댓글, 오류, 검토 커버리지를 확인합니다."
+            f"{get_current_operation_scope_label()} 기준의 관심 공고, 댓글, 오류, 검토 커버리지를 확인합니다."
             if is_user_scoped_operations_enabled()
             else "관심 공고, 댓글, 오류, 검토 커버리지를 기준으로 운영 상태를 확인합니다."
         ),
@@ -1939,6 +1939,25 @@ def parse_csv_values(raw_value: str) -> set[str]:
     return {clean(item) for item in clean(raw_value).split(",") if clean(item)}
 
 
+def normalize_email_domain(email: str) -> str:
+    email = clean(email).lower()
+    if "@" not in email:
+        return ""
+    return clean(email.rsplit("@", 1)[-1]).lower()
+
+
+def load_allowed_email_domains() -> set[str]:
+    domains: set[str] = set()
+    for secret_name in ("app_allowed_email_domains", "APP_ALLOWED_EMAIL_DOMAINS"):
+        value = get_secret_value(secret_name)
+        if isinstance(value, (list, tuple, set)):
+            domains.update(normalize_email_domain(f"user@{item}") for item in value if clean(item))
+        elif isinstance(value, str):
+            domains.update(normalize_email_domain(f"user@{item}") for item in parse_csv_values(value))
+    domains.update(normalize_email_domain(f"user@{item}") for item in parse_csv_values(get_env("APP_ALLOWED_EMAIL_DOMAINS")))
+    return {domain for domain in domains if domain}
+
+
 def load_static_admin_ids(static_users: dict[str, str] | None = None) -> set[str]:
     static_users = static_users or load_static_auth_users()
     for secret_name in ("app_admins", "APP_ADMINS"):
@@ -2042,6 +2061,7 @@ def restore_auth_from_query(mode_config: AppModeConfig) -> None:
     st.session_state["auth_user"] = {
         "user_id": clean(account.get("user_id")),
         "display_name": clean(account.get("display_name")),
+        "email": clean(account.get("email")),
         "role": clean(account.get("role")) or "viewer",
     }
     st.session_state["auth_token"] = token
@@ -2259,8 +2279,43 @@ def get_current_user_label() -> str:
     return display_name or user_id or get_env("DEFAULT_COMMENT_AUTHOR") or get_env("USER") or "app"
 
 
+def get_current_user_email() -> str:
+    user = st.session_state.get("auth_user") or {}
+    return clean(user.get("email")) if isinstance(user, dict) else ""
+
+
+def get_current_user_domain() -> str:
+    return normalize_email_domain(get_current_user_email())
+
+
+def build_operation_scope_key(account: dict[str, str] | None) -> str:
+    account = account or {}
+    domain = normalize_email_domain(account.get("email", ""))
+    if domain:
+        return f"domain:{domain}"
+    user_id = clean(account.get("user_id"))
+    return f"user:{user_id}" if user_id else ""
+
+
+def get_current_operation_scope_key() -> str:
+    user_id = get_current_user_id()
+    account = get_auth_account(user_id) if user_id else None
+    if account:
+        return build_operation_scope_key(account)
+    if user_id:
+        return f"user:{user_id}"
+    return ""
+
+
+def get_current_operation_scope_label() -> str:
+    scope_key = get_current_operation_scope_key()
+    if scope_key.startswith("domain:"):
+        return scope_key.removeprefix("domain:")
+    return get_current_user_id()
+
+
 def is_user_scoped_operations_enabled() -> bool:
-    return bool(get_current_user_id()) and get_bool_env("USER_SCOPED_OPERATIONS", default=True)
+    return bool(get_current_operation_scope_key()) and get_bool_env("USER_SCOPED_OPERATIONS", default=True)
 
 
 def logout_current_user() -> None:
@@ -2382,7 +2437,7 @@ def filter_notice_comments(comments_df: pd.DataFrame, *, source_key: str, notice
         & comment_notice_keys.eq(current_notice_key)
     ].copy()
     if is_user_scoped_operations_enabled() and "user_id" in filtered.columns:
-        filtered = filtered[filtered["user_id"].fillna("").astype(str).str.strip().eq(get_current_user_id())].copy()
+        filtered = filtered[filtered["user_id"].fillna("").astype(str).str.strip().eq(get_current_operation_scope_key())].copy()
     return filtered
 
 
@@ -2405,7 +2460,7 @@ def append_notice_comment(
     row = {
         "comment_id": str(uuid.uuid4()),
         "created_at": pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S"),
-        "user_id": get_current_user_id(),
+        "user_id": get_current_operation_scope_key(),
         "source": clean(source_key) or "iris",
         "notice_id": notice_id,
         "notice_title": clean(notice_title),
@@ -2514,6 +2569,7 @@ def upsert_user_review_status(
 def submit_signup_request(*, user_id: str, password: str, display_name: str, email: str) -> None:
     user_id = clean(user_id)
     password = clean(password)
+    email = clean(email).lower()
     if not user_id:
         raise RuntimeError("아이디를 입력해 주세요.")
     if len(user_id) < 3:
@@ -2522,6 +2578,10 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
         raise RuntimeError("아이디는 영문, 숫자, 점, 밑줄, 하이픈만 사용할 수 있습니다.")
     if len(password) < 6:
         raise RuntimeError("비밀번호는 6자 이상이어야 합니다.")
+    allowed_domains = load_allowed_email_domains()
+    email_domain = normalize_email_domain(email)
+    if allowed_domains and email_domain not in allowed_domains:
+        raise RuntimeError("허용된 회사 이메일 도메인만 가입 요청할 수 있습니다.")
     if get_auth_account(user_id):
         raise RuntimeError("이미 등록되었거나 승인 대기 중인 아이디입니다.")
 
@@ -2533,7 +2593,7 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
             "user_id": user_id,
             "password_hash": hash_password(password),
             "display_name": clean(display_name) or user_id,
-            "email": clean(email),
+            "email": email,
             "role": "viewer",
             "status": "pending",
             "requested_at": timestamp,
@@ -2545,6 +2605,9 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
 
 def render_signup_form() -> None:
     st.markdown("#### 가입 요청")
+    allowed_domains = sorted(load_allowed_email_domains())
+    if allowed_domains:
+        st.caption("가입 가능 도메인: " + ", ".join(allowed_domains))
     with st.form("signup_form"):
         user_id = st.text_input("아이디", key="signup_user_id")
         display_name = st.text_input("이름", key="signup_display_name")
@@ -2586,6 +2649,7 @@ def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, 
                     st.session_state["auth_user"] = {
                         "user_id": clean(account.get("user_id")),
                         "display_name": clean(account.get("display_name")),
+                        "email": clean(account.get("email")),
                         "role": clean(account.get("role")) or "viewer",
                     }
                     token = encode_auth_token(account.get("user_id", ""))
@@ -3558,26 +3622,21 @@ def render_page_header(title: str, subtitle: str, *, eyebrow: str | None = None)
 
 
 def render_workspace_header(mode_config: AppModeConfig) -> None:
-    profile_options = ["기본 프로필", "검토 집중", "제안 집중"]
-    header_cols = st.columns([6, 2, 2, 1.2])
+    header_cols = st.columns([7, 2, 1.5])
     with header_cols[0]:
         st.title(mode_config.header_title)
         st.caption(mode_config.header_caption)
     with header_cols[1]:
-        st.selectbox(
-            "기준 프로필 선택",
-            profile_options,
-            key=f"{mode_config.mode}_workspace_profile",
-            label_visibility="collapsed",
-        )
-    with header_cols[2]:
         st.markdown("<div style='height: 1.9rem;'></div>", unsafe_allow_html=True)
         if st.button("새로고침", key=f"{mode_config.mode}_workspace_refresh", use_container_width=True):
             st.rerun()
-    with header_cols[3]:
+    with header_cols[2]:
         user_id = get_current_user_id()
         if user_id:
+            scope_label = get_current_operation_scope_label()
             st.caption(f"로그인: {user_id}")
+            if scope_label and scope_label != user_id:
+                st.caption(f"공유: {scope_label}")
             if st.button("로그아웃", key=f"{mode_config.mode}_logout", use_container_width=True):
                 logout_current_user()
 
@@ -4704,7 +4763,7 @@ def render_review_editor(
             try:
                 if is_user_scoped_operations_enabled():
                     upsert_user_review_status(
-                        user_id=get_current_user_id(),
+                        user_id=get_current_operation_scope_key(),
                         source_key=source_key,
                         notice_id=notice_id,
                         notice_title=notice_title,
@@ -6130,7 +6189,11 @@ def main(app_mode: str = "admin"):
     if selected_source_config and selected_source_config.requires_source_datasets:
         source_datasets = build_source_datasets()
     if is_user_scoped_operations_enabled():
-        datasets, source_datasets = apply_user_review_statuses(datasets, source_datasets, get_current_user_id())
+        datasets, source_datasets = apply_user_review_statuses(
+            datasets,
+            source_datasets,
+            get_current_operation_scope_key(),
+        )
 
     render_selected_source(
         selected_source_key,

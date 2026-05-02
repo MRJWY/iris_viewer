@@ -40,9 +40,10 @@ Optional:
 
 - `APP_USERS`: bootstrap accounts, for example `{"admin":"password"}`
 - `APP_ADMINS`: comma-separated bootstrap admin IDs, for example `admin`
+- `APP_ALLOWED_EMAIL_DOMAINS`: comma-separated company email domains allowed to request signup
 - `APP_USER_ACCOUNT_SHEET`: defaults to `APP_USER_ACCOUNTS`
 - `NOTICE_USER_REVIEW_SHEET`: defaults to `NOTICE_USER_REVIEWS`
-- `USER_SCOPED_OPERATIONS`: defaults to `1`
+- `USER_SCOPED_OPERATIONS`: defaults to `1`; accounts with the same email domain share operations, favorites, review status, and comments
 - `GOOGLE_CREDENTIALS_JSON`
 - `GOOGLE_CREDENTIALS_JSON_CONTENT`
 - `MSS_CURRENT_SHEET` / `MSS_PAST_SHEET`
