@@ -204,7 +204,14 @@ AUTH_USER_COLUMNS = [
 
 
 def clean(value) -> str:
-    return str(value or "").strip()
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    return str(value).strip()
 
 
 def render_iris_page(page_key: str, datasets: dict[str, pd.DataFrame]) -> None:
@@ -1905,6 +1912,20 @@ def get_secret_value(name: str):
     return None
 
 
+def normalize_auth_password_value(value) -> str:
+    if isinstance(value, dict) or hasattr(value, "items"):
+        try:
+            mapping = dict(value)
+        except Exception:
+            mapping = {}
+        for key in ("password_hash", "password", "secret"):
+            password = clean(mapping.get(key))
+            if password:
+                return password
+        return ""
+    return clean(value)
+
+
 def parse_key_value_auth_users(raw_value: str) -> dict[str, str]:
     users: dict[str, str] = {}
     for item in clean(raw_value).split(","):
@@ -1913,7 +1934,7 @@ def parse_key_value_auth_users(raw_value: str) -> dict[str, str]:
         user_id, password = item.split(":", 1)
         user_id = clean(user_id)
         if user_id:
-            users[user_id] = clean(password)
+            users[user_id] = normalize_auth_password_value(password)
     return users
 
 
@@ -1921,7 +1942,11 @@ def load_static_auth_users() -> dict[str, str]:
     for secret_name in ("app_users", "APP_USERS"):
         users = get_secret_mapping(secret_name)
         if users:
-            return {clean(user_id): clean(password) for user_id, password in users.items() if clean(user_id)}
+            return {
+                clean(user_id): normalize_auth_password_value(password)
+                for user_id, password in users.items()
+                if clean(user_id) and normalize_auth_password_value(password)
+            }
 
     raw_users = get_env("APP_USERS")
     if not raw_users:
@@ -1929,7 +1954,11 @@ def load_static_auth_users() -> dict[str, str]:
     try:
         parsed = json.loads(raw_users)
         if isinstance(parsed, dict):
-            return {clean(user_id): clean(password) for user_id, password in parsed.items() if clean(user_id)}
+            return {
+                clean(user_id): normalize_auth_password_value(password)
+                for user_id, password in parsed.items()
+                if clean(user_id) and normalize_auth_password_value(password)
+            }
     except Exception:
         pass
     return parse_key_value_auth_users(raw_users)
@@ -1984,12 +2013,14 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, stored_password: str) -> bool:
     password = clean(password)
-    stored_password = clean(stored_password)
+    stored_password = normalize_auth_password_value(stored_password)
+    if not stored_password:
+        return False
     if stored_password.startswith("sha256:"):
         expected = stored_password.removeprefix("sha256:")
         actual = hashlib.sha256(password.encode("utf-8")).hexdigest()
-        return hmac.compare_digest(actual, expected)
-    return hmac.compare_digest(password, stored_password)
+        return hmac.compare_digest(str(actual), str(expected))
+    return hmac.compare_digest(str(password), str(stored_password))
 
 
 def get_auth_signing_secret() -> str:
