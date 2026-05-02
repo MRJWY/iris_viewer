@@ -800,6 +800,115 @@ def render_dashboard_quick_links(mode_config: AppModeConfig) -> None:
                     navigate_to_source_page(source_key, page_key)
 
 
+def render_grant_search_dashboard_intro(
+    *,
+    source_count: int,
+    agency_count: int,
+    notice_count: int,
+) -> None:
+    st.markdown(
+        f"""
+        <div class="grant-search-header">
+          <div class="grant-search-brand-row">
+            <div class="grant-search-brand">정부 과제 추천</div>
+            <div class="grant-search-divider"></div>
+            <div class="grant-search-nav">
+              <span class="active">과제 검색</span>
+              <span>맞춤 추천</span>
+            </div>
+          </div>
+          <div class="grant-search-auth">
+            <span>로그인</span>
+            <span>회원가입</span>
+          </div>
+        </div>
+        <div class="grant-search-hero">
+          <div class="grant-search-title">원하는 정부 과제를 검색하고 필터를 적용해보세요</div>
+          <div class="grant-search-subtitle">{source_count}개 부처 · {agency_count:,}개 수행기관 · {notice_count:,}개 공고 사이트 기반 실시간 업데이트</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="grant-search-shell">', unsafe_allow_html=True)
+    with st.form("grant_dashboard_search_form"):
+        search_col, button_col = st.columns([10, 1])
+        with search_col:
+            search_text = st.text_area(
+                "과제 검색",
+                key="grant_dashboard_search_text",
+                placeholder="예) 과제명, 사업 분야 키워드, 기술/연구 세부 키워드 입력을 통해 필요한 과제를 찾아보세요.",
+                label_visibility="collapsed",
+                height=210,
+            )
+        with button_col:
+            st.markdown('<div class="grant-search-button-wrap">', unsafe_allow_html=True)
+            submitted = st.form_submit_button("⌕\n검색하기", use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if submitted:
+        st.session_state["sidebar_search"] = clean(search_text)
+        navigate_to_route("iris", "notice")
+
+    st.markdown(
+        """
+        <div class="grant-filter-head">
+          <div class="grant-filter-title">요건 / 필터</div>
+          <div class="grant-chip">↻ 초기화</div>
+        </div>
+        <div class="grant-filter-grid">
+          <div class="grant-filter-cell">
+            <div class="grant-filter-label">기관 유형</div>
+            <div class="grant-chip-row">
+              <span class="grant-chip">대기업</span>
+              <span class="grant-chip">중견기업</span>
+              <span class="grant-chip">중소기업/스타트업</span>
+              <span class="grant-chip">대학 연구실</span>
+              <span class="grant-chip">공공/민간 연구기관</span>
+              <span class="grant-chip">의료기관</span>
+            </div>
+          </div>
+          <div class="grant-filter-cell">
+            <div class="grant-filter-label">내 매출액</div>
+            <div class="grant-filter-input"><div class="grant-filter-placeholder">매출액 입력</div><div class="grant-filter-unit">억원</div></div>
+          </div>
+          <div class="grant-filter-cell">
+            <div class="grant-filter-label">내 사업연수</div>
+            <div class="grant-filter-input"><div class="grant-filter-placeholder">사업 연수 입력</div><div class="grant-filter-unit">년</div></div>
+          </div>
+          <div class="grant-filter-cell">
+            <div class="grant-filter-label">기관 소재지</div>
+            <div class="grant-chip-row">
+              <span class="grant-chip active">전국</span>
+              <span class="grant-chip">서울</span>
+              <span class="grant-chip">경기</span>
+              <span class="grant-chip">인천</span>
+              <span class="grant-chip">부산</span>
+              <span class="grant-chip">대구</span>
+            </div>
+          </div>
+          <div class="grant-filter-cell">
+            <div class="grant-filter-label">부설연구소/연구전담부서 유무</div>
+            <div class="grant-chip-row">
+              <span class="grant-chip">예</span>
+              <span class="grant-chip">아니오</span>
+            </div>
+          </div>
+          <div class="grant-filter-cell">
+            <div class="grant-filter-label">과제 유형</div>
+            <div class="grant-chip-row">
+              <span class="grant-chip active">전체</span>
+              <span class="grant-chip">연구개발</span>
+              <span class="grant-chip">사업화</span>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_dashboard_source(
     source_config: SourceRouteConfig,
     mode_config: AppModeConfig,
@@ -1060,10 +1169,12 @@ def render_dashboard_source(
     if total_current_notices > 0:
         review_coverage = f"{((total_current_notices - total_review_needed) / total_current_notices) * 100:.0f}%"
 
-    render_page_header(
-        "Dashboard",
-        "오늘 반드시 확인해야 할 공고와 운영 상태를 한눈에 보여주는 메인 대시보드입니다.",
-        eyebrow="Overview",
+    source_count = current_notice_index["source_key"].nunique() if "source_key" in current_notice_index.columns and not current_notice_index.empty else 3
+    agency_count = current_notice_index["Agency"].nunique() if "Agency" in current_notice_index.columns and not current_notice_index.empty else 0
+    render_grant_search_dashboard_intro(
+        source_count=int(source_count),
+        agency_count=int(agency_count),
+        notice_count=total_current_notices,
     )
 
     render_section_label("오늘의 우선 작업")
@@ -3997,6 +4108,203 @@ def inject_page_styles() -> None:
           line-height: 1;
           font-weight: 510;
           letter-spacing: -0.03em;
+        }
+        .grant-search-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 24px;
+          padding: 22px 8px 34px 8px;
+          border-bottom: 1px solid #eeeeee;
+          margin: -4px 0 46px 0;
+        }
+        .grant-search-brand-row {
+          display: flex;
+          align-items: center;
+          gap: 28px;
+        }
+        .grant-search-brand {
+          color: #0f2024;
+          font-size: 27px;
+          font-weight: 900;
+          line-height: 1;
+          white-space: nowrap;
+        }
+        .grant-search-divider {
+          width: 3px;
+          height: 28px;
+          background: #d6d6d6;
+        }
+        .grant-search-nav {
+          display: flex;
+          align-items: center;
+          gap: 34px;
+          color: #d6d6d6;
+          font-size: 20px;
+          font-weight: 900;
+        }
+        .grant-search-nav .active {
+          color: #001eff;
+        }
+        .grant-search-auth {
+          display: flex;
+          gap: 32px;
+          color: #111827;
+          font-size: 17px;
+          font-weight: 900;
+          white-space: nowrap;
+        }
+        .grant-search-hero {
+          margin: 0 0 54px 0;
+        }
+        .grant-search-title {
+          color: #0f2024;
+          font-size: 37px;
+          font-weight: 900;
+          line-height: 1.22;
+          letter-spacing: 0;
+          margin-bottom: 16px;
+        }
+        .grant-search-subtitle {
+          color: #9b9b9b;
+          font-size: 21px;
+          font-weight: 800;
+          margin-bottom: 26px;
+        }
+        .grant-search-shell {
+          display: grid;
+          grid-template-columns: 1fr 128px;
+          gap: 14px;
+          align-items: stretch;
+          margin-bottom: 50px;
+        }
+        .grant-search-shell div[data-testid="stTextArea"] textarea {
+          min-height: 210px !important;
+          border: 5px solid #e0e0ff !important;
+          border-radius: 22px !important;
+          padding: 24px 28px !important;
+          color: #111827 !important;
+          font-size: 20px !important;
+          font-weight: 700 !important;
+          resize: none !important;
+        }
+        .grant-search-shell div[data-testid="stTextArea"] textarea::placeholder {
+          color: #c9c9c9 !important;
+        }
+        .grant-search-button-wrap div.stButton > button {
+          height: 210px !important;
+          min-height: 210px !important;
+          border-radius: 13px !important;
+          border-color: #0716ff !important;
+          background: #0716ff !important;
+          color: #ffffff !important;
+          font-size: 21px !important;
+          font-weight: 900 !important;
+        }
+        .grant-filter-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin: 0 0 22px 0;
+        }
+        .grant-filter-title {
+          color: #111827;
+          font-size: 21px;
+          font-weight: 900;
+        }
+        .grant-filter-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          border: 1px solid #e8e8e8;
+          border-radius: 22px;
+          overflow: hidden;
+          background: #ffffff;
+          margin-bottom: 36px;
+        }
+        .grant-filter-cell {
+          min-height: 174px;
+          padding: 30px 30px 26px 30px;
+          border-right: 1px solid #e8e8e8;
+          border-bottom: 1px solid #e8e8e8;
+        }
+        .grant-filter-cell:nth-child(3n) {
+          border-right: 0;
+        }
+        .grant-filter-cell:nth-last-child(-n+3) {
+          border-bottom: 0;
+        }
+        .grant-filter-label {
+          color: #111827;
+          font-size: 18px;
+          font-weight: 900;
+          margin-bottom: 18px;
+        }
+        .grant-chip-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .grant-chip {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 35px;
+          padding: 0 16px;
+          border: 1px solid #e5e7eb;
+          border-radius: 6px;
+          background: #ffffff;
+          color: #9b9b9b;
+          font-size: 15px;
+          font-weight: 800;
+        }
+        .grant-chip.active {
+          background: #dedfff;
+          border-color: #dedfff;
+          color: #001eff;
+        }
+        .grant-filter-input {
+          display: grid;
+          grid-template-columns: 1fr 56px;
+          height: 42px;
+          border: 1px solid #e5e7eb;
+          border-radius: 6px;
+          overflow: hidden;
+          color: #b5b5b5;
+          font-size: 16px;
+          font-weight: 800;
+        }
+        .grant-filter-placeholder {
+          display: flex;
+          align-items: center;
+          padding-left: 16px;
+        }
+        .grant-filter-unit {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-left: 1px solid #e5e7eb;
+          background: #fafafa;
+        }
+        @media (max-width: 900px) {
+          .grant-search-header,
+          .grant-search-brand-row,
+          .grant-search-auth {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+          .grant-search-shell,
+          .grant-filter-grid {
+            grid-template-columns: 1fr;
+          }
+          .grant-filter-cell,
+          .grant-filter-cell:nth-child(3n),
+          .grant-filter-cell:nth-last-child(-n+3) {
+            border-right: 0;
+            border-bottom: 1px solid #e8e8e8;
+          }
+          .grant-filter-cell:last-child {
+            border-bottom: 0;
+          }
         }
         .public-notice-card {
           margin: 10px 0 26px 0;
