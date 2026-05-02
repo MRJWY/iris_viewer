@@ -2019,8 +2019,8 @@ def verify_password(password: str, stored_password: str) -> bool:
     if stored_password.startswith("sha256:"):
         expected = stored_password.removeprefix("sha256:")
         actual = hashlib.sha256(password.encode("utf-8")).hexdigest()
-        return hmac.compare_digest(str(actual), str(expected))
-    return hmac.compare_digest(str(password), str(stored_password))
+        return hmac.compare_digest(actual.encode("utf-8"), expected.encode("utf-8"))
+    return hmac.compare_digest(password.encode("utf-8"), stored_password.encode("utf-8"))
 
 
 def get_auth_signing_secret() -> str:
