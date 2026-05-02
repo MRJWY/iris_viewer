@@ -3998,6 +3998,228 @@ def inject_page_styles() -> None:
           font-weight: 510;
           letter-spacing: -0.03em;
         }
+        .public-notice-card {
+          margin: 10px 0 26px 0;
+          padding: 54px 54px 42px 54px;
+          border: 1px solid rgba(15, 23, 42, 0.12);
+          border-radius: 34px;
+          background: #ffffff;
+          box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.02);
+        }
+        .public-notice-top {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 24px;
+        }
+        .public-notice-badges {
+          display: flex;
+          gap: 6px;
+          margin-bottom: 20px;
+        }
+        .public-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 34px;
+          padding: 0 13px;
+          border-radius: 3px;
+          color: #ffffff;
+          font-size: 18px;
+          font-weight: 800;
+          line-height: 1;
+        }
+        .public-badge.new {
+          background: #12c91d;
+        }
+        .public-badge.dday {
+          background: #ff9f0a;
+        }
+        .public-save-button {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          height: 48px;
+          padding: 0 18px;
+          border: 1px solid #e5e7eb;
+          border-radius: 6px;
+          background: #fafafa;
+          color: #111827;
+          font-size: 19px;
+          font-weight: 800;
+          white-space: nowrap;
+          box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.02);
+        }
+        .public-save-icon {
+          font-size: 22px;
+          line-height: 1;
+        }
+        .public-notice-title {
+          max-width: 980px;
+          color: #172327;
+          font-size: 23px;
+          font-weight: 800;
+          line-height: 1.38;
+          margin-bottom: 11px;
+          letter-spacing: 0;
+        }
+        .public-notice-subtitle {
+          color: #9ca3af;
+          font-size: 17px;
+          font-weight: 700;
+          line-height: 1.5;
+          letter-spacing: 0;
+        }
+        .public-notice-divider {
+          height: 1px;
+          background: #e5e7eb;
+          margin: 38px 0 31px 0;
+        }
+        .public-notice-body {
+          display: grid;
+          grid-template-columns: minmax(360px, 0.82fr) minmax(420px, 1.18fr);
+          gap: 40px;
+          align-items: stretch;
+        }
+        .public-info-panel {
+          background: #fafafa;
+          border-radius: 6px;
+          padding: 31px 36px;
+          min-height: 278px;
+        }
+        .public-info-row {
+          display: grid;
+          grid-template-columns: 140px 1fr;
+          gap: 20px;
+          align-items: start;
+          padding: 10px 0;
+        }
+        .public-info-label {
+          color: #9ca3af;
+          font-size: 16px;
+          font-weight: 800;
+          line-height: 1.5;
+        }
+        .public-info-value {
+          color: #3f3f46;
+          font-size: 20px;
+          font-weight: 800;
+          line-height: 1.5;
+          word-break: keep-all;
+        }
+        .public-info-value.budget {
+          color: #001aff;
+        }
+        .public-budget-highlight {
+          display: inline-block;
+          padding: 0 7px 1px 7px;
+          background: #dfe0ff;
+          color: #001aff;
+        }
+        .public-fit-head {
+          display: grid;
+          grid-template-columns: 132px 1fr;
+          gap: 18px;
+          align-items: center;
+          margin-bottom: 18px;
+        }
+        .public-fit-label {
+          color: #ff6666;
+          font-size: 16px;
+          font-weight: 800;
+        }
+        .public-fit-bar {
+          height: 19px;
+          border: 2px solid #ffc6c6;
+          border-radius: 999px;
+          background: #fff1f1;
+          position: relative;
+          overflow: hidden;
+        }
+        .public-fit-bar-fill {
+          height: 100%;
+          min-width: 18px;
+          border-radius: 999px;
+          background: #ff6666;
+        }
+        .public-fit-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 18px 20px;
+        }
+        .public-fit-box {
+          min-height: 111px;
+          padding: 26px 28px;
+          border-radius: 6px;
+          background: #fff0f0;
+        }
+        .public-fit-box-label {
+          color: #ffa2a2;
+          font-size: 16px;
+          font-weight: 800;
+          margin-bottom: 10px;
+        }
+        .public-fit-box-value {
+          color: #ff5d5d;
+          font-size: 20px;
+          font-weight: 900;
+          line-height: 1.55;
+          word-break: keep-all;
+        }
+        .public-notice-footer {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 24px;
+          margin-top: 36px;
+        }
+        .public-tag-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .public-tag {
+          display: inline-flex;
+          align-items: center;
+          min-height: 40px;
+          padding: 0 10px;
+          border-radius: 3px;
+          background: #dedfff;
+          color: #0532ff;
+          font-size: 17px;
+          font-weight: 900;
+          text-decoration: underline;
+          text-underline-offset: 3px;
+        }
+        .public-alert-link {
+          color: #001eff;
+          font-size: 18px;
+          font-weight: 900;
+          text-decoration: underline;
+          text-underline-offset: 4px;
+          white-space: nowrap;
+        }
+        @media (max-width: 900px) {
+          .public-notice-card {
+            padding: 28px 22px;
+            border-radius: 22px;
+          }
+          .public-notice-body,
+          .public-fit-grid {
+            grid-template-columns: 1fr;
+          }
+          .public-notice-footer,
+          .public-notice-top {
+            flex-direction: column;
+            align-items: stretch;
+          }
+          .public-info-row {
+            grid-template-columns: 104px 1fr;
+          }
+          .public-fit-head {
+            grid-template-columns: 1fr;
+          }
+        }
         .detail-hero {
           padding: 22px 24px;
           border: 1px solid var(--linear-border);
@@ -4402,6 +4624,203 @@ def render_detail_header(title: str, kicker: str, chips: list[tuple[str, str]]) 
           <div class="detail-kicker">{escape(kicker)}</div>
           <div class="detail-title">{escape(sanitize_display_title(title))}</div>
           <div class="detail-meta-row">{''.join(chip_html)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def extract_period_start(value: object) -> pd.Timestamp:
+    text = clean(value)
+    if not text:
+        return pd.NaT
+    start_text = re.split(r"\s*[~〜-]\s*", text, maxsplit=1)[0].strip()
+    return pd.to_datetime(start_text.replace(".", "-"), errors="coerce")
+
+
+def build_public_d_day(period_value: object) -> str:
+    period_end = extract_period_end(period_value)
+    if pd.isna(period_end):
+        return ""
+    days = int((period_end.normalize() - pd.Timestamp.now().normalize()).days)
+    if days < 0:
+        return "마감"
+    if days == 0:
+        return "D-DAY"
+    return f"D-{days}"
+
+
+def is_recent_notice_date(value: object, *, days: int = 14) -> bool:
+    notice_date = pd.to_datetime(clean(value).replace(".", "-"), errors="coerce")
+    if pd.isna(notice_date):
+        return False
+    age_days = int((pd.Timestamp.now().normalize() - notice_date.normalize()).days)
+    return 0 <= age_days <= days
+
+
+def split_public_tags(value: object, *, limit: int = 3) -> list[str]:
+    text = clean(value)
+    if not text:
+        return []
+    parts = re.split(r"[,/|#\n]+", text)
+    tags = []
+    for part in parts:
+        tag = clean(part)
+        if tag and tag not in tags:
+            tags.append(tag)
+        if len(tags) >= limit:
+            break
+    return tags
+
+
+def public_first_non_empty(row: dict, *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, list):
+            value = ", ".join(clean(item) for item in value if clean(item))
+        value = clean(value)
+        if value:
+            return value
+    return ""
+
+
+def render_public_notice_card(row: dict, *, top_related: dict | None = None, kind: str = "notice") -> None:
+    top_related = top_related or {}
+    merged = {**top_related, **(row or {})}
+    period = public_first_non_empty(merged, "접수기간", "notice_period", "period", "신청기간")
+    budget = extract_budget_summary(
+        public_first_non_empty(
+            merged,
+            "대표예산",
+            "사업비",
+            "예산",
+            "llm_total_budget_text",
+            "total_budget_text",
+            "budget",
+            "llm_per_project_budget_text",
+            "per_project_budget_text",
+        )
+    )
+    title = public_first_non_empty(
+        merged,
+        "llm_project_name" if kind == "opportunity" else "공고명",
+        "project_name",
+        "공고명",
+        "notice_title",
+        "llm_rfp_title",
+        "rfp_title",
+    )
+    notice_title = public_first_non_empty(merged, "공고명", "notice_title")
+    subtitle_parts = [
+        public_first_non_empty(merged, "공고상태", "rcve_status"),
+        public_first_non_empty(merged, "사업명", "notice_title") if kind != "opportunity" else notice_title,
+    ]
+    subtitle = " | ".join(part for part in subtitle_parts if part and part != title)
+    notice_date = public_first_non_empty(merged, "공고일자", "ancm_de", "registered_at")
+    ministry = public_first_non_empty(merged, "소관부처", "ministry", "주관부처")
+    agency = public_first_non_empty(merged, "전문기관명", "전문기관", "agency", "담당부서")
+    org_type = public_first_non_empty(
+        merged,
+        "지원 가능 기관 유형",
+        "지원가능기관유형",
+        "eligible_org_type",
+        "llm_eligible_org_type",
+        "applicant_type",
+    )
+    region = public_first_non_empty(
+        merged,
+        "지원 가능 소재지",
+        "지원가능소재지",
+        "eligible_region",
+        "llm_eligible_region",
+        "region",
+    )
+    sales = public_first_non_empty(
+        merged,
+        "지원 가능 매출액 / 사업연수",
+        "매출액",
+        "사업연수",
+        "eligible_sales",
+        "llm_eligible_sales",
+    )
+    lab = public_first_non_empty(
+        merged,
+        "부설 연구소 필요 유무",
+        "부설연구소",
+        "lab_required",
+        "llm_lab_required",
+    )
+    requirement_values = [org_type, region, sales, lab]
+    requirement_count = sum(1 for value in requirement_values if value and value not in {"-", "-/-"})
+    score = clean(public_first_non_empty(merged, "llm_fit_score", "rfp_score", "대표점수"))
+    if score:
+        try:
+            requirement_count = max(requirement_count, min(4, round(float(score) / 25)))
+        except Exception:
+            pass
+    display_requirement_count = max(0, min(4, requirement_count))
+    progress = max(1, display_requirement_count) * 25
+    d_day = build_public_d_day(period)
+    tags = split_public_tags(public_first_non_empty(merged, "대표키워드", "llm_keywords", "keywords", "keyword"), limit=3)
+
+    info_rows = [
+        ("신청 기간", period),
+        ("지원금", budget),
+        ("부처", ministry),
+        ("전문기관명", agency),
+        ("공고등록일", notice_date),
+    ]
+    fit_rows = [
+        ("지원 가능 기관 유형", org_type or "-"),
+        ("지원 가능 소재지", region or "전국"),
+        ("지원 가능 매출액 / 사업연수", sales or "-/-"),
+        ("부설 연구소 필요 유무", lab or "-"),
+    ]
+    info_html = []
+    for label, value in info_rows:
+        if label == "지원금" and value:
+            value_html = f'<span class="public-budget-highlight">{escape(value)}</span>'
+            value_class = "public-info-value budget"
+        else:
+            value_html = escape(value or "-")
+            value_class = "public-info-value"
+        info_html.append(
+            f'<div class="public-info-row"><div class="public-info-label">{escape(label)}</div><div class="{value_class}">{value_html}</div></div>'
+        )
+    fit_html = "".join(
+        f'<div class="public-fit-box"><div class="public-fit-box-label">{escape(label)}</div><div class="public-fit-box-value">{escape(value)}</div></div>'
+        for label, value in fit_rows
+    )
+    tag_html = "".join(f'<span class="public-tag">{escape(tag)}</span>' for tag in tags)
+    new_badge = '<span class="public-badge new">NEW</span>' if is_recent_notice_date(notice_date) else ""
+    dday_badge = f'<span class="public-badge dday">{escape(d_day)}</span>' if d_day else ""
+
+    st.markdown(
+        f"""
+        <div class="public-notice-card">
+          <div class="public-notice-top">
+            <div>
+              <div class="public-notice-badges">{new_badge}{dday_badge}</div>
+              <div class="public-notice-title">{escape(sanitize_display_title(title))}</div>
+              <div class="public-notice-subtitle">{escape(subtitle)}</div>
+            </div>
+            <div class="public-save-button"><span class="public-save-icon">♡</span><span>저장하기</span></div>
+          </div>
+          <div class="public-notice-divider"></div>
+          <div class="public-notice-body">
+            <div class="public-info-panel">{''.join(info_html)}</div>
+            <div>
+              <div class="public-fit-head">
+                <div class="public-fit-label">요건 충족도 {display_requirement_count}/4</div>
+                <div class="public-fit-bar"><div class="public-fit-bar-fill" style="width:{progress}%"></div></div>
+              </div>
+              <div class="public-fit-grid">{fit_html}</div>
+            </div>
+          </div>
+          <div class="public-notice-footer">
+            <div class="public-tag-row">{tag_html}</div>
+            <a class="public-alert-link" href="#" target="_self">매일 아침 맞춤 공고 알림받기 &gt;</a>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -4916,19 +5335,6 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
     if is_user_scoped_operations_enabled():
         review_caption = "검토 상태는 로그인한 사용자 전용 운영관리 데이터로 저장됩니다."
 
-    render_detail_header(
-        title=clean(row.get("공고명")),
-        kicker=detail_kicker,
-        chips=[
-            (clean(row.get("대표추천도")), "accent"),
-            (f"점수 {clean(row.get('대표점수'))}" if clean(row.get("대표점수")) else "", "neutral"),
-            (clean(row.get("공고상태")), "accent"),
-            (clean(row.get("전문기관") or row.get("담당부서")), "neutral"),
-            (clean(row.get("공고일자")), "neutral"),
-            (f"검토: {clean(row.get('검토 여부') or '미지정')}", "neutral"),
-        ],
-    )
-
     related = find_related_opportunities_for_notice(row, opportunity_df)
     top_related = {}
     if not related.empty:
@@ -4939,6 +5345,8 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
         )
         top_related = related.iloc[0].to_dict()
         row = ensure_notice_analysis_fallback(row, top_related)
+
+    render_public_notice_card(row, top_related=top_related, kind="notice")
 
     top_left, top_right = st.columns([2, 1])
     with top_left:
@@ -5164,23 +5572,7 @@ def render_opportunity_detail_from_row(row: dict) -> None:
     else:
         detail_button_label = "IRIS 상세 바로가기"
 
-    render_detail_header(
-        title=clean(
-            row.get("project_name")
-            or row.get("llm_project_name")
-            or row.get("llm_rfp_title")
-            or row.get("rfp_title")
-            or row.get("notice_title")
-            or row.get("\uacf5\uace0\uba85")
-        ),
-        kicker="Opportunity Master Detail",
-        chips=[
-            (first_non_empty(row, "llm_recommendation", "recommendation"), "accent"),
-            (f"점수 {clean(row.get('llm_fit_score') or row.get('rfp_score'))}", "neutral"),
-            (clean(row.get("agency")), "neutral"),
-            (clean(row.get("ancm_de")), "neutral"),
-        ],
-    )
+    render_public_notice_card(row, kind="opportunity")
 
     top_left, top_right = st.columns([2, 1])
     with top_left:
