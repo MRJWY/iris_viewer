@@ -4199,6 +4199,87 @@ def inject_page_styles() -> None:
           text-underline-offset: 4px;
           white-space: nowrap;
         }
+        .rnd-detail-stack {
+          max-width: 1080px;
+          margin: 0 auto 30px auto;
+        }
+        .rnd-section {
+          padding: 30px 0;
+          border-top: 1px solid #e5e7eb;
+        }
+        .rnd-section:first-child {
+          border-top: 0;
+          padding-top: 0;
+        }
+        .rnd-section-title {
+          color: #111827;
+          font-size: 24px;
+          font-weight: 900;
+          line-height: 1.35;
+          margin: 0 0 18px 0;
+          letter-spacing: 0;
+        }
+        .rnd-info-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 16px 18px;
+        }
+        .rnd-info-item {
+          min-height: 88px;
+          padding: 20px 22px;
+          border: 1px solid #edf0f2;
+          border-radius: 8px;
+          background: #ffffff;
+        }
+        .rnd-info-label {
+          color: #8b949e;
+          font-size: 14px;
+          font-weight: 800;
+          margin-bottom: 8px;
+        }
+        .rnd-info-value {
+          color: #111827;
+          font-size: 18px;
+          font-weight: 800;
+          line-height: 1.55;
+          word-break: keep-all;
+        }
+        .rnd-section-body {
+          color: #1f2937;
+          font-size: 17px;
+          font-weight: 500;
+          line-height: 1.9;
+          white-space: pre-wrap;
+          word-break: keep-all;
+        }
+        .rnd-requirement-list {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px 18px;
+        }
+        .rnd-requirement-item {
+          padding: 20px 22px;
+          border-radius: 8px;
+          background: #fff4f4;
+        }
+        .rnd-requirement-label {
+          color: #ff8f8f;
+          font-size: 14px;
+          font-weight: 900;
+          margin-bottom: 8px;
+        }
+        .rnd-requirement-value {
+          color: #f05f5f;
+          font-size: 18px;
+          font-weight: 900;
+          line-height: 1.6;
+        }
+        @media (max-width: 900px) {
+          .rnd-info-grid,
+          .rnd-requirement-list {
+            grid-template-columns: 1fr;
+          }
+        }
         @media (max-width: 900px) {
           .public-notice-card {
             padding: 28px 22px;
@@ -4827,6 +4908,132 @@ def render_public_notice_card(row: dict, *, top_related: dict | None = None, kin
     )
 
 
+def render_rndcircle_like_sections(row: dict, *, top_related: dict | None = None, kind: str = "notice") -> None:
+    top_related = top_related or {}
+    merged = {**top_related, **(row or {})}
+    period = public_first_non_empty(merged, "접수기간", "notice_period", "period", "신청기간")
+    d_day = build_public_d_day(period)
+    support_type = public_first_non_empty(merged, "지원 유형", "공모유형", "pbofr_type", "project_type") or "연구개발"
+    keywords = split_public_tags(public_first_non_empty(merged, "대표키워드", "llm_keywords", "keywords", "keyword"), limit=8)
+    org_type = public_first_non_empty(merged, "지원 가능 기관 유형", "지원가능기관유형", "eligible_org_type", "llm_eligible_org_type", "applicant_type")
+    region = public_first_non_empty(merged, "지원 가능 소재지", "지원가능소재지", "eligible_region", "llm_eligible_region", "region") or "전국"
+    sales = public_first_non_empty(merged, "지원 가능 매출액 / 사업연수", "매출액", "사업연수", "eligible_sales", "llm_eligible_sales") or "-/-"
+    lab = public_first_non_empty(merged, "부설 연구소 필요 유무", "부설연구소", "lab_required", "llm_lab_required") or "-"
+    total_budget = extract_budget_summary(public_first_non_empty(merged, "사업 규모", "사업비", "대표예산", "llm_total_budget_text", "total_budget_text", "budget"))
+    grant = extract_budget_summary(public_first_non_empty(merged, "지원금", "과제별 예산", "llm_per_project_budget_text", "per_project_budget_text")) or total_budget
+    deadline = extract_period_end(period)
+    deadline_text = deadline.strftime("%Y-%m-%d") if pd.notna(deadline) else ""
+    summary = public_first_non_empty(
+        merged,
+        "과제 요약",
+        "llm_summary",
+        "summary",
+        "대표추천이유",
+        "llm_reason",
+        "reason",
+        "text_preview",
+    )
+    overview = public_first_non_empty(
+        merged,
+        "사업 개요 및 배경",
+        "과제 개요",
+        "llm_concept_and_development",
+        "concept_and_development",
+        "지원필요성(과제 배경)",
+        "support_necessity",
+        "technical_background",
+    )
+    objective = public_first_non_empty(
+        merged,
+        "과제 목표",
+        "llm_application_field",
+        "application_field",
+        "활용분야",
+    )
+    detail = public_first_non_empty(
+        merged,
+        "과제 내용",
+        "지원 내용",
+        "llm_support_plan",
+        "support_plan",
+        "지원기간 및 예산·추진체계",
+        "텍스트 미리보기",
+        "text_preview",
+    )
+    requirement_history = public_first_non_empty(
+        merged,
+        "과제 수행 이력 요건",
+        "기타 지원 조건",
+        "other_requirements",
+        "llm_other_requirements",
+    )
+    contribution = public_first_non_empty(
+        merged,
+        "기관 분담률",
+        "matching_fund",
+        "llm_matching_fund",
+    )
+    extra_detail = public_first_non_empty(
+        merged,
+        "기타 세부 사항",
+        "기타 지원 조건",
+        "llm_requirements",
+        "requirements",
+    )
+
+    info_items = [
+        ("지원 유형", support_type),
+        ("핵심 키워드", " ".join(keywords)),
+        ("사업 규모", total_budget),
+        ("지원금", grant),
+        ("지원 가능 기관", org_type),
+        ("공고 등록일", public_first_non_empty(merged, "공고일자", "ancm_de", "registered_at")),
+        ("공고 마감일", deadline_text),
+        ("신청 기간", f"{d_day}\n{period}" if d_day else period),
+    ]
+    requirements = [
+        ("지원 가능 기관 유형", org_type or "-"),
+        ("지원 가능 소재지", region),
+        ("지원 가능 매출액 / 사업연수", sales),
+        ("부설 연구소 필요 유무", lab),
+    ]
+    detail_items = [
+        ("공모 유형", public_first_non_empty(merged, "공모유형", "pbofr_type")),
+        ("과제 기간", public_first_non_empty(merged, "과제 기간", "project_period", "support_period")),
+        ("사업 규모", total_budget),
+        ("지원금", grant),
+        ("지원 내용", detail),
+        ("기관 분담률", contribution),
+        ("기타 세부 사항", extra_detail),
+    ]
+
+    def info_grid(items: list[tuple[str, str]]) -> str:
+        return "".join(
+            f'<div class="rnd-info-item"><div class="rnd-info-label">{escape(label)}</div><div class="rnd-info-value">{escape(value or "-")}</div></div>'
+            for label, value in items
+            if clean(value)
+        )
+
+    requirement_html = "".join(
+        f'<div class="rnd-requirement-item"><div class="rnd-requirement-label">{escape(label)}</div><div class="rnd-requirement-value">{escape(value or "-")}</div></div>'
+        for label, value in requirements
+    )
+    sections = [
+        f'<div class="rnd-section"><div class="rnd-section-title">주요 정보</div><div class="rnd-info-grid">{info_grid(info_items)}</div></div>',
+    ]
+    if summary:
+        sections.append(f'<div class="rnd-section"><div class="rnd-section-title">과제 요약</div><div class="rnd-section-body">{escape(summary)}</div></div>')
+    sections.append(f'<div class="rnd-section"><div class="rnd-section-title">요건 충족도</div><div class="rnd-requirement-list">{requirement_html}</div></div>')
+    support_requirements = [("기업부설연구소 요건", lab), ("과제 수행 이력 요건", requirement_history)]
+    sections.append(f'<div class="rnd-section"><div class="rnd-section-title">지원 요건</div><div class="rnd-info-grid">{info_grid(support_requirements)}</div></div>')
+    overview_body = "\n\n".join(part for part in [overview, objective] if clean(part))
+    if overview_body:
+        sections.append(f'<div class="rnd-section"><div class="rnd-section-title">과제 개요</div><div class="rnd-section-body">{escape(overview_body)}</div></div>')
+    sections.append(f'<div class="rnd-section"><div class="rnd-section-title">과제 세부 내용</div><div class="rnd-info-grid">{info_grid(detail_items)}</div></div>')
+
+    st.markdown(f'<div class="rnd-detail-stack">{"".join(sections)}</div>', unsafe_allow_html=True)
+
+
 def render_detail_card(title: str, fields: list[tuple[str, str]]) -> None:
     items = []
     for label, value in fields:
@@ -5347,6 +5554,7 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
         row = ensure_notice_analysis_fallback(row, top_related)
 
     render_public_notice_card(row, top_related=top_related, kind="notice")
+    render_rndcircle_like_sections(row, top_related=top_related, kind="notice")
 
     top_left, top_right = st.columns([2, 1])
     with top_left:
@@ -5573,6 +5781,7 @@ def render_opportunity_detail_from_row(row: dict) -> None:
         detail_button_label = "IRIS 상세 바로가기"
 
     render_public_notice_card(row, kind="opportunity")
+    render_rndcircle_like_sections(row, kind="opportunity")
 
     top_left, top_right = st.columns([2, 1])
     with top_left:
