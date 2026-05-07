@@ -20,7 +20,9 @@ structure and routing model as the admin app.
 - `shared_app.py`
   - shared renderer and routing logic copied from the main app
 - `app.py`
-  - thin viewer entrypoint that runs `shared_app.main(app_mode="viewer")`
+  - default admin entrypoint that runs `shared_app.main(app_mode="admin")`
+- `viewer_app.py`
+  - viewer entrypoint that runs `shared_app.main(app_mode="viewer")`
 - `app_config.py`
   - mode/source/page config used by the shared app
 
@@ -55,4 +57,10 @@ Optional:
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
+```
+
+Viewer only:
+
+```bash
+streamlit run viewer_app.py
 ```
