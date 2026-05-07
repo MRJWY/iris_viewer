@@ -107,15 +107,19 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             view_columns=tuple(nipa_view_columns),
         ),
     )
+
     sources = (
         SourceRouteConfig("dashboard", "Dashboard", "dashboard", True, "dashboard"),
         SourceRouteConfig("iris", "IRIS", "notice", False, "iris"),
-        SourceRouteConfig("tipa", "중소기업벤처부", "tipa_current", True, "external", page_configs=tipa_pages),
+        SourceRouteConfig("access_request", "Access Request", "request", False, "access_request"),
+        SourceRouteConfig("admin_requests", "Signup Requests", "requests", False, "admin_requests"),
+        SourceRouteConfig("tipa", "중소기업기술정보진흥원", "tipa_current", True, "external", page_configs=tipa_pages),
         SourceRouteConfig("nipa", "NIPA", "nipa_current", True, "external", page_configs=nipa_pages),
         SourceRouteConfig("proposal", "제안관리", "proposal", False, "proposal"),
         SourceRouteConfig("operations", "운영관리", "operations", True, "operations"),
         SourceRouteConfig("favorites", "관심 공고", "favorites", True, "favorites"),
     )
+
     common_nav_groups = (
         NavGroupConfig(
             "overview",
@@ -130,8 +134,8 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             (
                 NavItemConfig("iris_notice", "IRIS 진행", "iris", "notice"),
                 NavItemConfig("iris_notice_scheduled", "IRIS 예정", "iris", "notice_scheduled"),
-                NavItemConfig("tipa_current", "중소기업벤처부 진행", "tipa", "tipa_current"),
-                NavItemConfig("tipa_scheduled", "중소기업벤처부 예정", "tipa", "tipa_scheduled"),
+                NavItemConfig("tipa_current", "중기부 진행", "tipa", "tipa_current"),
+                NavItemConfig("tipa_scheduled", "중기부 예정", "tipa", "tipa_scheduled"),
                 NavItemConfig("nipa_current", "NIPA 진행", "nipa", "nipa_current"),
                 NavItemConfig("nipa_scheduled", "NIPA 예정", "nipa", "nipa_scheduled"),
             ),
@@ -141,7 +145,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             "추천기회",
             (
                 NavItemConfig("iris_opportunity", "IRIS Opportunity", "iris", "opportunity"),
-                NavItemConfig("tipa_opportunity", "중소기업벤처부 Opportunity", "tipa", "tipa_opportunity"),
+                NavItemConfig("tipa_opportunity", "중기부 Opportunity", "tipa", "tipa_opportunity"),
                 NavItemConfig("nipa_opportunity", "NIPA Opportunity", "nipa", "nipa_opportunity"),
             ),
         ),
@@ -165,19 +169,39 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             "Archive",
             (
                 NavItemConfig("iris_archive", "IRIS Archive", "iris", "notice_archive"),
-                NavItemConfig("tipa_archive", "중소기업벤처부 Archive", "tipa", "tipa_archive"),
+                NavItemConfig("tipa_archive", "중기부 Archive", "tipa", "tipa_archive"),
                 NavItemConfig("nipa_archive", "NIPA Archive", "nipa", "nipa_archive"),
             ),
         ),
     )
+
+    viewer_nav_groups = common_nav_groups + (
+        NavGroupConfig(
+            "support",
+            "Support",
+            (
+                NavItemConfig("access_request", "가입 요청", "access_request", "request"),
+            ),
+        ),
+    )
+    admin_nav_groups = common_nav_groups + (
+        NavGroupConfig(
+            "admin_tools",
+            "Admin",
+            (
+                NavItemConfig("signup_requests", "Signup Requests", "admin_requests", "requests"),
+            ),
+        ),
+    )
+
     if normalized_mode == "viewer":
         return AppModeConfig(
             mode="viewer",
             page_title="Crawler Hub Viewer",
             header_title="Crawler Hub Viewer",
-            header_caption="정부사업 공고 수집 · 추천 · 검토 · 제안관리 대시보드",
+            header_caption="정부사업 공고 수집, 추천, 검토를 한 곳에서 보는 뷰어입니다.",
             supports_summary=False,
-            nav_groups=common_nav_groups,
+            nav_groups=viewer_nav_groups,
             sources=sources,
             default_source="dashboard",
             default_iris_page="notice",
@@ -195,9 +219,9 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
         mode="admin",
         page_title="Crawler Hub Admin",
         header_title="Crawler Hub Admin",
-        header_caption="정부사업 공고 수집 · 추천 · 검토 · 제안관리 대시보드",
+        header_caption="정부사업 공고 수집, 추천, 검토, 제안관리를 한 곳에서 운영합니다.",
         supports_summary=False,
-        nav_groups=common_nav_groups,
+        nav_groups=admin_nav_groups,
         sources=sources,
         default_source="dashboard",
         default_iris_page="notice",
