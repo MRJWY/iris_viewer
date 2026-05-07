@@ -1864,7 +1864,6 @@ def render_signup_requests_source(
 SOURCE_RENDERERS = {
     "dashboard": render_dashboard_source,
     "iris": render_iris_source,
-    "access_request": render_access_request_source,
     "admin_requests": render_signup_requests_source,
     "tipa": render_tipa_source,
     "nipa": render_nipa_source,
@@ -2733,6 +2732,65 @@ def get_auth_account(user_id: str) -> dict[str, str] | None:
     return load_auth_accounts().get(clean(user_id))
 
 
+def find_auth_account_row(*, user_id: str = "", email: str = "") -> tuple[int, list[str], dict[str, str]] | tuple[int, None, None]:
+    ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
+    values = ws.get_all_values()
+    headers = [clean(value) for value in values[0]] if values else AUTH_USER_COLUMNS
+    normalized_user_id = clean(user_id)
+    normalized_email = clean(email).lower()
+
+    for row_index, existing_values in enumerate(values[1:], start=2):
+        existing = {
+            headers[column_index]: clean(existing_values[column_index] if column_index < len(existing_values) else "")
+            for column_index in range(len(headers))
+        }
+        existing_user_id = clean(existing.get("user_id"))
+        existing_email = clean(existing.get("email")).lower()
+        if normalized_user_id and existing_user_id == normalized_user_id:
+            return row_index, headers, existing
+        if normalized_email and existing_email == normalized_email:
+            return row_index, headers, existing
+
+    return 0, None, None
+
+
+def sync_auth_account_status(
+    *,
+    user_id: str = "",
+    email: str = "",
+    status: str,
+    actor: str,
+    display_name: str = "",
+) -> None:
+    row_index, headers, existing = find_auth_account_row(user_id=user_id, email=email)
+    if not row_index or not headers or existing is None:
+        return
+
+    now = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
+    updated = dict(existing)
+    normalized_status = clean(status).lower()
+    updated["status"] = normalized_status or clean(existing.get("status")) or "pending"
+    if clean(display_name):
+        updated["display_name"] = clean(display_name)
+    if clean(email):
+        updated["email"] = clean(email).lower()
+
+    if normalized_status == "approved":
+        updated["approved_at"] = now
+        updated["approved_by"] = clean(actor)
+        updated["rejected_at"] = ""
+        updated["rejected_by"] = ""
+    elif normalized_status == "rejected":
+        updated["rejected_at"] = now
+        updated["rejected_by"] = clean(actor)
+    else:
+        updated["status"] = "pending"
+
+    ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
+    update_worksheet_row(ws, row_index, headers, updated)
+    load_sheet_as_dataframe.clear()
+
+
 def get_current_user_id() -> str:
     user = st.session_state.get("auth_user") or {}
     return clean(user.get("user_id")) if isinstance(user, dict) else ""
@@ -3329,6 +3387,243 @@ def save_signup_request(row: dict[str, object]) -> dict[str, str]:
 
     clear_signup_request_caches()
     return normalized
+
+
+def find_auth_account_row(*, user_id: str = "", email: str = "") -> tuple[int, list[str], dict[str, str]] | tuple[int, None, None]:
+    ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
+    values = ws.get_all_values()
+    headers = [clean(value) for value in values[0]] if values else AUTH_USER_COLUMNS
+    normalized_user_id = clean(user_id)
+    normalized_email = clean(email).lower()
+
+    for row_index, existing_values in enumerate(values[1:], start=2):
+        existing = {
+            headers[column_index]: clean(existing_values[column_index] if column_index < len(existing_values) else "")
+            for column_index in range(len(headers))
+        }
+        if normalized_user_id and clean(existing.get("user_id")) == normalized_user_id:
+            return row_index, headers, existing
+        if normalized_email and clean(existing.get("email")).lower() == normalized_email:
+            return row_index, headers, existing
+    return 0, None, None
+
+
+def sync_auth_account_status(
+    *,
+    user_id: str = "",
+    email: str = "",
+    status: str,
+    actor: str,
+    display_name: str = "",
+) -> None:
+    row_index, headers, existing = find_auth_account_row(user_id=user_id, email=email)
+    if not row_index or not headers or existing is None:
+        return
+
+    ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
+    now = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
+    updated = dict(existing)
+    normalized_status = clean(status).lower() or "pending"
+    updated["status"] = "pending" if normalized_status == "hold" else normalized_status
+    if clean(display_name):
+        updated["display_name"] = clean(display_name)
+    if clean(email):
+        updated["email"] = clean(email).lower()
+
+    if normalized_status == "approved":
+        updated["approved_at"] = now
+        updated["approved_by"] = clean(actor)
+        updated["rejected_at"] = ""
+        updated["rejected_by"] = ""
+    elif normalized_status == "rejected":
+        updated["rejected_at"] = now
+        updated["rejected_by"] = clean(actor)
+
+    update_worksheet_row(ws, row_index, headers, updated)
+    load_sheet_as_dataframe.clear()
+
+
+def submit_signup_request(*, user_id: str, password: str, display_name: str, email: str) -> None:
+    user_id = clean(user_id)
+    password = clean(password)
+    email = clean(email).lower()
+    display_name = clean(display_name) or user_id
+    if not user_id:
+        raise RuntimeError("아이디를 입력해 주세요.")
+    if len(user_id) < 3:
+        raise RuntimeError("아이디는 3자 이상이어야 합니다.")
+    if not re.match(r"^[A-Za-z0-9_.-]+$", user_id):
+        raise RuntimeError("아이디는 영문, 숫자, 밑줄, 점, 하이픈만 사용할 수 있습니다.")
+    if len(password) < 6:
+        raise RuntimeError("비밀번호는 6자 이상이어야 합니다.")
+
+    allowed_domains = load_allowed_email_domains()
+    email_domain = normalize_email_domain(email)
+    if allowed_domains and email_domain not in allowed_domains:
+        raise RuntimeError("허용된 회사 이메일 도메인만 가입 요청할 수 있습니다.")
+    if get_auth_account(user_id):
+        raise RuntimeError("이미 등록됐거나 승인 대기 중인 아이디입니다.")
+
+    existing_requests = get_signup_requests_for_email(email)
+    if not existing_requests.empty:
+        latest_status = clean(existing_requests.iloc[0].get("status")).upper()
+        if latest_status in {"PENDING", "HOLD"}:
+            raise RuntimeError("같은 이메일로 진행 중인 가입 요청이 이미 있습니다.")
+        if latest_status == "APPROVED":
+            raise RuntimeError("이미 승인된 가입 요청이 있습니다.")
+
+    ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
+    timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
+    append_dict_row(
+        ws,
+        {
+            "user_id": user_id,
+            "password_hash": hash_password(password),
+            "display_name": display_name,
+            "email": email,
+            "role": "viewer",
+            "status": "pending",
+            "requested_at": timestamp,
+        },
+        AUTH_USER_COLUMNS,
+    )
+    save_signup_request(
+        {
+            "name": display_name,
+            "email": email,
+            "organization": "",
+            "account_type": "viewer",
+            "request_note": f"requested_user_id={user_id}",
+            "status": "PENDING",
+        }
+    )
+    load_sheet_as_dataframe.clear()
+
+
+def render_signup_request_admin_page() -> None:
+    render_page_header(
+        "Signup Requests",
+        "회원가입 요청을 검토하고 승인 또는 반려 처리합니다.",
+        eyebrow="Admin",
+    )
+    st.caption("로그인 페이지의 가입 요청 탭에서 들어온 요청을 이 화면에서 처리합니다.")
+
+    request_df = load_signup_requests()
+    approved_df = load_approved_users()
+    if request_df.empty:
+        st.info("아직 접수된 회원가입 요청이 없습니다.")
+        return
+
+    pending_count = int(request_df["status"].fillna("").astype(str).str.upper().eq("PENDING").sum())
+    approved_count = int(request_df["status"].fillna("").astype(str).str.upper().eq("APPROVED").sum())
+    rejected_count = int(request_df["status"].fillna("").astype(str).str.upper().eq("REJECTED").sum())
+    hold_count = int(request_df["status"].fillna("").astype(str).str.upper().eq("HOLD").sum())
+    render_metrics(
+        [
+            ("전체 요청", str(len(request_df))),
+            ("대기", str(pending_count)),
+            ("승인", str(approved_count)),
+            ("반려", str(rejected_count)),
+            ("보류", str(hold_count)),
+        ]
+    )
+
+    st.dataframe(
+        request_df[
+            [
+                "requested_at",
+                "name",
+                "email",
+                "organization",
+                "account_type",
+                "status",
+                "reviewed_at",
+                "reviewed_by",
+            ]
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    selection_labels = request_df.apply(
+        lambda row: " | ".join(
+            [
+                clean(row.get("requested_at")) or "-",
+                clean(row.get("status")) or "-",
+                clean(row.get("email")) or clean(row.get("name")) or clean(row.get("request_id")),
+            ]
+        ),
+        axis=1,
+    ).tolist()
+    label_to_request_id = dict(zip(selection_labels, request_df["request_id"].tolist()))
+    selected_label = st.selectbox("검토할 요청", options=selection_labels, key="signup_request_selected_label")
+    selected_request_id = clean(label_to_request_id.get(selected_label))
+    selected_rows = request_df[request_df["request_id"].fillna("").astype(str).str.strip().eq(selected_request_id)]
+    if selected_rows.empty:
+        return
+
+    selected_row = selected_rows.iloc[0].to_dict()
+    existing_registry = get_approved_user_for_request(selected_row)
+    with st.form(f"signup_request_review_form_{selected_request_id}"):
+        current_status = clean(selected_row.get("status")).upper()
+        current_index = SIGNUP_STATUS_OPTIONS.index(current_status) if current_status in SIGNUP_STATUS_OPTIONS else 0
+        status = st.selectbox("처리 상태", options=SIGNUP_STATUS_OPTIONS, index=current_index)
+        admin_note = st.text_area("관리자 메모", value=clean(selected_row.get("admin_note")), height=160)
+        submitted = st.form_submit_button("처리 상태 저장", type="primary", use_container_width=True)
+        if submitted:
+            now = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
+            reviewer = get_current_app_user_key()
+            saved_request = save_signup_request(
+                {
+                    **selected_row,
+                    "status": status,
+                    "admin_note": admin_note,
+                    "reviewed_at": now,
+                    "reviewed_by": reviewer,
+                }
+            )
+            sync_auth_account_status(
+                email=saved_request.get("email", ""),
+                status=status.lower(),
+                actor=reviewer,
+                display_name=saved_request.get("name", ""),
+            )
+            if status == "APPROVED":
+                save_approved_user(
+                    {
+                        **existing_registry,
+                        "request_id": saved_request.get("request_id"),
+                        "name": saved_request.get("name"),
+                        "email": saved_request.get("email"),
+                        "organization": saved_request.get("organization"),
+                        "account_type": saved_request.get("account_type"),
+                        "approved_at": clean(existing_registry.get("approved_at")) or now,
+                        "approved_by": clean(existing_registry.get("approved_by")) or reviewer,
+                        "admin_note": admin_note,
+                    }
+                )
+            st.success("회원가입 요청 상태를 저장했습니다.")
+            st.rerun()
+
+    with st.expander("승인 사용자 레지스트리", expanded=False):
+        if approved_df.empty:
+            st.info("아직 승인 사용자 레지스트리가 비어 있습니다.")
+        else:
+            st.dataframe(
+                approved_df[
+                    [
+                        "approved_at",
+                        "name",
+                        "email",
+                        "organization",
+                        "account_type",
+                        "access_status",
+                        "invitation_status",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 def resolve_notice_source_key(row: dict | None) -> str:

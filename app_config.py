@@ -111,7 +111,6 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
     sources = (
         SourceRouteConfig("dashboard", "Dashboard", "dashboard", True, "dashboard"),
         SourceRouteConfig("iris", "IRIS", "notice", False, "iris"),
-        SourceRouteConfig("access_request", "Access Request", "request", False, "access_request"),
         SourceRouteConfig("admin_requests", "Signup Requests", "requests", False, "admin_requests"),
         SourceRouteConfig("tipa", "중소기업기술정보진흥원", "tipa_current", True, "external", page_configs=tipa_pages),
         SourceRouteConfig("nipa", "NIPA", "nipa_current", True, "external", page_configs=nipa_pages),
@@ -175,15 +174,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
         ),
     )
 
-    viewer_nav_groups = common_nav_groups + (
-        NavGroupConfig(
-            "support",
-            "Support",
-            (
-                NavItemConfig("access_request", "가입 요청", "access_request", "request"),
-            ),
-        ),
-    )
+    viewer_nav_groups = common_nav_groups
     admin_nav_groups = common_nav_groups + (
         NavGroupConfig(
             "admin_tools",
