@@ -4,7 +4,7 @@ import shared_app
 
 
 def main() -> None:
-    shared_app.main(app_mode="admin")
+    shared_app.main(app_mode="viewer")
 
 
 if __name__ == "__main__":
