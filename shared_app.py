@@ -2582,6 +2582,10 @@ def append_dict_row(ws, row: dict[str, object], fallback_headers: list[str]) -> 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_sheet_as_dataframe(sheet_name: str) -> pd.DataFrame:
+    return load_sheet_as_dataframe_uncached(sheet_name)
+
+
+def load_sheet_as_dataframe_uncached(sheet_name: str) -> pd.DataFrame:
     ws = get_worksheet(sheet_name)
     values = ws.get_all_values()
 
@@ -2609,6 +2613,15 @@ def load_sheet_as_dataframe(sheet_name: str) -> pd.DataFrame:
 def load_optional_sheet_as_dataframe(sheet_name: str) -> pd.DataFrame:
     try:
         return load_sheet_as_dataframe(sheet_name)
+    except Exception as exc:
+        if isinstance(exc, gspread.WorksheetNotFound) or "WorksheetNotFound" in str(exc) or "not found" in str(exc).lower():
+            return pd.DataFrame()
+        raise
+
+
+def load_optional_sheet_as_dataframe_uncached(sheet_name: str) -> pd.DataFrame:
+    try:
+        return load_sheet_as_dataframe_uncached(sheet_name)
     except Exception as exc:
         if isinstance(exc, gspread.WorksheetNotFound) or "WorksheetNotFound" in str(exc) or "not found" in str(exc).lower():
             return pd.DataFrame()
@@ -2687,7 +2700,7 @@ def load_notice_comments() -> pd.DataFrame:
 
 def load_auth_user_accounts() -> pd.DataFrame:
     try:
-        df = load_optional_sheet_as_dataframe(get_auth_user_sheet_name())
+        df = load_optional_sheet_as_dataframe_uncached(get_auth_user_sheet_name())
     except Exception:
         return pd.DataFrame(columns=AUTH_USER_COLUMNS)
     if df.empty:
@@ -3220,7 +3233,7 @@ def normalize_signup_request_row(row: dict[str, object]) -> dict[str, str]:
 
 @st.cache_data(ttl=30, show_spinner=False)
 def load_signup_requests() -> pd.DataFrame:
-    df = load_optional_sheet_as_dataframe(get_signup_request_sheet_name())
+    df = load_optional_sheet_as_dataframe_uncached(get_signup_request_sheet_name())
     if df.empty:
         return pd.DataFrame(columns=SIGNUP_REQUEST_COLUMNS)
 
@@ -3282,7 +3295,7 @@ def normalize_approved_user_row(row: dict[str, object]) -> dict[str, str]:
 
 @st.cache_data(ttl=30, show_spinner=False)
 def load_approved_users() -> pd.DataFrame:
-    df = load_optional_sheet_as_dataframe(get_approved_user_sheet_name())
+    df = load_optional_sheet_as_dataframe_uncached(get_approved_user_sheet_name())
     if df.empty:
         return pd.DataFrame(columns=APPROVED_USER_COLUMNS)
 
