@@ -3218,7 +3218,7 @@ def normalize_signup_request_row(row: dict[str, object]) -> dict[str, str]:
     return normalized
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def load_signup_requests() -> pd.DataFrame:
     df = load_optional_sheet_as_dataframe(get_signup_request_sheet_name())
     if df.empty:
@@ -3280,7 +3280,7 @@ def normalize_approved_user_row(row: dict[str, object]) -> dict[str, str]:
     return normalized
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def load_approved_users() -> pd.DataFrame:
     df = load_optional_sheet_as_dataframe(get_approved_user_sheet_name())
     if df.empty:
@@ -3507,6 +3507,12 @@ def render_signup_request_admin_page() -> None:
         eyebrow="Admin",
     )
     st.caption("로그인 페이지의 가입 요청 탭에서 들어온 요청을 이 화면에서 처리합니다.")
+    action_col, _ = st.columns([1, 5])
+    with action_col:
+        if st.button("새로고침", key="signup_request_admin_refresh", use_container_width=True):
+            clear_signup_request_caches()
+            clear_approved_user_caches()
+            st.rerun()
 
     request_df = load_signup_requests()
     approved_df = load_approved_users()
