@@ -250,7 +250,7 @@ def clean(value) -> str:
 
 def render_iris_page(page_key: str, datasets: dict[str, pd.DataFrame]) -> None:
     if page_key == "opportunity":
-        render_opportunity_page(datasets["opportunity"])
+        render_opportunity_page_aligned(datasets["opportunity"])
     elif page_key == "summary":
         render_summary_page(datasets["summary"], datasets["opportunity"])
     elif page_key == "notice":
@@ -7449,7 +7449,7 @@ def render_notice_page_with_scope(
         render_notice_detail_from_row(selected_row, opportunity_df)
         return
 
-    render_section_label("Notice List")
+    render_section_label("Notice Queue")
     st.markdown(
         f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
         unsafe_allow_html=True,
@@ -7548,6 +7548,109 @@ def render_opportunity_page(
         action_col, info_col = st.columns([1, 5])
         with action_col:
             if st.button("테이블로 돌아가기", key=f"{page_key}_back_to_table", use_container_width=True):
+                switch_to_table(page_key)
+        with info_col:
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
+        render_opportunity_detail_from_row(selected_row)
+        return
+
+    render_section_label("RFP Analysis List")
+    st.markdown(
+        f'<div class="page-note">공고명이나 과제명을 클릭하면 상세 공고와 RFP 분석 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
+        unsafe_allow_html=True,
+    )
+    render_clickable_table(
+        filtered,
+        OPPORTUNITY_PREFERRED_COLUMNS,
+        page_key=page_key,
+        id_column="_row_id",
+    )
+
+
+def render_opportunity_page_aligned(
+    df: pd.DataFrame,
+    *,
+    page_key: str | None = None,
+    title: str | None = None,
+    archive: bool = False,
+) -> None:
+    page_key = page_key or ("opportunity_archive" if archive else "opportunity")
+    title = title or ("RFP Archive" if archive else "RFP Queue")
+    subtitle = "사업공고 내 지원 가능한 RFP를 추천합니다."
+    if archive:
+        subtitle = "보관 대상으로 분류된 RFP 분석 결과를 가볍게 탐색할 수 있습니다."
+    render_page_header(title, subtitle, eyebrow="RFP")
+
+    source_df = ensure_opportunity_row_ids(df)
+    filtered = filter_archived_opportunity_rows(source_df) if archive else filter_current_opportunity_rows(source_df)
+    if filtered.empty:
+        st.info("표시할 RFP가 없습니다.")
+        return
+
+    working = filtered.copy()
+    working["_queue_recommendation"] = series_from_candidates(working, ["추천여부", "recommendation"]).fillna("").astype(str).str.strip()
+    working["_queue_status"] = series_from_candidates(working, ["공고상태", "status", "rcve_status"]).fillna("").astype(str).apply(normalize_notice_status_label)
+    working["_queue_deadline_sort"] = series_from_candidates(working, ["접수기간", "period"]).apply(extract_period_end)
+    working["_queue_project_sort"] = series_from_candidates(working, ["해당 과제명", "project_name", "llm_project_name"]).fillna("").astype(str).str.strip()
+
+    recommendation_options = sorted(
+        [value for value in working["_queue_recommendation"].unique().tolist() if clean(value)]
+    )
+    status_options = sorted(
+        [value for value in working["_queue_status"].unique().tolist() if clean(value)]
+    )
+
+    st.markdown('<div class="queue-shell-note">추천 상태와 공고 상태만 빠르게 좁히고, 결과 행을 눌러 상세 공고와 RFP 내용을 바로 확인할 수 있게 구성했습니다.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="queue-filter-label">요건 / 필터</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="queue-filter-help">추천 상태와 공고 상태만 빠르게 좁혀서 분석할 RFP를 확인합니다.</div>',
+        unsafe_allow_html=True,
+    )
+    filter_cols = st.columns(2)
+    with filter_cols[0]:
+        selected_recommendation = st.multiselect(
+            "추천 상태",
+            options=recommendation_options,
+            default=[],
+            key=f"{page_key}_filter_recommendation_aligned",
+            placeholder="전체",
+        )
+    with filter_cols[1]:
+        selected_status = st.multiselect(
+            "공고 상태",
+            options=status_options,
+            default=[],
+            key=f"{page_key}_filter_status_aligned",
+            placeholder="전체",
+        )
+
+    filtered = working.copy()
+    if selected_recommendation:
+        filtered = filtered[filtered["_queue_recommendation"].isin(selected_recommendation)]
+    if selected_status:
+        filtered = filtered[filtered["_queue_status"].isin(selected_status)]
+
+    filtered = filtered.sort_values(
+        by=["rfp_score", "_queue_deadline_sort", "_queue_project_sort"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+
+    render_metrics(
+        [
+            ("RFP 분석 건수", str(len(filtered))),
+            ("추천 건수", str(int((filtered["recommendation"] == "추천").sum()) if "recommendation" in filtered.columns else 0)),
+            ("평균 점수", safe_mean(filtered["rfp_score"]) if "rfp_score" in filtered.columns and len(filtered) > 0 else "-"),
+            ("공고 수", str(filtered["notice_id"].nunique() if "notice_id" in filtered.columns else 0)),
+        ]
+    )
+
+    current_view, selected_document_id = get_route_state(page_key)
+    if current_view == "detail":
+        selected_row = get_row_by_column_value(source_df, "_row_id", selected_document_id)
+        action_col, info_col = st.columns([1, 5])
+        with action_col:
+            if st.button("테이블로 돌아가기", key=f"{page_key}_back_to_table_aligned", use_container_width=True):
                 switch_to_table(page_key)
         with info_col:
             st.markdown('<div class="page-note">브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)

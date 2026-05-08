@@ -216,7 +216,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             default_iris_page="opportunity",
             iris_tabs=(
                 ("opportunity", "RFP Queue"),
-                ("notice", "진행 공고"),
+                ("notice", "Notice Queue"),
                 ("notice_scheduled", "예정 공고"),
                 ("notice_archive", "Archive"),
             ),
