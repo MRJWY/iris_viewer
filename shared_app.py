@@ -5300,7 +5300,7 @@ def inject_page_styles() -> None:
           background: #ff9f0a;
         }
         .public-save-button {
-          display: inline-flex;
+          display: none;
           align-items: center;
           gap: 8px;
           height: 48px;
@@ -6736,6 +6736,59 @@ def render_review_editor(
                 st.error(f"저장 실패: {exc}")
 
 
+def save_review_status(
+    *,
+    notice_id: str,
+    review_status: str,
+    source_key: str = "iris",
+    notice_title: str = "",
+) -> None:
+    if is_user_scoped_operations_enabled():
+        upsert_user_review_status(
+            user_id=get_current_operation_scope_key(),
+            source_key=source_key,
+            notice_id=notice_id,
+            notice_title=notice_title,
+            review_status=review_status,
+        )
+    elif clean(source_key) == "tipa":
+        update_mss_review_status(notice_id, review_status)
+    elif clean(source_key) == "nipa":
+        update_nipa_review_status(notice_id, review_status)
+    else:
+        update_notice_review_status(notice_id, review_status)
+
+
+def render_favorite_scrap_button(
+    *,
+    notice_id: str,
+    current_value: str,
+    source_key: str = "iris",
+    notice_title: str = "",
+    button_key: str,
+) -> None:
+    if not get_bool_env("ENABLE_REVIEW_EDIT", default=True):
+        return
+
+    normalized_value = clean(current_value)
+    is_favorite = normalized_value == FAVORITE_REVIEW_STATUS
+    button_label = "★ 관심공고 저장됨" if is_favorite else "☆ 관심공고 스크랩"
+
+    if st.button(button_label, key=button_key, use_container_width=True):
+        try:
+            next_value = "" if is_favorite else FAVORITE_REVIEW_STATUS
+            save_review_status(
+                notice_id=notice_id,
+                review_status=next_value,
+                source_key=source_key,
+                notice_title=notice_title,
+            )
+            st.success("관심공고에서 제거했습니다." if is_favorite else "관심공고로 저장했습니다.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"관심공고 저장 실패: {exc}")
+
+
 def render_notice_comments(row: dict, section_key: str) -> None:
     notice_id = clean(row.get("공고ID") or row.get("notice_id"))
     notice_title = clean(row.get("공고명") or row.get("notice_title"))
@@ -6867,7 +6920,15 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
             ],
         )
 
-    action_left, action_right = st.columns([1, 2])
+    action_favorite, action_left, action_right = st.columns([1.15, 1, 1.85])
+    with action_favorite:
+        render_favorite_scrap_button(
+            notice_id=clean(row.get("怨듦퀬ID") or row.get("notice_id")),
+            current_value=clean(row.get("寃???щ?") or row.get("review_status")),
+            source_key=source_key,
+            notice_title=clean(row.get("怨듦퀬紐?") or row.get("notice_title")),
+            button_key=f"favorite_notice_{clean(row.get('怨듦퀬ID') or row.get('notice_id'))}",
+        )
     with action_left:
         detail_link = resolve_external_detail_link(row, source_key=source_key)
         if detail_link:
@@ -7089,7 +7150,15 @@ def render_opportunity_detail_from_row(row: dict) -> None:
             ],
         )
 
-    action_left, action_right = st.columns([1, 2])
+    action_favorite, action_left, action_right = st.columns([1.15, 1, 1.85])
+    with action_favorite:
+        render_favorite_scrap_button(
+            notice_id=clean(row.get("notice_id")),
+            current_value=clean(row.get("review_status")),
+            source_key=source_key,
+            notice_title=clean(row.get("notice_title")),
+            button_key=f"favorite_opportunity_{clean(row.get('notice_id'))}",
+        )
     with action_left:
         detail_link = resolve_external_detail_link(row, source_key=source_key)
         if detail_link:
