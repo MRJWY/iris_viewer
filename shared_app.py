@@ -3180,6 +3180,7 @@ def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, 
                 submitted = st.form_submit_button("로그인", use_container_width=True)
             if submitted:
                 account = accounts.get(clean(user_id))
+                account = refresh_account_status_from_signup_request(account)
                 if account and clean(account.get("status")).lower() == "approved" and verify_password(password, account.get("password_hash", "")):
                     st.session_state["auth_user"] = {
                         "user_id": clean(account.get("user_id")),
@@ -3254,6 +3255,31 @@ def clear_signup_request_caches() -> None:
     load_signup_requests.clear()
 
 
+def extract_requested_user_id(request_note: object) -> str:
+    note_text = clean(request_note)
+    if not note_text:
+        return ""
+    match = re.search(r"(?:^|\\s)requested_user_id=([A-Za-z0-9_.-]+)", note_text)
+    return clean(match.group(1)) if match else ""
+
+
+def load_signup_requests_live() -> pd.DataFrame:
+    df = load_optional_sheet_as_dataframe_uncached(get_signup_request_sheet_name())
+    if df.empty:
+        return pd.DataFrame(columns=SIGNUP_REQUEST_COLUMNS)
+
+    working = df.copy()
+    for column in SIGNUP_REQUEST_COLUMNS:
+        if column not in working.columns:
+            working[column] = ""
+    working["requested_at_sort"] = pd.to_datetime(working["requested_at"], errors="coerce")
+    return working.sort_values(
+        by=["requested_at_sort", "email", "name"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+
+
 def get_signup_requests_for_email(email: str) -> pd.DataFrame:
     normalized_email = clean(email).lower()
     if not normalized_email:
@@ -3264,6 +3290,66 @@ def get_signup_requests_for_email(email: str) -> pd.DataFrame:
     return request_df[
         request_df["email"].fillna("").astype(str).str.strip().str.lower().eq(normalized_email)
     ].copy()
+
+
+def get_latest_signup_request_for_account(account: dict[str, str] | None) -> dict[str, str]:
+    account = account or {}
+    email = clean(account.get("email")).lower()
+    user_id = clean(account.get("user_id"))
+    if not email and not user_id:
+        return {}
+
+    request_df = load_signup_requests_live()
+    if request_df.empty:
+        return {}
+
+    working = request_df.copy()
+    email_mask = pd.Series(False, index=working.index)
+    user_id_mask = pd.Series(False, index=working.index)
+    if email:
+        email_mask = working["email"].fillna("").astype(str).str.strip().str.lower().eq(email)
+    if user_id:
+        user_ids = working["request_note"].apply(extract_requested_user_id)
+        user_id_mask = user_ids.eq(user_id)
+
+    matched = working[email_mask | user_id_mask].copy()
+    if matched.empty:
+        return {}
+    return matched.iloc[0].to_dict()
+
+
+def refresh_account_status_from_signup_request(account: dict[str, str] | None) -> dict[str, str] | None:
+    account = account or {}
+    current_user_id = clean(account.get("user_id"))
+    current_email = clean(account.get("email")).lower()
+    if not current_user_id and not current_email:
+        return account
+
+    latest_request = get_latest_signup_request_for_account(account)
+    request_status = clean(latest_request.get("status")).upper()
+    status_map = {
+        "APPROVED": "approved",
+        "REJECTED": "rejected",
+        "PENDING": "pending",
+        "HOLD": "hold",
+    }
+    target_status = status_map.get(request_status, "")
+    if not target_status:
+        return account
+
+    current_status = clean(account.get("status")).lower()
+    if current_status == ("pending" if target_status == "hold" else target_status):
+        return account
+
+    sync_auth_account_status(
+        user_id=current_user_id or extract_requested_user_id(latest_request.get("request_note")),
+        email=current_email or clean(latest_request.get("email")).lower(),
+        status=target_status,
+        actor="signup-request-sync",
+        display_name=clean(account.get("display_name")) or clean(latest_request.get("name")),
+    )
+    refreshed_account = get_auth_account(current_user_id) if current_user_id else None
+    return refreshed_account or account
 
 
 def normalize_approved_user_row(row: dict[str, object]) -> dict[str, str]:
