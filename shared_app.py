@@ -5388,9 +5388,15 @@ def inject_page_styles() -> None:
           margin-bottom: 18px;
         }
         .public-fit-label {
+          display: none;
           color: #ff6666;
           font-size: 16px;
           font-weight: 800;
+        }
+        .public-fit-head,
+        .public-fit-grid,
+        .public-fit-box {
+          display: none;
         }
         .public-fit-bar {
           height: 19px;
@@ -5456,6 +5462,7 @@ def inject_page_styles() -> None:
           text-underline-offset: 3px;
         }
         .public-alert-link {
+          display: none;
           color: #001eff;
           font-size: 18px;
           font-weight: 900;
@@ -6147,10 +6154,6 @@ def render_public_notice_card(row: dict, *, top_related: dict | None = None, kin
         info_html.append(
             f'<div class="public-info-row"><div class="public-info-label">{escape(label)}</div><div class="{value_class}">{value_html}</div></div>'
         )
-    fit_html = "".join(
-        f'<div class="public-fit-box"><div class="public-fit-box-label">{escape(label)}</div><div class="public-fit-box-value">{escape(value)}</div></div>'
-        for label, value in fit_rows
-    )
     tag_html = "".join(f'<span class="public-tag">{escape(tag)}</span>' for tag in tags)
     new_badge = '<span class="public-badge new">NEW</span>' if is_recent_notice_date(notice_date) else ""
     dday_badge = f'<span class="public-badge dday">{escape(d_day)}</span>' if d_day else ""
@@ -6169,17 +6172,9 @@ def render_public_notice_card(row: dict, *, top_related: dict | None = None, kin
           <div class="public-notice-divider"></div>
           <div class="public-notice-body">
             <div class="public-info-panel">{''.join(info_html)}</div>
-            <div>
-              <div class="public-fit-head">
-                <div class="public-fit-label">요건 충족도 {display_requirement_count}/4</div>
-                <div class="public-fit-bar"><div class="public-fit-bar-fill" style="width:{progress}%"></div></div>
-              </div>
-              <div class="public-fit-grid">{fit_html}</div>
-            </div>
           </div>
           <div class="public-notice-footer">
             <div class="public-tag-row">{tag_html}</div>
-            <a class="public-alert-link" href="#" target="_self">매일 아침 맞춤 공고 알림받기 &gt;</a>
           </div>
         </div>
         """,
@@ -6839,7 +6834,6 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
         row = ensure_notice_analysis_fallback(row, top_related)
 
     render_public_notice_card(row, top_related=top_related, kind="notice")
-    render_rndcircle_like_sections(row, top_related=top_related, kind="notice")
 
     top_left, top_right = st.columns([2, 1])
     with top_left:
@@ -7066,7 +7060,6 @@ def render_opportunity_detail_from_row(row: dict) -> None:
         detail_button_label = "IRIS 상세 바로가기"
 
     render_public_notice_card(row, kind="opportunity")
-    render_rndcircle_like_sections(row, kind="opportunity")
 
     top_left, top_right = st.columns([2, 1])
     with top_left:
