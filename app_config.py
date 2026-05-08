@@ -174,7 +174,35 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
         ),
     )
 
-    viewer_nav_groups = common_nav_groups
+    viewer_nav_groups = (
+        NavGroupConfig(
+            "workspace",
+            "Workspace",
+            (
+                NavItemConfig("rfp_queue", "RFP Queue", "iris", "opportunity"),
+                NavItemConfig("notice_queue", "Notice Queue", "iris", "notice"),
+            ),
+        ),
+        NavGroupConfig(
+            "external",
+            "External",
+            (
+                NavItemConfig("tipa_current", "중기부 진행", "tipa", "tipa_current"),
+                NavItemConfig("tipa_opportunity", "중기부 Opportunity", "tipa", "tipa_opportunity"),
+                NavItemConfig("nipa_current", "NIPA 진행", "nipa", "nipa_current"),
+                NavItemConfig("nipa_opportunity", "NIPA Opportunity", "nipa", "nipa_opportunity"),
+            ),
+        ),
+        NavGroupConfig(
+            "archive",
+            "Archive",
+            (
+                NavItemConfig("iris_archive", "IRIS Archive", "iris", "notice_archive"),
+                NavItemConfig("tipa_archive", "중기부 Archive", "tipa", "tipa_archive"),
+                NavItemConfig("nipa_archive", "NIPA Archive", "nipa", "nipa_archive"),
+            ),
+        ),
+    )
     admin_nav_groups = common_nav_groups + (
         NavGroupConfig(
             "admin_tools",
@@ -194,12 +222,12 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             supports_summary=False,
             nav_groups=viewer_nav_groups,
             sources=sources,
-            default_source="dashboard",
-            default_iris_page="notice",
+            default_source="iris",
+            default_iris_page="opportunity",
             iris_tabs=(
+                ("opportunity", "Opportunity"),
                 ("notice", "진행 공고"),
                 ("notice_scheduled", "예정 공고"),
-                ("opportunity", "Opportunity"),
                 ("notice_archive", "Archive"),
             ),
             valid_iris_pages=frozenset({"opportunity", "notice", "notice_scheduled", "notice_archive"}),
