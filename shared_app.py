@@ -48,15 +48,9 @@ NOTICE_PREFERRED_COLUMNS = [
     "접수기간",
     "전문기관",
     "공고명",
-    "상세링크",
-    "사업비",
     "공고상태",
     "검토 여부",
-    "공고ID",
-    "소관부처",
-    "공고번호",
-    "상태키",
-    "is_current",
+    "상세링크",
 ]
 
 PENDING_PREFERRED_COLUMNS = [
@@ -75,14 +69,16 @@ PENDING_PREFERRED_COLUMNS = [
 
 OPPORTUNITY_PREFERRED_COLUMNS = [
     "공고일자",
-    "공고번호",
+    "접수기간",
     "전문기관명",
     "공고명",
-    "상세링크",
+    "해당 과제명",
     "추천여부",
+    "점수",
+    "예산",
     "공고상태",
-    "접수기간",
     "검토여부",
+    "상세링크",
 ]
 
 SUMMARY_PREFERRED_COLUMNS = [
@@ -4111,6 +4107,12 @@ def enrich_opportunity_df(df: pd.DataFrame) -> pd.DataFrame:
     enriched["접수기간"] = series_from_candidates(enriched, ["접수기간", "period"])
     enriched["검토여부"] = series_from_candidates(enriched, ["검토여부", "검토 여부", "review_status"])
     enriched["상세링크"] = series_from_candidates(enriched, ["상세링크", "detail_link"])
+    enriched["해당 과제명"] = series_from_candidates(enriched, ["해당 과제명", "과제명", "project_name", "llm_project_name"])
+    enriched["점수"] = series_from_candidates(enriched, ["점수", "rfp_score", "llm_fit_score"])
+    enriched["예산"] = series_from_candidates(
+        enriched,
+        ["예산", "budget", "llm_total_budget_text", "total_budget_text"],
+    ).fillna("").astype(str).apply(extract_budget_summary)
 
     enriched["notice_title"] = series_from_candidates(enriched, ["공고명", "notice_title"])
     enriched["project_name"] = series_from_candidates(enriched, ["과제명", "project_name"])
@@ -5641,7 +5643,7 @@ def inject_page_styles() -> None:
         }
         .list-table {
           width: 100%;
-          min-width: 980px;
+          min-width: 760px;
           border-collapse: collapse;
           table-layout: auto;
         }
@@ -5651,15 +5653,15 @@ def inject_page_styles() -> None:
           font-size: 13px;
           font-weight: 510;
           text-align: left;
-          padding: 12px 14px;
+          padding: 12px 10px;
           border-bottom: 1px solid var(--linear-border-subtle);
           white-space: nowrap;
         }
         .list-table tbody td {
-          padding: 10px 14px;
+          padding: 9px 10px;
           border-bottom: 1px solid rgba(15, 23, 42, 0.05);
           vertical-align: middle;
-          height: 52px;
+          height: 48px;
           color: var(--linear-text-secondary);
         }
         .list-table thead th,
@@ -6417,29 +6419,35 @@ def render_clickable_table(
         return
 
     column_widths = {
-        "공고일자": "110px",
-        "공고번호": "190px",
-        "전문기관": "180px",
-        "전문기관명": "180px",
-        "공고명": "720px",
-        "notice_title": "720px",
-        "해당 과제명": "520px",
-        "project_name": "520px",
-        "공고상태": "120px",
-        "접수기간": "240px",
-        "추천여부": "110px",
-        "추천도 및 점수": "140px",
-        "예산": "180px",
-        "검토 여부": "110px",
-        "검토여부": "110px",
+        "공고일자": "92px",
+        "공고번호": "132px",
+        "전문기관": "126px",
+        "전문기관명": "126px",
+        "공고명": "280px",
+        "notice_title": "280px",
+        "해당 과제명": "280px",
+        "project_name": "280px",
+        "공고상태": "92px",
+        "접수기간": "156px",
+        "추천여부": "84px",
+        "추천도": "84px",
+        "추천도 및 점수": "96px",
+        "점수": "84px",
+        "예산": "122px",
+        "budget": "122px",
+        "검토 여부": "84px",
+        "검토여부": "84px",
+        "상세링크": "76px",
+        "detail_link": "76px",
     }
     compact_limits = {
-        "공고명": 120,
-        "notice_title": 120,
-        "해당 과제명": 90,
-        "project_name": 90,
-        "접수기간": 48,
-        "예산": 40,
+        "공고명": 56,
+        "notice_title": 56,
+        "해당 과제명": 52,
+        "project_name": 52,
+        "접수기간": 26,
+        "예산": 24,
+        "budget": 24,
     }
 
     internal_link_columns = {"공고명", "notice_title", "해당 과제명", "project_name"}
@@ -7462,11 +7470,11 @@ def render_opportunity_page(
     archive: bool = False,
 ) -> None:
     page_key = page_key or ("opportunity_archive" if archive else "opportunity")
-    title = title or ("Opportunity Archive" if archive else "Opportunity")
-    subtitle = "RFP 기준 후보 과제를 점수와 추천도 중심으로 확인합니다."
+    title = title or ("RFP Archive" if archive else "RFP Queue")
+    subtitle = "RFP 분석 기준 후보 과제를 추천도와 예산 중심으로 확인합니다."
     if archive:
-        subtitle = "보관 대상으로 분류된 Opportunity를 모아 봅니다."
-    render_page_header(title, subtitle, eyebrow="Opportunity")
+        subtitle = "보관 대상으로 분류된 RFP 분석 결과를 모아 봅니다."
+    render_page_header(title, subtitle, eyebrow="RFP")
 
     source_df = ensure_opportunity_row_ids(df)
     filtered = filter_archived_opportunity_rows(source_df) if archive else filter_current_opportunity_rows(source_df)
@@ -7526,7 +7534,7 @@ def render_opportunity_page(
 
     render_metrics(
         [
-            ("Opportunity 수", str(len(filtered))),
+            ("RFP 분석 건수", str(len(filtered))),
             ("추천 건수", str(int((filtered["recommendation"] == "추천").sum()) if "recommendation" in filtered.columns else 0)),
             ("평균 점수", safe_mean(filtered["rfp_score"]) if "rfp_score" in filtered.columns and len(filtered) > 0 else "-"),
             ("공고 수", str(filtered["notice_id"].nunique() if "notice_id" in filtered.columns else 0)),
@@ -7546,9 +7554,9 @@ def render_opportunity_page(
         render_opportunity_detail_from_row(selected_row)
         return
 
-    render_section_label("Opportunity List")
+    render_section_label("RFP Analysis List")
     st.markdown(
-        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
+        f'<div class="page-note">공고명이나 과제명을 클릭하면 상세 공고와 RFP 분석 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
         unsafe_allow_html=True,
     )
     render_clickable_table(

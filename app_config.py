@@ -184,16 +184,6 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             ),
         ),
         NavGroupConfig(
-            "external",
-            "External",
-            (
-                NavItemConfig("tipa_current", "중기부 진행", "tipa", "tipa_current"),
-                NavItemConfig("tipa_opportunity", "중기부 Opportunity", "tipa", "tipa_opportunity"),
-                NavItemConfig("nipa_current", "NIPA 진행", "nipa", "nipa_current"),
-                NavItemConfig("nipa_opportunity", "NIPA Opportunity", "nipa", "nipa_opportunity"),
-            ),
-        ),
-        NavGroupConfig(
             "archive",
             "Archive",
             (
@@ -225,7 +215,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             default_source="iris",
             default_iris_page="opportunity",
             iris_tabs=(
-                ("opportunity", "Opportunity"),
+                ("opportunity", "RFP Queue"),
                 ("notice", "진행 공고"),
                 ("notice_scheduled", "예정 공고"),
                 ("notice_archive", "Archive"),
