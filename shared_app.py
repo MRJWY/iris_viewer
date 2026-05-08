@@ -4826,9 +4826,11 @@ def inject_page_styles() -> None:
           color: var(--linear-text);
         }
         .main .block-container {
-          max-width: 1440px;
+          max-width: min(1600px, calc(100vw - 2rem));
           padding-top: 1.25rem;
           padding-bottom: 3rem;
+          padding-left: clamp(0.85rem, 2vw, 1.8rem);
+          padding-right: clamp(0.85rem, 2vw, 1.8rem);
         }
         h1 {
           color: var(--linear-text) !important;
@@ -5341,15 +5343,15 @@ def inject_page_styles() -> None:
         }
         .public-notice-body {
           display: grid;
-          grid-template-columns: minmax(360px, 0.82fr) minmax(420px, 1.18fr);
+          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
           gap: 40px;
           align-items: stretch;
         }
         .public-info-panel {
           background: #fafafa;
           border-radius: 6px;
-          padding: 31px 36px;
-          min-height: 278px;
+          padding: clamp(18px, 2vw, 31px) clamp(18px, 2.5vw, 36px);
+          min-height: 0;
         }
         .public-info-row {
           display: grid;
@@ -5597,7 +5599,7 @@ def inject_page_styles() -> None:
           letter-spacing: -0.05em;
           color: var(--linear-text);
           margin-bottom: 16px;
-          max-width: 980px;
+          max-width: 100%;
         }
         .detail-meta-row {
           display: flex;
@@ -5727,9 +5729,9 @@ def inject_page_styles() -> None:
         }
         .list-table {
           width: 100%;
-          min-width: 760px;
+          min-width: 100%;
           border-collapse: collapse;
-          table-layout: auto;
+          table-layout: fixed;
         }
         .list-table thead th {
           background: #f8fafc;
@@ -5739,7 +5741,8 @@ def inject_page_styles() -> None:
           text-align: left;
           padding: 12px 10px;
           border-bottom: 1px solid var(--linear-border-subtle);
-          white-space: nowrap;
+          white-space: normal;
+          word-break: keep-all;
         }
         .list-table tbody td {
           padding: 9px 10px;
@@ -5747,6 +5750,8 @@ def inject_page_styles() -> None:
           vertical-align: middle;
           height: 48px;
           color: var(--linear-text-secondary);
+          white-space: normal;
+          word-break: break-word;
         }
         .list-table thead th,
         .list-table tbody td {
@@ -5803,7 +5808,7 @@ def inject_page_styles() -> None:
         .list-cell-empty {
           display: block;
           color: var(--linear-text-secondary);
-          white-space: nowrap;
+          white-space: normal;
           overflow: hidden;
           text-overflow: ellipsis;
         }
@@ -5959,6 +5964,31 @@ def inject_page_styles() -> None:
           white-space: nowrap;
           padding-left: 8px;
         }
+        @media (max-width: 1200px) {
+          [data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap;
+          }
+          [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+            min-width: 0 !important;
+          }
+        }
+        @media (max-width: 980px) {
+          [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+            flex: 1 1 100% !important;
+            width: 100% !important;
+          }
+          .main .block-container {
+            max-width: calc(100vw - 1rem);
+            padding-left: 0.7rem;
+            padding-right: 0.7rem;
+          }
+          .list-table-wrap {
+            overflow-x: visible;
+          }
+          .list-table {
+            min-width: 0;
+          }
+        }
         @media (max-width: 900px) {
           h1 {
             font-size: 2.1rem !important;
@@ -5968,6 +5998,29 @@ def inject_page_styles() -> None:
           }
           .dashboard-kpi-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+        @media (max-width: 640px) {
+          .page-header-title {
+            font-size: 18px;
+          }
+          .page-header-subtitle,
+          .page-note {
+            font-size: 12px;
+          }
+          .public-notice-card,
+          .detail-card,
+          .dashboard-rank-row {
+            border-radius: 16px;
+          }
+          .list-table thead th,
+          .list-table tbody td {
+            padding: 8px 7px;
+            font-size: 12px;
+          }
+          .faux-tab {
+            min-width: 0;
+            flex: 1 1 calc(50% - 8px);
           }
         }
         </style>
@@ -6540,7 +6593,7 @@ def render_clickable_table(
             width_style = ""
             if column in column_widths:
                 width_style = (
-                    f" style=\"min-width:{column_widths[column]};max-width:{column_widths[column]};\""
+                    f" style=\"width:{column_widths[column]};max-width:{column_widths[column]};\""
                 )
             full_value = escape(sanitize_display_text(column, row.get(column)))
             if column in {"상세링크", "detail_link"}:
