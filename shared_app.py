@@ -1920,7 +1920,8 @@ def render_selected_source(
     source_datasets: dict[str, object] | None,
     show_internal_tabs: bool = True,
 ) -> None:
-    renderer = SOURCE_RENDERERS.get(source_config.renderer_key if source_config else source_key)
+    renderer_lookup_key = source_config.renderer_key if source_config else source_key
+    renderer = SOURCE_RENDERERS.get(renderer_lookup_key) or SOURCE_RENDERERS.get(source_key)
     if renderer is None:
         fallback_config = source_config or SourceRouteConfig("iris", "IRIS", mode_config.default_iris_page, False, "iris")
         render_iris_source(fallback_config, mode_config, datasets, show_internal_tabs=show_internal_tabs)
