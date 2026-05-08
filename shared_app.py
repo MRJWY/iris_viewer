@@ -2916,7 +2916,10 @@ def load_user_review_statuses(user_id: str) -> pd.DataFrame:
     if not user_id:
         return pd.DataFrame(columns=USER_REVIEW_COLUMNS)
 
-    df = load_optional_sheet_as_dataframe(get_user_review_sheet_name())
+    try:
+        df = load_optional_sheet_as_dataframe(get_user_review_sheet_name())
+    except Exception:
+        return pd.DataFrame(columns=USER_REVIEW_COLUMNS)
     if df.empty:
         return pd.DataFrame(columns=USER_REVIEW_COLUMNS)
 
@@ -2973,7 +2976,10 @@ def apply_user_review_statuses(
     if not user_id:
         return datasets, source_datasets
 
-    user_reviews_df = load_user_review_statuses(user_id)
+    try:
+        user_reviews_df = load_user_review_statuses(user_id)
+    except Exception:
+        return datasets, source_datasets
     if user_reviews_df.empty:
         return datasets, source_datasets
 
