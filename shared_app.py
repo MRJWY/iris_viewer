@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import os
 import re
+import time
 import base64
 import uuid
 from html import escape
@@ -246,6 +247,47 @@ def clean(value) -> str:
     except Exception:
         pass
     return str(value).strip()
+
+
+def is_retryable_gspread_api_error(exc: Exception) -> bool:
+    api_error_cls = getattr(getattr(gspread, "exceptions", None), "APIError", None)
+    if api_error_cls is None or not isinstance(exc, api_error_cls):
+        return False
+
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    response_text = ""
+    if response is not None:
+        response_text = clean(getattr(response, "text", "")) or clean(response)
+    message = f"{response_text} {clean(exc)}".lower()
+    if status_code in {429, 500, 502, 503, 504}:
+        return True
+    return any(
+        marker in message
+        for marker in [
+            "quota",
+            "rate limit",
+            "resource exhausted",
+            "backend error",
+            "internal error",
+            "try again later",
+        ]
+    )
+
+
+def run_gspread_call(operation, *args, **kwargs):
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            return operation(*args, **kwargs)
+        except Exception as exc:
+            last_error = exc
+            if not is_retryable_gspread_api_error(exc) or attempt == 2:
+                raise
+            time.sleep(1.0 * (attempt + 1))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Google Sheets call failed without an explicit error.")
 
 
 def render_iris_page(page_key: str, datasets: dict[str, pd.DataFrame]) -> None:
@@ -2529,8 +2571,8 @@ def get_worksheet(sheet_name: str):
     sheet_id = get_env("GOOGLE_SHEET_ID")
     if not sheet_id:
         raise RuntimeError("GOOGLE_SHEET_ID is not set.")
-    sh = gc.open_by_key(sheet_id)
-    return sh.worksheet(sheet_name)
+    sh = run_gspread_call(gc.open_by_key, sheet_id)
+    return run_gspread_call(sh.worksheet, sheet_name)
 
 
 @st.cache_resource(show_spinner=False)
@@ -2539,27 +2581,28 @@ def get_spreadsheet():
     sheet_id = get_env("GOOGLE_SHEET_ID")
     if not sheet_id:
         raise RuntimeError("GOOGLE_SHEET_ID is not set.")
-    return gc.open_by_key(sheet_id)
+    return run_gspread_call(gc.open_by_key, sheet_id)
 
 
 def get_or_create_worksheet(sheet_name: str, headers: list[str], rows: int = 1000, cols: int | None = None):
     sh = get_spreadsheet()
     try:
-        ws = sh.worksheet(sheet_name)
+        ws = run_gspread_call(sh.worksheet, sheet_name)
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=sheet_name, rows=rows, cols=cols or len(headers))
-        ws.update([headers])
+        ws = run_gspread_call(sh.add_worksheet, title=sheet_name, rows=rows, cols=cols or len(headers))
+        run_gspread_call(ws.update, [headers])
         return ws
 
-    values = ws.get_all_values()
+    values = run_gspread_call(ws.get_all_values)
     if not values:
-        ws.update([headers])
+        run_gspread_call(ws.update, [headers])
         return ws
 
     header = [clean(x) for x in values[0]]
     missing_headers = [column for column in headers if column not in header]
     if missing_headers:
-        ws.update(
+        run_gspread_call(
+            ws.update,
             range_name=f"A1:{chr(64 + len(header) + len(missing_headers))}1",
             values=[header + missing_headers],
         )
@@ -2567,13 +2610,17 @@ def get_or_create_worksheet(sheet_name: str, headers: list[str], rows: int = 100
 
 
 def get_worksheet_header(ws) -> list[str]:
-    values = ws.get_all_values()
+    values = run_gspread_call(ws.get_all_values)
     return [clean(x) for x in values[0]] if values else []
 
 
 def append_dict_row(ws, row: dict[str, object], fallback_headers: list[str]) -> None:
     header = get_worksheet_header(ws) or fallback_headers
-    ws.append_row([clean(row.get(column)) for column in header], value_input_option="USER_ENTERED")
+    run_gspread_call(
+        ws.append_row,
+        [clean(row.get(column)) for column in header],
+        value_input_option="USER_ENTERED",
+    )
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -2583,7 +2630,7 @@ def load_sheet_as_dataframe(sheet_name: str) -> pd.DataFrame:
 
 def load_sheet_as_dataframe_uncached(sheet_name: str) -> pd.DataFrame:
     ws = get_worksheet(sheet_name)
-    values = ws.get_all_values()
+    values = run_gspread_call(ws.get_all_values)
 
     if not values:
         return pd.DataFrame()
@@ -2673,7 +2720,8 @@ def column_number_to_name(column_number: int) -> str:
 
 def update_worksheet_row(ws, row_number: int, headers: list[str], row: dict[str, str]) -> None:
     end_column = column_number_to_name(len(headers))
-    ws.update(
+    run_gspread_call(
+        ws.update,
         range_name=f"A{row_number}:{end_column}{row_number}",
         values=[[row.get(column, "") for column in headers]],
         value_input_option="USER_ENTERED",
@@ -2694,6 +2742,7 @@ def load_notice_comments() -> pd.DataFrame:
     return working.sort_values(by=["created_at_sort"], ascending=False, na_position="last")
 
 
+@st.cache_data(ttl=30, show_spinner=False)
 def load_auth_user_accounts() -> pd.DataFrame:
     try:
         df = load_optional_sheet_as_dataframe_uncached(get_auth_user_sheet_name())
@@ -2743,7 +2792,7 @@ def get_auth_account(user_id: str) -> dict[str, str] | None:
 
 def find_auth_account_row(*, user_id: str = "", email: str = "") -> tuple[int, list[str], dict[str, str]] | tuple[int, None, None]:
     ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
-    values = ws.get_all_values()
+    values = run_gspread_call(ws.get_all_values)
     headers = [clean(value) for value in values[0]] if values else AUTH_USER_COLUMNS
     normalized_user_id = clean(user_id)
     normalized_email = clean(email).lower()
@@ -2798,6 +2847,7 @@ def sync_auth_account_status(
     ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
     update_worksheet_row(ws, row_index, headers, updated)
     load_sheet_as_dataframe.clear()
+    load_auth_user_accounts.clear()
 
 
 def get_current_user_id() -> str:
@@ -3010,7 +3060,7 @@ def delete_notice_comment(comment_id: str) -> None:
         raise RuntimeError("삭제할 댓글 ID가 없습니다.")
 
     ws = get_worksheet(get_comment_sheet_name())
-    values = ws.get_all_values()
+    values = run_gspread_call(ws.get_all_values)
     if not values:
         raise RuntimeError("댓글 이력 시트가 비어 있습니다.")
 
@@ -3022,7 +3072,7 @@ def delete_notice_comment(comment_id: str) -> None:
     for row_index, sheet_row in enumerate(values[1:], start=2):
         current_comment_id = clean(sheet_row[comment_id_col] if comment_id_col < len(sheet_row) else "")
         if current_comment_id == comment_id:
-            ws.delete_rows(row_index)
+            run_gspread_call(ws.delete_rows, row_index)
             load_sheet_as_dataframe.clear()
             load_notice_comments.clear()
             load_app_datasets.clear()
@@ -3048,7 +3098,7 @@ def upsert_user_review_status(
         raise RuntimeError("공고ID가 없어 검토 여부를 저장할 수 없습니다.")
 
     ws = get_or_create_worksheet(get_user_review_sheet_name(), USER_REVIEW_COLUMNS, rows=1000, cols=len(USER_REVIEW_COLUMNS))
-    values = ws.get_all_values()
+    values = run_gspread_call(ws.get_all_values)
     header = [clean(x) for x in values[0]] if values else USER_REVIEW_COLUMNS.copy()
 
     def col_index(column: str) -> int | None:
@@ -3295,7 +3345,10 @@ def get_latest_signup_request_for_account(account: dict[str, str] | None) -> dic
     if not email and not user_id:
         return {}
 
-    request_df = load_signup_requests_live()
+    try:
+        request_df = load_signup_requests_live()
+    except Exception:
+        request_df = load_signup_requests()
     if request_df.empty:
         return {}
 
@@ -3405,7 +3458,7 @@ def save_approved_user(row: dict[str, object]) -> dict[str, str]:
         rows=1000,
         cols=len(APPROVED_USER_COLUMNS),
     )
-    values = ws.get_all_values()
+    values = run_gspread_call(ws.get_all_values)
     headers = [clean(value) for value in values[0]] if values else APPROVED_USER_COLUMNS
     normalized = normalize_approved_user_row(row)
 
@@ -3430,7 +3483,7 @@ def save_approved_user(row: dict[str, object]) -> dict[str, str]:
     if target_row_number:
         update_worksheet_row(ws, target_row_number, headers, normalized)
     else:
-        ws.append_row([normalized[column] for column in headers], value_input_option="USER_ENTERED")
+        run_gspread_call(ws.append_row, [normalized[column] for column in headers], value_input_option="USER_ENTERED")
 
     clear_approved_user_caches()
     return normalized
@@ -3460,7 +3513,7 @@ def save_signup_request(row: dict[str, object]) -> dict[str, str]:
         rows=1000,
         cols=len(SIGNUP_REQUEST_COLUMNS),
     )
-    values = ws.get_all_values()
+    values = run_gspread_call(ws.get_all_values)
     headers = [clean(value) for value in values[0]] if values else SIGNUP_REQUEST_COLUMNS
     normalized = normalize_signup_request_row(row)
 
@@ -3478,7 +3531,7 @@ def save_signup_request(row: dict[str, object]) -> dict[str, str]:
     if target_row_number:
         update_worksheet_row(ws, target_row_number, headers, normalized)
     else:
-        ws.append_row([normalized[column] for column in headers], value_input_option="USER_ENTERED")
+        run_gspread_call(ws.append_row, [normalized[column] for column in headers], value_input_option="USER_ENTERED")
 
     clear_signup_request_caches()
     return normalized
@@ -3486,7 +3539,7 @@ def save_signup_request(row: dict[str, object]) -> dict[str, str]:
 
 def find_auth_account_row(*, user_id: str = "", email: str = "") -> tuple[int, list[str], dict[str, str]] | tuple[int, None, None]:
     ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
-    values = ws.get_all_values()
+    values = run_gspread_call(ws.get_all_values)
     headers = [clean(value) for value in values[0]] if values else AUTH_USER_COLUMNS
     normalized_user_id = clean(user_id)
     normalized_email = clean(email).lower()
@@ -3536,6 +3589,7 @@ def sync_auth_account_status(
 
     update_worksheet_row(ws, row_index, headers, updated)
     load_sheet_as_dataframe.clear()
+    load_auth_user_accounts.clear()
 
 
 def submit_signup_request(*, user_id: str, password: str, display_name: str, email: str) -> None:
@@ -3593,6 +3647,7 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
         }
     )
     load_sheet_as_dataframe.clear()
+    load_auth_user_accounts.clear()
 
 
 def render_signup_request_admin_page() -> None:
@@ -3941,7 +3996,7 @@ def update_notice_review_status(notice_id: str, review_status: str) -> None:
 
     notice_master_sheet = get_env("NOTICE_MASTER_SHEET", "IRIS_NOTICE_MASTER")
     ws = get_worksheet(notice_master_sheet)
-    values = ws.get_all_values()
+    values = run_gspread_call(ws.get_all_values)
     if not values:
         raise RuntimeError("IRIS_NOTICE_MASTER 시트가 비어 있습니다.")
 
@@ -3982,7 +4037,7 @@ def update_mss_review_status(notice_id: str, review_status: str) -> None:
         except Exception:
             continue
 
-        values = ws.get_all_values()
+        values = run_gspread_call(ws.get_all_values)
         if not values:
             continue
 
@@ -4026,7 +4081,7 @@ def update_nipa_review_status(notice_id: str, review_status: str) -> None:
         except Exception:
             continue
 
-        values = ws.get_all_values()
+        values = run_gspread_call(ws.get_all_values)
         if not values:
             continue
 
