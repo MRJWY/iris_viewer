@@ -8666,6 +8666,7 @@ def main(app_mode: str = "viewer"):
     )
     inject_page_styles()
     inject_opportunity_detail_alignment_styles()
+    inject_viewer_layout_styles()
     require_login(mode_config)
     render_workspace_header(mode_config)
 
@@ -10088,3 +10089,267 @@ def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
 
 # END ADMIN ALIGNMENT OVERRIDES
 
+# BEGIN VIEWER LAYOUT OVERRIDES
+
+def inject_viewer_layout_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"],
+        section[data-testid="stSidebar"],
+        [data-testid="collapsedControl"] {
+          display: none !important;
+        }
+        .notice-queue-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.65rem;
+          margin-top: 1rem;
+        }
+        .notice-queue-row {
+          display: grid;
+          grid-template-columns: 96px minmax(0, 1fr) 240px;
+          align-items: center;
+          gap: 1rem;
+          padding: 1rem 1.1rem;
+          border-radius: 18px;
+          border: 1px solid var(--border);
+          background: var(--surface);
+          text-decoration: none !important;
+          box-shadow: var(--shadow);
+        }
+        .notice-queue-row:hover {
+          border-color: var(--border-strong);
+          transform: translateY(-1px);
+        }
+        .notice-queue-date {
+          color: var(--text-muted);
+          font-size: 0.9rem;
+          font-weight: 800;
+        }
+        .notice-queue-title {
+          color: var(--text-strong);
+          font-size: 1rem;
+          font-weight: 850;
+          line-height: 1.45;
+        }
+        .notice-queue-period {
+          color: var(--text-muted);
+          font-size: 0.92rem;
+          font-weight: 700;
+          text-align: right;
+        }
+        @media (max-width: 980px) {
+          .notice-queue-row {
+            grid-template-columns: 1fr;
+          }
+          .notice-queue-period {
+            text-align: left;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def apply_multiselect_filter(df: pd.DataFrame, column: str, label: str, key: str) -> pd.DataFrame:
+    del column, label, key
+    return df
+
+
+def render_sidebar_search(key: str = "sidebar_search") -> str:
+    del key
+    return ""
+
+
+def render_notice_filter_sidebar(
+    key_prefix: str,
+    *,
+    current_only_default: bool = True,
+    status_default: str = "??",
+    show_current_only: bool = True,
+    show_status_scope: bool = True,
+) -> tuple[str, bool, str]:
+    del key_prefix, show_current_only, show_status_scope
+    return "", current_only_default, status_default
+
+
+def build_crawled_notice_collection(
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+
+    def append_frame(df: pd.DataFrame, *, source_key: str, source_label: str, scope: str) -> None:
+        if df is None or df.empty:
+            return
+        normalized = normalize_favorite_notice_df(df, source_key=source_key, source_label=source_label)
+        if normalized.empty:
+            return
+        normalized["_notice_scope"] = scope
+        normalized["_collection_id"] = normalized.apply(
+            lambda row: f"{source_key}::{scope}::{clean(row.get('??ID'))}",
+            axis=1,
+        )
+        frames.append(normalized)
+
+    append_frame(datasets.get("notice_current", pd.DataFrame()), source_key="iris", source_label="IRIS", scope="current")
+    append_frame(datasets.get("pending", pd.DataFrame()), source_key="iris", source_label="IRIS", scope="scheduled")
+    append_frame(datasets.get("notice_archive", pd.DataFrame()), source_key="iris", source_label="IRIS", scope="archive")
+
+    source_datasets = source_datasets or {}
+    append_frame(source_datasets.get("mss_current", pd.DataFrame()), source_key="tipa", source_label="MSS", scope="current")
+    append_frame(source_datasets.get("mss_past", pd.DataFrame()), source_key="tipa", source_label="MSS", scope="archive")
+    append_frame(source_datasets.get("nipa_current", pd.DataFrame()), source_key="nipa", source_label="NIPA", scope="current")
+    append_frame(source_datasets.get("nipa_past", pd.DataFrame()), source_key="nipa", source_label="NIPA", scope="archive")
+
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(frames, ignore_index=True)
+    if "source_key" not in combined.columns:
+        combined["source_key"] = series_from_candidates(combined, ["source_key", "_source_key"])
+    else:
+        fallback_source = series_from_candidates(combined, ["source_key", "_source_key"])
+        combined["source_key"] = combined["source_key"].where(
+            combined["source_key"].fillna("").astype(str).str.strip().ne(""),
+            fallback_source,
+        )
+    combined = combined.drop_duplicates(subset=["_collection_id"], keep="first")
+    return combined.sort_values(
+        by=["_sort_date", "source_label", "???"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+
+
+def render_crawled_notice_rows(rows: pd.DataFrame, *, key_prefix: str, limit: int = 30) -> None:
+    del key_prefix
+    if rows.empty:
+        st.info("??? ??? ????.")
+        return
+
+    row_html: list[str] = []
+    for _, row in rows.head(limit).iterrows():
+        notice_date = compact_table_value(row.get("????"), max_chars=14) or "-"
+        title = compact_table_value(row.get("???"), max_chars=72) or "-"
+        period = compact_table_value(row.get("????"), max_chars=36) or "-"
+        href = build_route_href("notice", clean(row.get("_collection_id")))
+        row_html.append(
+            (
+                f'<a class="notice-queue-row" href="{escape(href, quote=True)}" target="_self">'
+                f'<div class="notice-queue-date">{escape(notice_date)}</div>'
+                f'<div class="notice-queue-title">{escape(title)}</div>'
+                f'<div class="notice-queue-period">{escape(period)}</div>'
+                '</a>'
+            )
+        )
+
+    st.markdown(f'<div class="notice-queue-list">{"".join(row_html)}</div>', unsafe_allow_html=True)
+
+
+def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
+    source_df = build_crawled_notice_collection(datasets, source_datasets)
+
+    current_view, selected_id = get_route_state("notice")
+    if current_view == "detail":
+        selected_row = get_row_by_column_value(source_df, "_collection_id", selected_id)
+        back_col, info_col = st.columns([1, 5])
+        with back_col:
+            if st.button("????", key="notice_back_to_table", use_container_width=True):
+                switch_to_table("notice")
+        with info_col:
+            st.markdown('<div class="page-note">?? ?? ???? ??? ?? ?????.</div>', unsafe_allow_html=True)
+        render_notice_detail_from_row(selected_row, datasets["opportunity_all"])
+        return
+
+    render_page_header(
+        "Notice Queue",
+        "IRIS, MSS, NIPA?? ?? ??? ? ??? ?????.",
+        eyebrow="Notices",
+    )
+    if source_df.empty:
+        st.info("?? ??? ?? ??? ????.")
+        return
+
+    iris_rows = source_df[source_df["source_key"].eq("iris") & source_df["_notice_scope"].isin(["current", "scheduled"])].copy()
+    mss_rows = source_df[source_df["source_key"].eq("tipa") & source_df["_notice_scope"].eq("current")].copy()
+    nipa_rows = source_df[source_df["source_key"].eq("nipa") & source_df["_notice_scope"].eq("current")].copy()
+    archive_rows = source_df[source_df["_notice_scope"].eq("archive")].copy()
+    favorite_rows = source_df[source_df["????"].fillna("").astype(str).str.strip().eq(FAVORITE_REVIEW_STATUS)].copy()
+
+    render_metrics(
+        [
+            ("?? ??", str(len(source_df))),
+            ("IRIS", str(len(iris_rows))),
+            ("MSS", str(len(mss_rows))),
+            ("NIPA", str(len(nipa_rows))),
+            ("??/??", str(len(archive_rows))),
+        ]
+    )
+
+    tab_iris, tab_mss, tab_nipa, tab_archive, tab_favorites = st.tabs(["IRIS", "MSS", "NIPA", "Archive", "Favorites"])
+    with tab_iris:
+        render_crawled_notice_rows(iris_rows, key_prefix="notice_iris")
+    with tab_mss:
+        render_crawled_notice_rows(mss_rows, key_prefix="notice_mss")
+    with tab_nipa:
+        render_crawled_notice_rows(nipa_rows, key_prefix="notice_nipa")
+    with tab_archive:
+        render_crawled_notice_rows(archive_rows, key_prefix="notice_archive")
+    with tab_favorites:
+        render_crawled_notice_rows(favorite_rows, key_prefix="notice_favorites")
+
+
+def render_opportunity_page(df: pd.DataFrame, *, page_key: str | None = None, title: str | None = None, archive: bool = False) -> None:
+    return render_opportunity_page_aligned(df, page_key=page_key, title=title, archive=archive)
+
+
+def render_iris_source(
+    source_config: SourceRouteConfig,
+    mode_config: AppModeConfig,
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None = None,
+    *,
+    show_internal_tabs: bool = True,
+) -> None:
+    del source_config
+    raw_page_key = normalize_route_page_key(get_query_param("page"))
+    current_page_key = raw_page_key or mode_config.default_iris_page
+    current_view = get_query_param("view") or "table"
+
+    if current_page_key not in mode_config.valid_iris_pages:
+        st.query_params.clear()
+        st.query_params.update(with_auth_params({
+            "source": "iris",
+            "page": mode_config.default_iris_page,
+            "view": "table",
+        }))
+        st.rerun()
+
+    if not st.session_state.get("_initial_page_redirect_done"):
+        st.session_state["_initial_page_redirect_done"] = True
+        if current_view == "table" and not raw_page_key:
+            st.query_params.clear()
+            st.query_params.update(with_auth_params({
+                "source": "iris",
+                "page": mode_config.default_iris_page,
+                "view": "table",
+            }))
+            st.rerun()
+
+    if show_internal_tabs:
+        current_page_key = render_page_tabs(
+            current_page_key,
+            list(mode_config.iris_tabs),
+            key=mode_config.iris_tab_key,
+        )
+
+    if current_page_key == "notice":
+        render_notice_queue_page(datasets, source_datasets)
+        return
+
+    render_iris_page(current_page_key, datasets)
+
+# END VIEWER LAYOUT OVERRIDES
