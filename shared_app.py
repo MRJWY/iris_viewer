@@ -292,7 +292,7 @@ def run_gspread_call(operation, *args, **kwargs):
 
 def render_iris_page(page_key: str, datasets: dict[str, pd.DataFrame]) -> None:
     if page_key == "opportunity":
-        render_opportunity_page_aligned(datasets["opportunity"])
+        render_opportunity_page(datasets["opportunity"])
     elif page_key == "summary":
         render_summary_page(datasets["summary"], datasets["opportunity"])
     elif page_key == "notice":
@@ -3224,16 +3224,42 @@ def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, 
     _, center_col, _ = st.columns([1.2, 1, 1.2])
     with center_col:
         st.title(mode_config.header_title)
-        st.caption("계정으로 로그인하면 운영관리와 검토 상태가 사용자별로 분리됩니다.")
-        login_tab, signup_tab = st.tabs(["로그인", "가입 요청"])
-        with login_tab:
+        st.caption("같은 이메일 도메인을 가진 사용자끼리는 댓글, 관심공고, 검토 상태를 함께 공유합니다.")
+        if mode_config.mode == "viewer":
+            login_tab, signup_tab = st.tabs(["로그인", "가입 요청"])
+            with login_tab:
+                with st.form("login_form"):
+                    user_id = st.text_input("아이디")
+                    password = st.text_input("비밀번호", type="password")
+                    submitted = st.form_submit_button("로그인", use_container_width=True)
+                if submitted:
+                    account = accounts.get(clean(user_id))
+                    if account and clean(account.get("status")).lower() == "approved" and verify_password(password, account.get("password_hash", "")):
+                        st.session_state["auth_user"] = {
+                            "user_id": clean(account.get("user_id")),
+                            "display_name": clean(account.get("display_name")),
+                            "email": clean(account.get("email")),
+                            "role": clean(account.get("role")) or "viewer",
+                        }
+                        token = encode_auth_token(account.get("user_id", ""))
+                        st.session_state["auth_token"] = token
+                        replace_query_params(with_auth_params(get_query_params_dict()))
+                        st.rerun()
+                    elif account and clean(account.get("status")).lower() == "pending":
+                        st.warning("아직 활성화되지 않은 계정입니다. 관리자에게 활성화 상태를 확인해 주세요.")
+                    elif account and clean(account.get("status")).lower() == "rejected":
+                        st.error("사용이 중지된 계정입니다. 관리자에게 문의해 주세요.")
+                    else:
+                        st.error("아이디 또는 비밀번호를 확인해 주세요.")
+            with signup_tab:
+                render_signup_form()
+        else:
             with st.form("login_form"):
                 user_id = st.text_input("아이디")
                 password = st.text_input("비밀번호", type="password")
                 submitted = st.form_submit_button("로그인", use_container_width=True)
             if submitted:
                 account = accounts.get(clean(user_id))
-                account = refresh_account_status_from_signup_request(account)
                 if account and clean(account.get("status")).lower() == "approved" and verify_password(password, account.get("password_hash", "")):
                     st.session_state["auth_user"] = {
                         "user_id": clean(account.get("user_id")),
@@ -3246,13 +3272,11 @@ def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, 
                     replace_query_params(with_auth_params(get_query_params_dict()))
                     st.rerun()
                 elif account and clean(account.get("status")).lower() == "pending":
-                    st.warning("가입 요청 승인 대기 중입니다.")
+                    st.warning("아직 활성화되지 않은 계정입니다. 관리자에게 활성화 상태를 확인해 주세요.")
                 elif account and clean(account.get("status")).lower() == "rejected":
-                    st.error("가입 요청이 거절된 계정입니다.")
+                    st.error("사용이 중지된 계정입니다. 관리자에게 문의해 주세요.")
                 else:
                     st.error("아이디 또는 비밀번호를 확인해 주세요.")
-        with signup_tab:
-            render_signup_form()
 
 
 def require_login(mode_config: AppModeConfig) -> None:
@@ -4724,13 +4748,17 @@ def render_notice_filter_sidebar(
 def render_page_header(title: str, subtitle: str, *, eyebrow: str | None = None) -> None:
     eyebrow_html = ""
     if clean(eyebrow):
-        eyebrow_html = f'<div class="page-eyebrow">{escape(clean(eyebrow))}</div>'
+        eyebrow_html = f'<div class="page-shell-eyebrow">{escape(clean(eyebrow))}</div>'
     st.markdown(
         (
-            '<div class="page-header-block">'
+            '<div class="page-shell-header">'
+            '<div class="page-shell-header-row">'
+            '<div class="page-shell-header-copy">'
             f"{eyebrow_html}"
-            f'<div class="page-header-title">{escape(clean(title))}</div>'
-            f'<div class="page-header-subtitle">{escape(clean(subtitle))}</div>'
+            f'<div class="page-shell-title">{escape(clean(title))}</div>'
+            f'<div class="page-shell-subtitle">{escape(clean(subtitle))}</div>'
+            '</div>'
+            '</div>'
             "</div>"
         ),
         unsafe_allow_html=True,
@@ -5006,12 +5034,24 @@ def inject_page_styles() -> None:
         [data-testid="stVerticalBlockBorderWrapper"] {
           border-radius: var(--linear-radius-lg);
         }
-        .page-header-block {
+        .page-header-block,
+        .page-shell-header {
           margin: 0 0 22px 0;
           padding: 0 0 18px 0;
           border-bottom: 1px solid var(--linear-border-subtle);
         }
+        .page-shell-header-row {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 1rem;
+        }
+        .page-shell-header-copy {
+          min-width: 0;
+          flex: 1 1 auto;
+        }
         .page-eyebrow,
+        .page-shell-eyebrow,
         .section-label {
           font-size: 11px;
           font-weight: 510;
@@ -5020,24 +5060,145 @@ def inject_page_styles() -> None:
           letter-spacing: 0.07em;
           margin-bottom: 8px;
         }
-        .page-header-title {
+        .page-header-title,
+        .page-shell-title {
           color: var(--linear-text);
           font-size: 20px;
-          font-weight: 590;
-          letter-spacing: -0.02em;
+          font-weight: 650;
+          letter-spacing: -0.03em;
           margin-bottom: 4px;
+          line-height: 1.2;
         }
-        .page-header-subtitle {
+        .page-header-subtitle,
+        .page-shell-subtitle {
           color: var(--linear-text-faint);
           font-size: 13px;
           font-weight: 400;
           letter-spacing: -0.01em;
+          line-height: 1.55;
         }
         .page-note {
           color: var(--linear-text-muted);
           font-size: 12px;
           font-family: ui-monospace, "SF Mono", Menlo, monospace;
           margin: 10px 0 12px 0;
+        }
+        .queue-list-shell {
+          display: flex;
+          flex-direction: column;
+          gap: 0.9rem;
+        }
+        .queue-list-link {
+          display: block;
+          color: inherit;
+          text-decoration: none !important;
+        }
+        .queue-list-link:visited,
+        .queue-list-link:hover,
+        .queue-list-link:active,
+        .queue-list-link *,
+        .queue-list-link:hover * {
+          text-decoration: none !important;
+        }
+        .queue-card {
+          background: #ffffff;
+          border: 1px solid var(--linear-border);
+          border-radius: 20px;
+          padding: 1.15rem 1.2rem;
+          box-shadow: var(--linear-shadow);
+        }
+        .queue-list-link:hover .queue-card {
+          border-color: rgba(15, 23, 42, 0.18);
+          background: #fbfdff;
+          transform: translateY(-1px);
+        }
+        .queue-list-card {
+          transition: border-color 120ms ease, transform 120ms ease, background-color 120ms ease;
+        }
+        .queue-list-card-title {
+          color: var(--linear-text);
+          font-size: 1.08rem;
+          line-height: 1.38;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+          margin-bottom: 0.45rem;
+        }
+        .queue-list-card-subtitle {
+          color: var(--linear-text-muted);
+          font-size: 0.92rem;
+          line-height: 1.52;
+          margin-bottom: 0.85rem;
+        }
+        .queue-list-card-meta {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 0.8rem;
+          margin-bottom: 0.85rem;
+        }
+        .queue-list-card-meta-item {
+          background: rgba(15, 23, 42, 0.02);
+          border: 1px solid var(--linear-border-subtle);
+          border-radius: 14px;
+          padding: 0.72rem 0.8rem;
+        }
+        .queue-list-card-meta-label {
+          color: var(--linear-text-muted);
+          font-size: 0.78rem;
+          font-weight: 600;
+          margin-bottom: 0.24rem;
+        }
+        .queue-list-card-meta-value {
+          color: var(--linear-text);
+          font-size: 0.94rem;
+          font-weight: 650;
+          line-height: 1.4;
+        }
+        .queue-list-card-reason {
+          color: var(--linear-text-secondary);
+          font-size: 0.94rem;
+          line-height: 1.62;
+        }
+        .queue-badge-row,
+        .detail-badge-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+          margin-bottom: 0.95rem;
+        }
+        .queue-badge,
+        .detail-badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 0.4rem 0.75rem;
+          border-radius: 999px;
+          font-size: 0.84rem;
+          font-weight: 650;
+          line-height: 1;
+        }
+        .badge-green { background: rgba(16, 185, 129, 0.12); color: #0f9f6e; }
+        .badge-blue { background: rgba(94, 106, 210, 0.12); color: var(--linear-accent-bg); }
+        .badge-rose { background: rgba(248, 113, 113, 0.14); color: #d64b4b; }
+        .badge-amber { background: rgba(245, 158, 11, 0.16); color: #c27b09; }
+        .badge-slate { background: rgba(15, 23, 42, 0.06); color: var(--linear-text-muted); }
+        .queue-shell-note {
+          color: var(--linear-text-muted);
+          font-size: 0.94rem;
+          line-height: 1.65;
+          margin: -0.1rem 0 1rem 0;
+        }
+        .queue-filter-label,
+        .queue-results-label {
+          color: var(--linear-text);
+          font-size: 0.98rem;
+          font-weight: 650;
+          letter-spacing: -0.02em;
+          margin-bottom: 0.6rem;
+        }
+        .queue-filter-help {
+          color: var(--linear-text-muted);
+          font-size: 0.88rem;
+          line-height: 1.55;
+          margin: 0.12rem 0 0.85rem 0;
         }
         .stat-grid {
           display: grid;
@@ -6001,12 +6162,17 @@ def inject_page_styles() -> None:
           }
         }
         @media (max-width: 640px) {
-          .page-header-title {
+          .page-header-title,
+          .page-shell-title {
             font-size: 18px;
           }
           .page-header-subtitle,
+          .page-shell-subtitle,
           .page-note {
             font-size: 12px;
+          }
+          .queue-list-card-meta {
+            grid-template-columns: 1fr;
           }
           .public-notice-card,
           .detail-card,
@@ -6662,6 +6828,71 @@ def first_non_empty(row: dict, *keys: str) -> str:
     return ""
 
 
+def _normalize_display_title_key(value: object) -> str:
+    text = clean(value).lower()
+    text = re.sub(r"\.(pdf|hwpx|hwp|zip|docx?)$", "", text, flags=re.IGNORECASE)
+    text = text.replace("_", " ")
+    text = re.sub(r"[\[\]\(\)]+", " ", text)
+    text = re.sub(r"\s+", "", text)
+    return text
+
+
+def _is_bad_display_project_title(value: object, *, notice_title: object = "", file_name: object = "") -> bool:
+    text = clean(value)
+    if not text:
+        return True
+
+    lowered = text.lower()
+    normalized = _normalize_display_title_key(text)
+    file_normalized = _normalize_display_title_key(file_name)
+    notice_normalized = _normalize_display_title_key(notice_title)
+    generic_titles = {"", "사업명", "과제명", "rfp", "rfp제목", "사업명rfp명과제수"}
+    if normalized in generic_titles:
+        return True
+    if re.search(r"\.(pdf|hwpx|hwp|zip|docx?)$", lowered, flags=re.IGNORECASE):
+        return True
+    if file_normalized and normalized == file_normalized:
+        return True
+    if notice_normalized and normalized == notice_normalized:
+        return True
+    if "붙임" in text and re.search(r"\.(pdf|hwpx|hwp|zip|docx?)", lowered, flags=re.IGNORECASE):
+        return True
+    return False
+
+
+def choose_display_project_title(row: dict) -> str:
+    notice_title = first_non_empty(row, "Notice Title", "notice_title", "공고명")
+    file_name = first_non_empty(row, "file_name", "File Name", "파일명")
+    candidates = [
+        "llm_project_name",
+        "project_name",
+        "Project",
+        "해당 과제명",
+        "과제명",
+        "llm_rfp_title",
+        "rfp_title",
+        "RFP 제목",
+    ]
+    for key in candidates:
+        value = clean(row.get(key))
+        if not _is_bad_display_project_title(value, notice_title=notice_title, file_name=file_name):
+            return value
+    fallback = clean(re.sub(r"\.(pdf|hwpx|hwp|zip|docx?)$", "", file_name, flags=re.IGNORECASE))
+    return notice_title or fallback or "-"
+
+
+def format_dashboard_deadline_badge(period_text: object, fallback: object = "") -> str:
+    period_end = extract_period_end(clean(period_text))
+    if pd.notna(period_end):
+        d_day = int((period_end.normalize() - pd.Timestamp.now().normalize()).days)
+        if d_day > 0:
+            return f"D-{d_day}"
+        if d_day == 0:
+            return "D-Day"
+        return "마감"
+    return clean(fallback) or "-"
+
+
 def resolve_local_file_path(row: dict) -> Path | None:
     if not row:
         return None
@@ -7158,6 +7389,152 @@ def render_pending_detail_from_row(row: dict) -> None:
         ],
     )
     render_notice_comments(row, section_key=f"pending_{clean(row.get('공고ID'))}")
+
+
+def _score_value(value: object) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _badge_class(value: object, *, kind: str = "recommendation") -> str:
+    text = clean(value).lower()
+    if kind == "score":
+        return "badge-blue"
+    if kind == "deadline":
+        return "badge-rose"
+    if any(marker in text for marker in ["비추천", "미추천", "not recommend", "not recommended", "reject"]):
+        return "badge-slate"
+    if "추천" in text or "recommend" in text:
+        return "badge-green"
+    if "검토" in text or "hold" in text or "보류" in text:
+        return "badge-amber"
+    if "마감" in text or "closed" in text:
+        return "badge-rose"
+    return "badge-slate"
+
+
+def _pill_html(text: object, *, kind: str = "recommendation", base_class: str = "queue-badge") -> str:
+    safe_text = clean(text)
+    if not safe_text:
+        return ""
+    return f'<span class="{base_class} {_badge_class(safe_text, kind=kind)}">{escape(safe_text)}</span>'
+
+
+def _queue_row_context(row: dict[str, object] | pd.Series) -> dict[str, str]:
+    row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
+    recommendation = first_non_empty(row_dict, "recommendation", "llm_recommendation", "Recommendation") or "검토"
+    score = _score_value(first_non_empty(row_dict, "rfp_score", "llm_fit_score", "Score"))
+    period = first_non_empty(row_dict, "notice_period", "period", "Period", "접수기간", "요청기간")
+    deadline = format_dashboard_deadline_badge(period, first_non_empty(row_dict, "status", "Status"))
+    budget = extract_budget_summary(first_non_empty(row_dict, "budget", "Budget", "llm_total_budget_text", "total_budget_text")) or "-"
+    agency = first_non_empty(row_dict, "agency", "Agency", "전문기관", "전문기관명") or "-"
+    ministry = first_non_empty(row_dict, "ministry", "Ministry", "부처", "주무부처") or "-"
+    project = choose_display_project_title(row_dict)
+    notice = first_non_empty(row_dict, "notice_title", "Notice Title", "공고명")
+    reason = first_non_empty(row_dict, "llm_reason", "reason", "Reason", "llm_concept_and_development", "concept_and_development")
+    risk = first_non_empty(row_dict, "llm_support_need", "support_need", "Support Need", "llm_eligibility", "eligibility", "Eligibility", "evidence")
+    source_label = first_non_empty(row_dict, "Source", "source_site") or "-"
+    status = first_non_empty(row_dict, "Status", "status", "rcve_status", "공고상태") or "-"
+    review = first_non_empty(row_dict, "Review", "review_status", "검토여부") or "미검토"
+    registered_at = first_non_empty(row_dict, "Date", "ancm_de", "공고일자", "registered_at") or "-"
+    file_name = first_non_empty(row_dict, "file_name", "File Name", "rfp_title") or "-"
+    return {
+        "recommendation": recommendation,
+        "score": str(score) if score else "-",
+        "deadline": deadline or "-",
+        "budget": budget,
+        "agency": agency,
+        "ministry": ministry,
+        "project": project or "-",
+        "notice": notice or "-",
+        "reason": truncate_text(reason or "-", max_chars=220),
+        "risk": truncate_text(risk or "-", max_chars=180),
+        "period": period or "-",
+        "source": source_label,
+        "status": status,
+        "review": review,
+        "registered_at": registered_at,
+        "file_name": file_name,
+    }
+
+
+def _build_queue_filter_frame(rows: pd.DataFrame) -> pd.DataFrame:
+    working = ensure_opportunity_row_ids(rows.copy())
+    if working.empty:
+        return working
+
+    contexts: list[dict[str, str]] = []
+    deadline_sorts: list[pd.Timestamp | pd.NaT] = []
+    open_flags: list[bool] = []
+    today = pd.Timestamp.now().normalize()
+
+    for _, row in working.iterrows():
+        ctx = _queue_row_context(row)
+        contexts.append(ctx)
+        deadline_value = extract_period_end(
+            first_non_empty(row, "notice_period", "period", "접수기간", "요청기간")
+        )
+        deadline_sorts.append(deadline_value)
+        status_text = clean(ctx["status"])
+        is_open = False
+        if status_text:
+            is_open = "마감" not in status_text and ("접수" in status_text or "진행" in status_text or "예정" in status_text)
+        if not is_open and pd.notna(deadline_value):
+            is_open = deadline_value >= today
+        open_flags.append(bool(is_open))
+
+    working["_queue_recommendation"] = [clean(ctx["recommendation"]) or "-" for ctx in contexts]
+    working["_queue_score"] = [clean(ctx["score"]) or "-" for ctx in contexts]
+    working["_queue_deadline"] = [clean(ctx["deadline"]) or "-" for ctx in contexts]
+    working["_queue_budget"] = [clean(ctx["budget"]) or "-" for ctx in contexts]
+    working["_queue_agency"] = [clean(ctx["agency"]) or "-" for ctx in contexts]
+    working["_queue_ministry"] = [clean(ctx["ministry"]) or "-" for ctx in contexts]
+    working["_queue_notice"] = [clean(ctx["notice"]) or "-" for ctx in contexts]
+    working["_queue_source"] = [clean(ctx["source"]) or "-" for ctx in contexts]
+    working["_queue_status"] = [clean(ctx["status"]) or "-" for ctx in contexts]
+    working["_queue_period"] = [clean(ctx["period"]) or "-" for ctx in contexts]
+    working["_queue_deadline_sort"] = deadline_sorts
+    working["_queue_is_open"] = open_flags
+    return working
+
+
+def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
+    if rows.empty:
+        st.info("표시할 RFP가 없습니다.")
+        return
+
+    items: list[str] = []
+    for _, row in rows.iterrows():
+        ctx = _queue_row_context(row)
+        detail_href = build_route_href(page_key, clean(row.get("_row_id")))
+        badges = "".join(
+            [
+                _pill_html(ctx["recommendation"]),
+                _pill_html(ctx["score"], kind="score"),
+                _pill_html(ctx["deadline"], kind="deadline"),
+            ]
+        )
+        items.append(
+            (
+                f'<a class="queue-list-link" href="{escape(detail_href, quote=True)}" target="_self">'
+                '<div class="queue-card queue-list-card">'
+                f'<div class="queue-badge-row">{badges}</div>'
+                f'<div class="queue-list-card-title">{escape(truncate_text(ctx["project"], max_chars=96))}</div>'
+                f'<div class="queue-list-card-subtitle">{escape(truncate_text(ctx["notice"], max_chars=120))}</div>'
+                '<div class="queue-list-card-meta">'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">전문기관</div><div class="queue-list-card-meta-value">{escape(ctx["agency"])}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">지원금</div><div class="queue-list-card-meta-value">{escape(ctx["budget"])}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">공고 상태</div><div class="queue-list-card-meta-value">{escape(ctx["status"])}</div></div>'
+                '</div>'
+                f'<div class="queue-list-card-reason">{escape(ctx["reason"])}</div>'
+                '</div>'
+                '</a>'
+            )
+        )
+
+    st.markdown(f'<div class="queue-list-shell">{"".join(items)}</div>', unsafe_allow_html=True)
 
 
 def render_opportunity_detail_from_row(row: dict) -> None:
@@ -7860,6 +8237,96 @@ def render_opportunity_page_aligned(
         page_key=page_key,
         id_column="_row_id",
     )
+
+
+def render_opportunity_page(
+    df: pd.DataFrame,
+    *,
+    page_key: str | None = None,
+    title: str | None = None,
+    archive: bool = False,
+) -> None:
+    page_key = page_key or ("opportunity_archive" if archive else "opportunity")
+    title = title or ("Opportunity Archive" if archive else "RFP Queue")
+    source_df = ensure_opportunity_row_ids(df)
+    filtered = filter_archived_opportunity_rows(source_df) if archive else filter_current_opportunity_rows(source_df)
+
+    current_view, selected_document_id = get_route_state(page_key)
+    if current_view == "detail":
+        selected_row = get_row_by_column_value(source_df, "_row_id", selected_document_id)
+        back_col, info_col = st.columns([1, 4])
+        with back_col:
+            if st.button("목록으로", key=f"{page_key}_back_to_table_ui", use_container_width=True):
+                switch_to_table(page_key)
+        with info_col:
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 리스트 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
+        render_opportunity_detail_from_row(selected_row)
+        return
+
+    render_page_header(
+        title,
+        "사업공고 중 지금 검토 가능한 RFP를 추천합니다." if not archive else "보관된 Opportunity 후보를 가볍게 탐색합니다.",
+        eyebrow="Opportunity",
+    )
+    st.markdown(
+        '<div class="queue-shell-note">추천 상태와 공고 상태만 빠르게 좁히고, 결과 행 전체를 눌러 상세 공고와 RFP 내용을 바로 확인할 수 있게 구성했습니다.</div>',
+        unsafe_allow_html=True,
+    )
+
+    working = _build_queue_filter_frame(filtered)
+    if working.empty:
+        st.info("표시할 RFP가 없습니다.")
+        return
+
+    recommendation_options = sorted(
+        [value for value in working["_queue_recommendation"].dropna().astype(str).unique().tolist() if clean(value) and value != "-"]
+    )
+    status_options = sorted(
+        [value for value in working["_queue_status"].dropna().astype(str).unique().tolist() if clean(value) and value != "-"]
+    )
+
+    st.markdown('<div class="queue-filter-label">요건 / 필터</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="queue-filter-help">추천 상태와 공고 상태만 빠르게 좁혀서 지금 검토할 RFP를 확인합니다.</div>',
+        unsafe_allow_html=True,
+    )
+    filter_cols = st.columns(2)
+    with filter_cols[0]:
+        selected_recommendation = st.multiselect(
+            "추천 상태",
+            options=recommendation_options,
+            default=[],
+            key=f"{page_key}_filter_recommendation",
+            placeholder="전체",
+        )
+    with filter_cols[1]:
+        selected_status = st.multiselect(
+            "공고 상태",
+            options=status_options,
+            default=[],
+            key=f"{page_key}_filter_status",
+            placeholder="전체",
+        )
+    st.caption("추천 결과 행 전체를 누르면 상세 공고와 RFP 분석 내용으로 이동합니다.")
+
+    filtered = working.copy()
+    if selected_recommendation:
+        filtered = filtered[filtered["_queue_recommendation"].isin(selected_recommendation)]
+    if selected_status:
+        filtered = filtered[filtered["_queue_status"].isin(selected_status)]
+
+    if filtered.empty:
+        st.info("검색 조건에 맞는 RFP가 없습니다.")
+        return
+
+    filtered = filtered.sort_values(
+        by=["rfp_score", "_queue_deadline_sort", "project_name"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+
+    st.markdown('<div class="queue-results-label">추천 결과</div>', unsafe_allow_html=True)
+    _render_rfp_queue_list(filtered.head(30), page_key=page_key)
 
 
 def prepare_notice_collection_rows(

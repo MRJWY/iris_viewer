@@ -27,9 +27,10 @@ structure and routing model as the admin app.
   - mode/source/page config used by the shared app
 
 Notice detail pages support review status updates and comment history through Google Sheets.
-Viewer login is enabled by default. Users can request signup from the viewer login
-screen; requests are stored in `APP_USER_ACCOUNTS` with `pending` status and can
-be approved from the admin app.
+Viewer login is enabled by default. Users can request signup from the viewer
+login screen, admins can approve those requests from the admin app, and users
+with the same email domain share comments, favorites, and review status within
+the same workspace scope.
 
 ## Required Secrets
 
