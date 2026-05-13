@@ -4130,10 +4130,12 @@ def derive_archive_reason_for_app(row: dict[str, object] | pd.Series) -> str:
         return "manual_archive"
     if is_archived_review_status_value(review_status):
         return "review_archived"
-    if pd.notna(period_end) and period_end.normalize().lt(pd.Timestamp.now().normalize()):
-        if clean(current_value) == "N" or normalize_notice_status_label(status_text) == "마감":
-            return "notice_closed"
-        return "application_closed"
+    if pd.notna(period_end):
+        period_end_ts = pd.Timestamp(period_end).normalize()
+        if period_end_ts < pd.Timestamp.now().normalize():
+            if clean(current_value) == "N" or normalize_notice_status_label(status_text) == "마감":
+                return "notice_closed"
+            return "application_closed"
     return ""
 
 

@@ -22,11 +22,6 @@ def inject_public_viewer_styles() -> None:
     st.markdown(
         """
         <style>
-        [data-testid="stSidebar"],
-        section[data-testid="stSidebar"],
-        [data-testid="collapsedControl"] {
-          display: none !important;
-        }
         .main .block-container {
           max-width: min(1680px, calc(100vw - 2rem));
         }
@@ -34,6 +29,26 @@ def inject_public_viewer_styles() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_public_sidebar_navigation(current_page: str) -> None:
+    workspace_items: list[tuple[str, str, str]] = [
+        ("RFP Queue", "iris", "opportunity"),
+        ("Notice Queue", "iris", "notice"),
+        ("Summary", "iris", "summary"),
+        ("Archive", "iris", "opportunity_archive"),
+        ("Favorites", "favorites", "favorites"),
+    ]
+
+    st.sidebar.markdown('<div class="sidebar-nav-label">Workspace</div>', unsafe_allow_html=True)
+    for label, source_key, page_key in workspace_items:
+        if st.sidebar.button(
+            label,
+            key=f"public_sidebar_{source_key}_{page_key}",
+            type="primary" if current_page == page_key else "secondary",
+            use_container_width=True,
+        ):
+            core.navigate_to_route(source_key, page_key)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -142,26 +157,11 @@ def render_public_viewer_body(
     datasets: dict[str, object],
     source_datasets: dict[str, object],
 ) -> None:
-    core.render_workspace_header(mode_config)
-
     current_page = core.normalize_route_page_key(core.get_query_param("page")) or "opportunity"
     if current_page not in PUBLIC_VIEWER_ROUTE_MAP:
         current_page = "opportunity"
-
-    selected_page = core.render_page_tabs(
-        current_page,
-        [
-            ("opportunity", "RFP Queue"),
-            ("notice", "Notice Queue"),
-            ("summary", "Summary"),
-            ("opportunity_archive", "Archive"),
-            ("favorites", "관심공고"),
-        ],
-        key="public_viewer_primary_tabs",
-    )
-    if selected_page != current_page:
-        target_source, target_page = PUBLIC_VIEWER_ROUTE_MAP[selected_page]
-        core.navigate_to_route(target_source, target_page)
+    render_public_sidebar_navigation(current_page)
+    core.render_workspace_header(mode_config)
 
     if current_page == "notice":
         viewer_body.render_public_notice_queue_page(datasets, source_datasets)
