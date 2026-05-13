@@ -9148,6 +9148,92 @@ def render_notice_detail_steps_panel(
         unsafe_allow_html=True,
     )
 
+def render_notice_detail_sidebar_card(
+    *,
+    source_label: str,
+    keyword_text: object,
+    total_budget: object,
+    per_project_budget: object,
+    period_value: object,
+    agency: object,
+    ministry: object,
+    recommendation: object,
+    score: object,
+    detail_link: str,
+    detail_button_label: str,
+    related_count: int,
+) -> None:
+    keyword_tags = parse_detail_tag_items(keyword_text, limit=4)
+    deadline_badge, period_text = _notice_detail_deadline_parts(period_value)
+    button_html = (
+        f'<a class="notice-detail-action-link" href="{escape(detail_link, quote=True)}" target="_blank">'
+        f'{escape(detail_button_label)}'
+        '</a>'
+        if detail_link
+        else ""
+    )
+    keyword_html = (
+        "".join(f'<span class="notice-detail-tag">{escape(tag)}</span>' for tag in keyword_tags)
+        if keyword_tags
+        else '<span class="notice-detail-empty">-</span>'
+    )
+    deadline_html = (
+        f'<span class="notice-detail-inline-badge rose">{escape(deadline_badge)}</span>'
+        if deadline_badge
+        else ""
+    )
+    sidebar_html = (
+        '<div class="notice-detail-sidebar-card">'
+        f'<div class="notice-detail-sidebar-kicker">{escape(source_label)}</div>'
+        '<div class="notice-detail-sidebar-title">공고 한눈에 보기</div>'
+        '<div class="notice-detail-sidebar-meta">'
+        '<div class="notice-detail-sidebar-label">핵심 키워드</div>'
+        f'<div class="notice-detail-sidebar-tags">{keyword_html}</div>'
+        '</div>'
+        '<div class="notice-detail-sidebar-grid">'
+        '<div class="notice-detail-sidebar-item">'
+        '<div class="notice-detail-sidebar-label">사업 규모</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("사업 규모", total_budget))}</div>'
+        '</div>'
+        '<div class="notice-detail-sidebar-item">'
+        '<div class="notice-detail-sidebar-label">지원금</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("지원금", per_project_budget))}</div>'
+        '</div>'
+        '<div class="notice-detail-sidebar-item">'
+        '<div class="notice-detail-sidebar-label">전문기관</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("전문기관", agency))}</div>'
+        '</div>'
+        '<div class="notice-detail-sidebar-item">'
+        '<div class="notice-detail-sidebar-label">소관부처</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("소관부처", ministry))}</div>'
+        '</div>'
+        '</div>'
+        '<div class="notice-detail-sidebar-period">'
+        '<div class="notice-detail-sidebar-label">신청 기간</div>'
+        '<div class="notice-detail-deadline-wrap">'
+        f'{deadline_html}'
+        f'<span class="notice-detail-period-text">{escape(period_text)}</span>'
+        '</div>'
+        '</div>'
+        '<div class="notice-detail-sidebar-grid compact">'
+        '<div class="notice-detail-sidebar-item">'
+        '<div class="notice-detail-sidebar-label">추천 상태</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("추천 상태", recommendation))}</div>'
+        '</div>'
+        '<div class="notice-detail-sidebar-item">'
+        '<div class="notice-detail-sidebar-label">적합 점수</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("적합 점수", score))}</div>'
+        '</div>'
+        '<div class="notice-detail-sidebar-item">'
+        '<div class="notice-detail-sidebar-label">연결 RFP</div>'
+        f'<div class="notice-detail-sidebar-value">{related_count}건</div>'
+        '</div>'
+        '</div>'
+        f'{button_html}'
+        '</div>'
+    )
+    st.markdown(sidebar_html, unsafe_allow_html=True)
+
 def _split_sentences_for_display(value: object) -> list[str]:
     text = clean(value)
     if not text:
@@ -9307,6 +9393,466 @@ def build_analysis_story_bundle(
         "period_text": period_value or "-",
         "overview_steps": overview_steps,
     }
+
+def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
+    if not row:
+        st.info("표시할 공고가 없습니다.")
+        return
+
+    current_source = get_query_param("source") or "iris"
+    source_key = resolve_notice_source_key(row)
+    is_mss = source_key == "tipa" or current_source == "tipa"
+    is_nipa = source_key == "nipa" or current_source == "nipa"
+    if is_mss:
+        detail_kicker = "MSS Notice Detail"
+        detail_button_label = "MSS 상세 바로가기"
+        review_caption = "공고 검토 상태를 바꾸면 MSS 시트에 즉시 반영됩니다."
+        source_label = "MSS"
+    elif is_nipa:
+        detail_kicker = "NIPA Notice Detail"
+        detail_button_label = "NIPA 상세 바로가기"
+        review_caption = "공고 검토 상태를 바꾸면 NIPA 시트에 즉시 반영됩니다."
+        source_label = "NIPA"
+    else:
+        detail_kicker = "Notice Master Detail"
+        detail_button_label = "IRIS 상세 바로가기"
+        review_caption = "공고 검토 상태를 바꾸면 NOTICE_MASTER에 즉시 반영됩니다."
+        source_label = "IRIS"
+
+    render_detail_header(
+        title=clean(row.get("공고명")),
+        kicker=detail_kicker,
+        chips=[
+            (clean(row.get("추천정도")), "accent"),
+            (f"점수 {clean(row.get('추천점수'))}" if clean(row.get("추천점수")) else "", "neutral"),
+            (clean(row.get("공고상태")), "accent"),
+            (clean(row.get("전문기관") or row.get("담당부처")), "neutral"),
+            (clean(row.get("공고일자")), "neutral"),
+            (f"검토 {clean(row.get('검토여부') or '미정')}", "neutral"),
+        ],
+    )
+
+    related = find_related_opportunities_for_notice(row, opportunity_df)
+    top_related: dict[str, object] = {}
+    if not related.empty:
+        related = related.sort_values(
+            by=["rfp_score", "project_name"],
+            ascending=[False, True],
+            na_position="last",
+        )
+        top_related = related.iloc[0].to_dict()
+        row = ensure_notice_analysis_fallback(row, top_related)
+
+    detail_link = resolve_external_detail_link(row, source_key=source_key)
+    keyword_text = first_non_empty(top_related, "llm_keywords", "keywords", "대표키워드")
+    target_market_text = first_non_empty(top_related, "target_market", "대표관심영역")
+    summary_text = first_non_empty(
+        top_related,
+        "llm_reason",
+        "reason",
+        "추천제안이유",
+        "llm_concept_and_development",
+        "concept_and_development",
+    )
+    if not clean(summary_text):
+        summary_text = "연결된 RFP 분석 요약이 아직 없습니다. 공고 원문 정보와 연결된 Opportunity를 함께 확인해주세요."
+
+    overview_steps = [
+        {
+            "title": "사업 개요 및 배경",
+            "body": first_non_empty(
+                top_related,
+                "llm_support_necessity",
+                "support_necessity",
+                "llm_technical_background",
+                "technical_background",
+            ),
+        },
+        {
+            "title": "과제 목표",
+            "body": first_non_empty(
+                top_related,
+                "llm_concept_and_development",
+                "concept_and_development",
+            ),
+        },
+        {
+            "title": "과제 내용",
+            "body": first_non_empty(
+                top_related,
+                "llm_development_content",
+                "development_content",
+                "llm_support_plan",
+                "support_plan",
+            ),
+        },
+    ]
+
+    total_budget_text = first_non_empty(
+        top_related,
+        "llm_total_budget_text",
+        "total_budget_text",
+        "budget",
+        "대표예산",
+    )
+    per_project_budget_text = first_non_empty(
+        top_related,
+        "llm_per_project_budget_text",
+        "per_project_budget_text",
+    )
+    eligibility_text = first_non_empty(top_related, "llm_eligibility", "eligibility")
+    application_field_text = first_non_empty(top_related, "llm_application_field", "application_field")
+    support_need_text = first_non_empty(top_related, "llm_support_need", "support_need")
+    support_plan_text = first_non_empty(top_related, "llm_support_plan", "support_plan")
+
+    content_col, sidebar_col = st.columns([1.7, 0.95], gap="large")
+
+    with content_col:
+        render_notice_detail_rows_panel(
+            "주요 정보",
+            [
+                {"label": "지원 유형", "value": first_non_empty(top_related, "pbofr_type"), "kind": "chips"},
+                {"label": "핵심 키워드", "value": keyword_text, "kind": "chips"},
+                {"label": "관심영역", "value": target_market_text, "kind": "chips"},
+                {"label": "사업 규모", "value": total_budget_text, "kind": "accent"},
+                {"label": "지원금", "value": per_project_budget_text, "kind": "success"},
+                {"label": "지원 가능 기관", "value": eligibility_text, "kind": "chips"},
+                {"label": "공고 등록일", "value": row.get("공고일자")},
+                {"label": "공고 마감일", "value": row.get("마감일자")},
+                {"label": "신청 기간", "value": row.get("접수기간"), "kind": "deadline"},
+            ],
+        )
+
+        render_notice_detail_text_panel("과제 요약", summary_text, tone="blue")
+
+        render_notice_detail_rows_panel(
+            "분석 하이라이트",
+            [
+                {"label": "추천 상태", "value": first_non_empty(top_related, "llm_recommendation", "recommendation", "추천정도")},
+                {"label": "적합 점수", "value": clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("추천점수"))},
+                {"label": "활용 분야", "value": application_field_text, "kind": "multiline"},
+                {"label": "지원 필요성", "value": support_need_text, "kind": "multiline"},
+                {"label": "연결 과제명", "value": first_non_empty(top_related, "llm_project_name", "project_name", "대표과제명"), "kind": "multiline"},
+                {"label": "연결 RFP 수", "value": str(len(related)) if not related.empty else "0"},
+            ],
+            tone="green",
+        )
+
+        render_notice_detail_rows_panel(
+            "지원 요건",
+            [
+                {"label": "지원 가능 기관", "value": eligibility_text, "kind": "multiline"},
+                {"label": "지원 필요성", "value": support_need_text, "kind": "multiline"},
+                {"label": "지원기간 및 예산·추진체계", "value": support_plan_text, "kind": "multiline"},
+            ],
+            tone="amber",
+        )
+
+        render_notice_detail_steps_panel("과제 개요", overview_steps, tone="blue")
+
+        render_notice_detail_rows_panel(
+            "과제 세부 내용",
+            [
+                {"label": "공고명", "value": row.get("공고명"), "kind": "multiline"},
+                {"label": "사업명", "value": row.get("사업명"), "kind": "multiline"},
+                {"label": "공고ID", "value": row.get("공고ID")},
+                {"label": "공고번호", "value": row.get("공고번호")},
+                {"label": "현재 공고 상태", "value": row.get("공고상태")},
+                {"label": "현재공고 여부", "value": row.get("is_current")},
+                {"label": "전문기관", "value": row.get("전문기관") or row.get("담당부처")},
+                {"label": "소관부처", "value": row.get("소관부처")},
+                {"label": "RFP 제목", "value": first_non_empty(top_related, "llm_rfp_title", "rfp_title"), "kind": "multiline"},
+                {"label": "지원기간 및 예산·추진체계", "value": support_plan_text, "kind": "multiline"},
+            ],
+        )
+
+        st.markdown('<div class="detail-section-title">검토 상태</div>', unsafe_allow_html=True)
+        review_left, review_right = st.columns([1, 1])
+        with review_left:
+            render_notice_detail_rows_panel(
+                "현재 상태",
+                [
+                    {"label": "검토여부", "value": row.get("검토여부")},
+                    {"label": "추천 여부", "value": first_non_empty(top_related, "llm_recommendation", "recommendation", "추천정도")},
+                    {"label": "적합도 점수", "value": clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("추천점수"))},
+                    {"label": "전략 적합도", "value": first_non_empty(top_related, "llm_score_strategic_fit_score", "strategic_fit_score", "전략적합도")},
+                    {"label": "기술 관련도", "value": first_non_empty(top_related, "llm_score_tech_relevance_score", "tech_relevance_score", "기술관련도")},
+                    {"label": "긴급성", "value": first_non_empty(top_related, "llm_score_urgency_score", "urgency_score", "긴급성")},
+                    {"label": "시장 정합성", "value": first_non_empty(top_related, "llm_score_market_alignment_score", "market_alignment_score", "시장정합성")},
+                ],
+            )
+        with review_right:
+            with st.container(border=True):
+                st.caption(review_caption)
+                render_review_editor(
+                    notice_id=clean(row.get("공고ID")),
+                    current_value=clean(row.get("검토여부")),
+                    form_key=f"notice_review_form_{clean(row.get('공고ID'))}",
+                    source_key=source_key,
+                )
+
+        render_notice_comments(row, section_key=f"notice_{clean(row.get('공고ID'))}")
+
+        st.markdown('<div class="detail-section-title">연결된 Opportunity</div>', unsafe_allow_html=True)
+
+    with sidebar_col:
+        render_favorite_scrap_button(
+            notice_id=clean(row.get("怨듦퀬ID")),
+            current_value=clean(row.get("寃?좎뿬遺")),
+            source_key=source_key,
+            button_key=f"favorite_notice_{clean(row.get('怨듦퀬ID'))}",
+        )
+        render_notice_detail_sidebar_card(
+            source_label=source_label,
+            keyword_text=keyword_text,
+            total_budget=total_budget_text,
+            per_project_budget=per_project_budget_text,
+            period_value=row.get("접수기간"),
+            agency=row.get("전문기관") or row.get("담당부처"),
+            ministry=row.get("소관부처"),
+            recommendation=first_non_empty(top_related, "llm_recommendation", "recommendation", "추천정도"),
+            score=clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("추천점수")),
+            detail_link=detail_link,
+            detail_button_label=detail_button_label,
+            related_count=len(related),
+        )
+
+    if related.empty:
+        st.info("이 공고에 연결된 Opportunity가 아직 없습니다.")
+        return
+
+    related_view = ensure_opportunity_row_ids(related)
+    related_view["연결 과제명"] = series_from_candidates(related_view, ["llm_project_name", "project_name"])
+    related_view["추천도"] = series_from_candidates(related_view, ["llm_recommendation", "recommendation", "추천여부"])
+    related_view["점수"] = series_from_candidates(related_view, ["llm_fit_score", "rfp_score"])
+    related_view["예산"] = series_from_candidates(related_view, ["llm_total_budget_text", "total_budget_text", "budget"])
+    related_view["파일명"] = series_from_candidates(related_view, ["file_name"])
+    render_clickable_table(
+        related_view,
+        [
+            "공고명",
+            "notice_title",
+            "연결 과제명",
+            "추천도",
+            "점수",
+            "예산",
+            "파일명",
+        ],
+        page_key="opportunity",
+        id_column="_row_id",
+    )
+
+def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
+    if not row:
+        st.info("표시할 요약 공고가 없습니다.")
+        return
+
+    render_detail_header(
+        title=clean(row.get("공고명")),
+        kicker="Summary Detail",
+        chips=[
+            (clean(row.get("대표추천도")), "accent"),
+            (clean(row.get("추천도 및 점수")), "neutral"),
+            (clean(row.get("전문기관")), "neutral"),
+            (clean(row.get("공고일자")), "neutral"),
+        ],
+    )
+
+    top_left, top_right = st.columns([2, 1])
+    with top_left:
+        render_detail_card(
+            "대표 과제 요약",
+            [
+                ("해당 과제명", row.get("해당 과제명")),
+                ("추천도 및 점수", row.get("추천도 및 점수")),
+                ("예산", row.get("예산")),
+                ("과제수", row.get("과제수")),
+                ("문서수", row.get("문서수")),
+            ],
+        )
+    with top_right:
+        render_detail_card(
+            "공고 식별 정보",
+            [
+                ("공고ID", row.get("공고ID")),
+                ("공고번호", row.get("공고번호")),
+                ("전문기관", row.get("전문기관")),
+                ("소관부처", row.get("소관부처")),
+                ("검토 여부", row.get("검토 여부")),
+            ],
+        )
+
+    action_left, action_right = st.columns([1, 2])
+    with action_left:
+        detail_link = resolve_external_detail_link(row)
+        if detail_link:
+            st.link_button("IRIS 상세 바로가기", detail_link, use_container_width=True)
+    with action_right:
+        st.caption("Summary는 대표 과제 기준으로 공고를 요약해서 보여줍니다.")
+
+    related = pd.DataFrame()
+    if not opportunity_df.empty and "notice_id" in opportunity_df.columns:
+        notice_key = normalize_notice_id_for_match(row.get("공고ID"))
+        related = opportunity_df[
+            opportunity_df["notice_id"].apply(normalize_notice_id_for_match).eq(notice_key)
+        ].copy()
+        if not related.empty:
+            related = related.sort_values(
+                by=["rfp_score", "project_name"],
+                ascending=[False, True],
+                na_position="last",
+            )
+    top_related = related.iloc[0].to_dict() if not related.empty else {}
+
+    st.markdown('<div class="detail-section-title">검토 상태</div>', unsafe_allow_html=True)
+    left, right = st.columns(2)
+    with left:
+        render_detail_card(
+            "공고 정보",
+            [
+                ("공고일자", row.get("공고일자")),
+                ("공고상태", row.get("공고상태")),
+                ("접수기간", row.get("접수기간")),
+                ("is_current", row.get("is_current")),
+            ],
+        )
+    with right:
+        render_review_editor(
+            notice_id=clean(row.get("공고ID")),
+            current_value=clean(row.get("검토 여부")),
+            form_key=f"summary_review_form_{clean(row.get('공고ID'))}",
+        )
+
+    st.markdown('<div class="detail-section-title">대표 분석 요약</div>', unsafe_allow_html=True)
+    render_detail_card(
+        "대표 RFP 분석",
+        [
+            ("추천 이유", first_non_empty(top_related, "llm_reason", "reason", "대표추천이유")),
+            (
+                "개념 및 개발 내용",
+                first_non_empty(
+                    top_related,
+                    "llm_concept_and_development",
+                    "concept_and_development",
+                    "개념 및 개발 내용",
+                ),
+            ),
+            (
+                "지원필요성(과제 배경)",
+                first_non_empty(
+                    top_related,
+                    "llm_support_necessity",
+                    "support_necessity",
+                    "지원필요성(과제 배경)",
+                    "llm_technical_background",
+                    "technical_background",
+                ),
+            ),
+            (
+                "활용분야",
+                first_non_empty(
+                    top_related,
+                    "llm_application_field",
+                    "application_field",
+                    "활용분야",
+                ),
+            ),
+            (
+                "지원기간 및 예산·추진체계",
+                first_non_empty(
+                    top_related,
+                    "llm_support_plan",
+                    "support_plan",
+                    "지원기간 및 예산·추진체계",
+                ),
+            ),
+            ("대표과제명", first_non_empty(top_related, "llm_project_name", "project_name", "대표과제명")),
+            ("대표예산", first_non_empty(top_related, "llm_total_budget_text", "total_budget_text", "budget", "대표예산")),
+            ("대표키워드", first_non_empty(top_related, "llm_keywords", "keywords", "대표키워드")),
+            ("대표관심영역", first_non_empty(top_related, "target_market", "대표관심영역")),
+        ],
+    )
+
+    render_notice_comments(row, section_key=f"summary_{clean(row.get('공고ID'))}")
+
+def render_notice_page_with_scope(
+    source_df: pd.DataFrame,
+    opportunity_df: pd.DataFrame,
+    *,
+    page_key: str,
+    title: str,
+    default_status_scope: str,
+    current_only_default: bool,
+    archive: bool = False,
+    already_scoped: bool = False,
+) -> None:
+    current_view, selected_notice_id = get_route_state(page_key)
+
+    if current_view == "detail":
+        selected_row = get_row_by_column_value(source_df, "공고ID", selected_notice_id)
+        action_col, info_col = st.columns([1, 5])
+        with action_col:
+            if st.button("RFP Dashboard로", key=f"{page_key}_back_to_dashboard", use_container_width=True):
+                navigate_to_route("dashboard", "dashboard")
+        with info_col:
+            st.markdown('<div class="page-note">RFP 추천 화면에서 연결된 공고 상세를 확인하는 화면입니다.</div>', unsafe_allow_html=True)
+        render_notice_detail_from_row(selected_row, opportunity_df)
+        return
+
+    subtitle = "수집된 공고를 상태와 기관 기준으로 정리해 봅니다."
+    if archive:
+        subtitle = "종료되었거나 보관 대상으로 분류된 공고를 모아 봅니다."
+    elif default_status_scope == "예정":
+        subtitle = "예정 공고와 접수 예정 건을 먼저 확인합니다."
+    render_page_header(title, subtitle, eyebrow="Notice")
+
+    filtered = source_df.copy()
+    if not already_scoped:
+        filtered = filter_archived_notice_rows(filtered) if archive else filter_current_notice_rows(filtered)
+    filtered["사업비"] = series_from_candidates(filtered, ["사업비", "대표예산"]).apply(extract_budget_summary)
+    search_text, current_only, status_scope = render_notice_filter_sidebar(
+        page_key,
+        current_only_default=current_only_default,
+        status_default=default_status_scope,
+        show_current_only=not archive,
+        show_status_scope=not archive,
+    )
+    if current_only and "is_current" in filtered.columns:
+        filtered = filtered[filtered["is_current"].fillna("").eq("Y")]
+    if not archive:
+        filtered = filter_notice_status_scope(filtered, status_scope)
+    filtered = apply_multiselect_filter(filtered, "전문기관", "전문기관", f"{page_key}_agency")
+    filtered = apply_multiselect_filter(filtered, "소관부처", "소관부처", f"{page_key}_ministry")
+    filtered = apply_multiselect_filter(filtered, "검토 여부", "검토 여부", f"{page_key}_review")
+
+    filtered = filtered[
+        build_contains_mask(
+            filtered,
+            ["공고명", "공고번호", "전문기관", "소관부처", "공고ID", "대표과제명"],
+            search_text,
+        )
+    ]
+
+    render_metrics(
+        [
+            ("공고 수", str(len(filtered))),
+            ("현재 공고", str(int((filtered["is_current"] == "Y").sum()) if "is_current" in filtered.columns else 0)),
+            ("전문기관 수", str(filtered["전문기관"].nunique() if "전문기관" in filtered.columns else 0)),
+            ("검토 완료", str(int(filtered["검토 여부"].fillna("").ne("").sum()) if "검토 여부" in filtered.columns else 0)),
+        ]
+    )
+
+    render_section_label("Notice List")
+    st.markdown(
+        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
+        unsafe_allow_html=True,
+    )
+    render_clickable_table(
+        filtered,
+        NOTICE_PREFERRED_COLUMNS,
+        page_key=page_key,
+        id_column="공고ID",
+    )
 
 def render_opportunity_detail_from_row(row: dict) -> None:
     if not row:
@@ -9523,6 +10069,22 @@ def render_opportunity_page(
 
     st.markdown('<div class="queue-results-label">추천 결과</div>', unsafe_allow_html=True)
     _render_rfp_queue_list(filtered.head(30), page_key=page_key)
+
+def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
+    del df
+
+    working = ensure_opportunity_row_ids(filter_current_opportunity_rows(opportunity_df.copy()))
+    if working.empty:
+        st.info("표시할 분석 대상이 없습니다.")
+        return
+
+    selected_row_id = clean(get_query_param("id"))
+    if not selected_row_id or selected_row_id not in working["_row_id"].fillna("").astype(str).tolist():
+        working = working.sort_values(by=["rfp_score", "project_name"], ascending=[False, True], na_position="last")
+        selected_row_id = clean(working.iloc[0].get("_row_id"))
+
+    selected_row = get_row_by_column_value(working, "_row_id", selected_row_id)
+    render_opportunity_detail_from_row(selected_row)
 
 # END ADMIN ALIGNMENT OVERRIDES
 
