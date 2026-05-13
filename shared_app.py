@@ -382,7 +382,7 @@ def run_gspread_call(operation, *args, **kwargs):
 
 def render_iris_page(page_key: str, datasets: dict[str, pd.DataFrame]) -> None:
     if page_key == "opportunity":
-        render_opportunity_page(datasets["opportunity"])
+        render_opportunity_page(datasets["opportunity"], all_df=datasets["opportunity_all"])
     elif page_key == "summary":
         render_summary_page(datasets["summary"], datasets["opportunity"])
     elif page_key == "notice":
@@ -8154,6 +8154,7 @@ def render_opportunity_page_aligned(
     page_key: str | None = None,
     title: str | None = None,
     archive: bool = False,
+    all_df: pd.DataFrame | None = None,
 ) -> None:
     page_key = page_key or ("opportunity_archive" if archive else "opportunity")
     title = title or ("RFP Archive" if archive else "RFP Queue")
@@ -8229,6 +8230,12 @@ def render_opportunity_page_aligned(
     current_view, selected_document_id = get_route_state(page_key)
     if current_view == "detail":
         selected_row = get_row_by_column_value(source_df, "_row_id", selected_document_id)
+        if selected_row is None and all_df is not None and not all_df.empty:
+            selected_row = get_row_by_column_value(
+                ensure_opportunity_row_ids(all_df),
+                "_row_id",
+                selected_document_id,
+            )
         action_col, info_col = st.columns([1, 5])
         with action_col:
             if st.button("테이블로 돌아가기", key=f"{page_key}_back_to_table_aligned", use_container_width=True):
@@ -10526,8 +10533,21 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
         render_crawled_notice_rows(favorite_rows, key_prefix="notice_favorites")
 
 
-def render_opportunity_page(df: pd.DataFrame, *, page_key: str | None = None, title: str | None = None, archive: bool = False) -> None:
-    return render_opportunity_page_aligned(df, page_key=page_key, title=title, archive=archive)
+def render_opportunity_page(
+    df: pd.DataFrame,
+    *,
+    page_key: str | None = None,
+    title: str | None = None,
+    archive: bool = False,
+    all_df: pd.DataFrame | None = None,
+) -> None:
+    return render_opportunity_page_aligned(
+        df,
+        page_key=page_key,
+        title=title,
+        archive=archive,
+        all_df=all_df,
+    )
 
 
 def render_iris_source(

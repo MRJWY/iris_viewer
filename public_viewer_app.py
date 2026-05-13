@@ -193,6 +193,7 @@ def render_public_viewer_body(
             page_key="opportunity_archive",
             title="Opportunity Archive",
             archive=True,
+            all_df=datasets["opportunity_all"],
         )
         return
     if current_page == "favorites":
@@ -208,6 +209,7 @@ def render_public_viewer_body(
         page_key="opportunity",
         title="RFP Queue",
         archive=False,
+        all_df=datasets["opportunity_all"],
     )
 
 

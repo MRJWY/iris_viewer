@@ -214,6 +214,7 @@ def render_public_opportunity_page(
     page_key: str | None = None,
     title: str | None = None,
     archive: bool = False,
+    all_df: pd.DataFrame | None = None,
 ) -> None:
     page_key = page_key or ("opportunity_archive" if archive else "opportunity")
     title = title or ("Opportunity Archive" if archive else "RFP Queue")
@@ -223,6 +224,12 @@ def render_public_opportunity_page(
     current_view, selected_document_id = core.get_route_state(page_key)
     if current_view == "detail":
         selected_row = core.get_row_by_column_value(source_df, "_row_id", selected_document_id)
+        if selected_row is None and all_df is not None and not all_df.empty:
+            selected_row = core.get_row_by_column_value(
+                core.ensure_opportunity_row_ids(all_df),
+                "_row_id",
+                selected_document_id,
+            )
         back_col, info_col = st.columns([1, 4])
         with back_col:
             if st.button("목록으로", key=f"{page_key}_back_to_table_ui", use_container_width=True):
