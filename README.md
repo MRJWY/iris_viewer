@@ -40,8 +40,7 @@ Use Streamlit secrets or environment variables for:
 
 Optional:
 
-- `APP_USERS`: bootstrap accounts, for example `{"admin":"password"}`
-- `APP_ADMINS`: comma-separated bootstrap admin IDs, for example `admin`
+- `APP_USERS`: bootstrap viewer accounts, for example `{"viewer":"password"}`
 - `APP_ALLOWED_EMAIL_DOMAINS`: comma-separated company email domains allowed to request signup
 - `APP_USER_ACCOUNT_SHEET`: defaults to `APP_USER_ACCOUNTS`
 - `NOTICE_USER_REVIEW_SHEET`: defaults to `NOTICE_USER_REVIEWS`
