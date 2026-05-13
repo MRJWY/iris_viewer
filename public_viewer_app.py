@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 import shared_app as core
@@ -13,6 +14,8 @@ PUBLIC_VIEWER_ROUTE_MAP: dict[str, tuple[str, str]] = {
     "opportunity_archive": ("iris", "opportunity_archive"),
     "favorites": ("favorites", "favorites"),
 }
+
+HEAVY_NOTICE_PAGES = {"notice", "favorites"}
 
 
 def inject_public_viewer_styles() -> None:
@@ -33,7 +36,51 @@ def inject_public_viewer_styles() -> None:
     )
 
 
-def load_public_viewer_runtime() -> tuple[core.AppModeConfig, dict[str, object], dict[str, object]]:
+@st.cache_data(ttl=300, show_spinner=False)
+def load_public_rfp_datasets(
+    notice_master_sheet_name: str,
+    opportunity_sheet_name: str,
+    opportunity_archive_sheet_name: str,
+) -> dict[str, object]:
+    notice_master_df = core.filter_notice_dataframe_by_source(
+        core.enrich_notice_df(core.load_sheet_as_dataframe(notice_master_sheet_name)),
+        "IRIS",
+    )
+    opportunity_df = core.enrich_opportunity_df(core.load_optional_sheet_as_dataframe(opportunity_sheet_name))
+    opportunity_df = core.enrich_opportunity_with_notice_meta(opportunity_df, notice_master_df)
+    opportunity_archive_df = core.enrich_opportunity_df(core.load_optional_sheet_as_dataframe(opportunity_archive_sheet_name))
+    opportunity_archive_df = core.enrich_opportunity_with_notice_meta(opportunity_archive_df, notice_master_df)
+    return core.build_app_datasets(
+        notice_master_df=notice_master_df,
+        notice_current_df=pd.DataFrame(),
+        pending_df=pd.DataFrame(),
+        notice_archive_df=pd.DataFrame(),
+        opportunity_df=opportunity_df,
+        opportunity_archive_df=opportunity_archive_df,
+        summary_df=pd.DataFrame(),
+        errors_df=pd.DataFrame(),
+    )
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_public_source_notice_datasets() -> dict[str, object]:
+    mss_current_df, mss_current_origin = core.load_mss_notice_df()
+    mss_past_df, mss_past_origin = core.load_mss_past_df()
+    nipa_current_df, nipa_current_origin = core.load_nipa_notice_df()
+    nipa_past_df, nipa_past_origin = core.load_nipa_past_df()
+    return {
+        "mss_current": mss_current_df,
+        "mss_current_origin": mss_current_origin,
+        "mss_past": mss_past_df,
+        "mss_past_origin": mss_past_origin,
+        "nipa_current": nipa_current_df,
+        "nipa_current_origin": nipa_current_origin,
+        "nipa_past": nipa_past_df,
+        "nipa_past_origin": nipa_past_origin,
+    }
+
+
+def load_public_viewer_runtime(current_page: str) -> tuple[core.AppModeConfig, dict[str, object], dict[str, object] | None]:
     core.load_dotenv()
 
     mode_config = core.build_app_mode_config(
@@ -61,17 +108,26 @@ def load_public_viewer_runtime() -> tuple[core.AppModeConfig, dict[str, object],
         "errors": core.get_env("ERROR_SHEET", "OPPORTUNITY_ERRORS"),
     }
 
-    datasets = core.load_app_datasets(
-        sheet_names["notice_master"],
-        sheet_names["notice_current"],
-        sheet_names["pending"],
-        sheet_names["notice_archive"],
-        sheet_names["opportunity"],
-        sheet_names["opportunity_archive"],
-        sheet_names["summary"],
-        sheet_names["errors"],
-    )
-    source_datasets = core.build_source_datasets()
+    if current_page in HEAVY_NOTICE_PAGES:
+        datasets = core.load_app_datasets(
+            sheet_names["notice_master"],
+            sheet_names["notice_current"],
+            sheet_names["pending"],
+            sheet_names["notice_archive"],
+            sheet_names["opportunity"],
+            sheet_names["opportunity_archive"],
+            sheet_names["summary"],
+            sheet_names["errors"],
+        )
+        source_datasets: dict[str, object] | None = load_public_source_notice_datasets()
+    else:
+        datasets = load_public_rfp_datasets(
+            sheet_names["notice_master"],
+            sheet_names["opportunity"],
+            sheet_names["opportunity_archive"],
+        )
+        source_datasets = None
+
     if core.is_user_scoped_operations_enabled():
         datasets, source_datasets = core.apply_user_review_statuses(
             datasets,
@@ -138,10 +194,15 @@ def render_public_viewer_body(
 
 
 def main() -> None:
+    current_page = core.normalize_route_page_key(core.get_query_param("page")) or "opportunity"
     try:
-        mode_config, datasets, source_datasets = load_public_viewer_runtime()
+        mode_config, datasets, source_datasets = load_public_viewer_runtime(current_page)
     except Exception as exc:
-        st.error(f"시트 로딩 실패: {exc}")
+        if "429" in str(exc) or "Read requests per minute per user" in str(exc):
+            st.error("시트 읽기 한도를 잠시 초과했습니다. 잠시 후 새로고침해 주세요.")
+            st.caption("초기 로딩 시 필요한 시트만 읽도록 줄였지만, 같은 시점의 반복 새로고침이 겹치면 잠시 제한될 수 있습니다.")
+        else:
+            st.error(f"시트 로딩 실패: {exc}")
         st.stop()
 
     render_public_viewer_body(mode_config, datasets, source_datasets)
