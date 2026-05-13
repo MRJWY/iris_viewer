@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import shared_app
+import public_viewer_app
 
 
 def main() -> None:
-    shared_app.main(app_mode="viewer")
+    public_viewer_app.main()
 
 
 if __name__ == "__main__":

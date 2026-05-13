@@ -16,12 +16,14 @@ This folder is prepared as a standalone public viewer bundle.
   - `NIPA_PAST`: closed notices
 - `Favorites`
   - unified view for notices whose review status is `관심공고`
+- `public_viewer_app.py`
+  - public viewer body that boots the app runtime and renders the admin-aligned viewer shell
 - `shared_app.py`
-  - shared viewer renderer and routing logic
+  - shared helper layer for login, Google Sheets access, and domain-scoped collaboration state
 - `app.py`
-  - default viewer entrypoint that runs `shared_app.main(app_mode="viewer")`
+  - default public viewer entrypoint that runs `public_viewer_app.main()`
 - `viewer_app.py`
-  - viewer-only alias entrypoint that runs `shared_app.main(app_mode="viewer")`
+  - alias entrypoint that runs `public_viewer_app.main()`
 - `viewer_v2_app.py`
   - experimental viewer v2 entrypoint that runs `shared_app.main_viewer_v2(app_mode="viewer")`
 - `app_config.py`
