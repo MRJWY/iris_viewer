@@ -216,37 +216,69 @@ def render_public_opportunity_page(
     archive: bool = False,
 ) -> None:
     page_key = page_key or ("opportunity_archive" if archive else "opportunity")
-    title = title or ("RFP Archive" if archive else "RFP Queue")
-    subtitle = "사업공고 내 지원 가능한 RFP를 추천합니다."
-    if archive:
-        subtitle = "보관 대상으로 분류된 RFP 분석 결과를 가볍게 탐색할 수 있습니다."
-    core.render_page_header(title, subtitle, eyebrow="RFP")
-
+    title = title or ("Opportunity Archive" if archive else "RFP Queue")
     source_df = core.ensure_opportunity_row_ids(df)
     filtered = core.filter_archived_opportunity_rows(source_df) if archive else core.filter_current_opportunity_rows(source_df)
-    if filtered.empty:
-        st.info("표시할 RFP가 없습니다.")
+
+    current_view, selected_document_id = core.get_route_state(page_key)
+    if current_view == "detail":
+        selected_row = core.get_row_by_column_value(source_df, "_row_id", selected_document_id)
+        back_col, info_col = st.columns([1, 4])
+        with back_col:
+            if st.button("목록으로", key=f"{page_key}_back_to_table_ui", use_container_width=True):
+                core.switch_to_table(page_key)
+        with info_col:
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 리스트 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
+        render_public_opportunity_detail_from_row(selected_row)
         return
 
-    working = filtered.copy()
-    working["_queue_recommendation"] = core.series_from_candidates(working, ["추천여부", "recommendation"]).fillna("").astype(str).str.strip()
-    working["_queue_status"] = core.series_from_candidates(working, ["공고상태", "status", "rcve_status"]).fillna("").astype(str).apply(core.normalize_notice_status_label)
-    working["_queue_deadline_sort"] = core.series_from_candidates(working, ["접수기간", "period"]).apply(core.extract_period_end)
-    working["_queue_project_sort"] = core.series_from_candidates(working, ["해당 과제명", "project_name", "llm_project_name"]).fillna("").astype(str).str.strip()
+    core.render_page_header(
+        title,
+        "사업공고 내 지원 가능한 RFP를 추천합니다." if not archive else "보관된 Opportunity 항목을 가볍게 탐색할 수 있습니다.",
+        eyebrow="Opportunity",
+    )
+    st.markdown(
+        '<div class="queue-shell-note">추천 상태와 공고 상태만 빠르게 좁히고, 결과 행 전체를 눌러 상세 공고와 RFP 내용을 바로 확인할 수 있게 구성했습니다.</div>',
+        unsafe_allow_html=True,
+    )
 
-    recommendation_options = sorted([value for value in working["_queue_recommendation"].unique().tolist() if core.clean(value)])
-    status_options = sorted([value for value in working["_queue_status"].unique().tolist() if core.clean(value)])
-
-    st.markdown('<div class="queue-shell-note">추천 상태와 공고 상태만 빠르게 좁히고, 결과 행을 눌러 상세 공고와 RFP 내용을 바로 확인할 수 있게 구성했습니다.</div>', unsafe_allow_html=True)
+    working = core._build_queue_filter_frame(filtered)
+    if working.empty:
+        st.info("표시할 RFP가 없습니다.")
+        return
+    recommendation_options = sorted(
+        [
+            value
+            for value in working["_queue_recommendation"].dropna().astype(str).unique().tolist()
+            if core.clean(value) and value != "-"
+        ]
+    )
+    status_options = sorted(
+        [
+            value
+            for value in working["_queue_status"].dropna().astype(str).unique().tolist()
+            if core.clean(value) and value != "-"
+        ]
+    )
+    archive_reason_options = sorted(
+        [
+            value
+            for value in working["_queue_archive_reason"].dropna().astype(str).unique().tolist()
+            if core.clean(value) and value != "-"
+        ]
+    )
     st.markdown('<div class="queue-filter-label">요건 / 필터</div>', unsafe_allow_html=True)
-    st.markdown('<div class="queue-filter-help">추천 상태와 공고 상태만 빠르게 좁혀서 분석할 RFP를 확인합니다.</div>', unsafe_allow_html=True)
-    filter_cols = st.columns(2)
+    st.markdown(
+        '<div class="queue-filter-help">추천 상태와 공고 상태만 빠르게 좁히고, 지금 볼 공고를 추려볼 수 있습니다.</div>',
+        unsafe_allow_html=True,
+    )
+    filter_cols = st.columns(3 if archive else 2)
     with filter_cols[0]:
         selected_recommendation = st.multiselect(
             "추천 상태",
             options=recommendation_options,
             default=[],
-            key=f"{page_key}_filter_recommendation_public",
+            key=f"{page_key}_filter_recommendation",
             placeholder="전체",
         )
     with filter_cols[1]:
@@ -254,51 +286,38 @@ def render_public_opportunity_page(
             "공고 상태",
             options=status_options,
             default=[],
-            key=f"{page_key}_filter_status_public",
+            key=f"{page_key}_filter_status",
             placeholder="전체",
         )
+    selected_archive_reason: list[str] = []
+    if archive:
+        with filter_cols[2]:
+            selected_archive_reason = st.multiselect(
+                "보관 사유",
+                options=archive_reason_options,
+                default=[],
+                key=f"{page_key}_filter_archive_reason",
+                placeholder="전체",
+            )
+    st.caption("추천 결과의 행 아무 곳이나 누르면 상세 공고와 RFP 내용으로 이동합니다.")
 
     filtered = working.copy()
     if selected_recommendation:
         filtered = filtered[filtered["_queue_recommendation"].isin(selected_recommendation)]
     if selected_status:
         filtered = filtered[filtered["_queue_status"].isin(selected_status)]
+    if selected_archive_reason:
+        filtered = filtered[filtered["_queue_archive_reason"].isin(selected_archive_reason)]
+
+    if filtered.empty:
+        st.info("검색 조건에 맞는 RFP가 없습니다.")
+        return
 
     filtered = filtered.sort_values(
-        by=["rfp_score", "_queue_deadline_sort", "_queue_project_sort"],
+        by=["rfp_score", "_queue_deadline_sort", "project_name"],
         ascending=[False, True, True],
         na_position="last",
     )
 
-    core.render_metrics(
-        [
-            ("RFP 분석 건수", str(len(filtered))),
-            ("추천 건수", str(int((filtered["recommendation"] == "추천").sum()) if "recommendation" in filtered.columns else 0)),
-            ("평균 점수", core.safe_mean(filtered["rfp_score"]) if "rfp_score" in filtered.columns and len(filtered) > 0 else "-"),
-            ("공고 수", str(filtered["notice_id"].nunique() if "notice_id" in filtered.columns else 0)),
-        ]
-    )
-
-    current_view, selected_document_id = core.get_route_state(page_key)
-    if current_view == "detail":
-        selected_row = core.get_row_by_column_value(source_df, "_row_id", selected_document_id)
-        action_col, info_col = st.columns([1, 5])
-        with action_col:
-            if st.button("테이블로 돌아가기", key=f"{page_key}_back_to_table_public", use_container_width=True):
-                core.switch_to_table(page_key)
-        with info_col:
-            st.markdown('<div class="page-note">브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
-        render_public_opportunity_detail_from_row(selected_row)
-        return
-
-    core.render_section_label("RFP Analysis List")
-    st.markdown(
-        f'<div class="page-note">공고명이나 과제명을 클릭하면 상세 공고와 RFP 분석 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
-        unsafe_allow_html=True,
-    )
-    core.render_clickable_table(
-        filtered,
-        core.OPPORTUNITY_PREFERRED_COLUMNS,
-        page_key=page_key,
-        id_column="_row_id",
-    )
+    st.markdown('<div class="queue-results-label">추천 결과</div>', unsafe_allow_html=True)
+    core._render_rfp_queue_list(filtered.head(30), page_key=page_key)
