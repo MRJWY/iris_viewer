@@ -18,6 +18,8 @@ This folder is prepared as a standalone public viewer bundle.
   - unified view for notices whose review status is `관심공고`
 - `public_viewer_app.py`
   - public viewer body that boots the app runtime and renders the admin-aligned viewer shell
+- `viewer_body.py`
+  - public viewer body renderers for RFP Queue, Notice Queue, Summary, and detail pages
 - `shared_app.py`
   - shared helper layer for login, Google Sheets access, comments, favorites, and domain-scoped collaboration state
 - `app.py`

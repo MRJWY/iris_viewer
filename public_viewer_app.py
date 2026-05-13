@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 import shared_app as core
+import viewer_body
 
 
 PUBLIC_VIEWER_ROUTE_MAP: dict[str, tuple[str, str]] = {
@@ -107,13 +108,13 @@ def render_public_viewer_body(
         core.navigate_to_route(target_source, target_page)
 
     if current_page == "notice":
-        core.render_notice_queue_page(datasets, source_datasets)
+        viewer_body.render_public_notice_queue_page(datasets, source_datasets)
         return
     if current_page == "summary":
-        core.render_summary_page(datasets["summary"], datasets["opportunity_all"])
+        viewer_body.render_public_summary_page(datasets["summary"], datasets["opportunity_all"])
         return
     if current_page == "opportunity_archive":
-        core.render_opportunity_page(
+        viewer_body.render_public_opportunity_page(
             datasets["opportunity_all"],
             page_key="opportunity_archive",
             title="Opportunity Archive",
@@ -128,7 +129,7 @@ def render_public_viewer_body(
         )
         return
 
-    core.render_opportunity_page(
+    viewer_body.render_public_opportunity_page(
         datasets["opportunity"],
         page_key="opportunity",
         title="RFP Queue",
