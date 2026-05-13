@@ -1,8 +1,7 @@
 # IRIS Viewer
 
 Streamlit viewer for IRIS R&D notices and selected external crawler sources.
-This folder is prepared as a standalone viewer bundle that shares the same UI
-structure and routing model as the admin app.
+This folder is prepared as a standalone public viewer bundle.
 
 ## Structure
 
@@ -18,19 +17,19 @@ structure and routing model as the admin app.
 - `관심 공고`
   - unified view for notices whose review status is `관심공고`
 - `shared_app.py`
-  - shared renderer and routing logic copied from the main app
+  - shared viewer renderer and routing logic
 - `app.py`
-  - default admin entrypoint that runs `shared_app.main(app_mode="admin")`
+  - default viewer entrypoint that runs `shared_app.main(app_mode="viewer")`
 - `viewer_app.py`
-  - viewer entrypoint that runs `shared_app.main(app_mode="viewer")`
+  - viewer-only alias entrypoint that runs `shared_app.main(app_mode="viewer")`
 - `app_config.py`
-  - mode/source/page config used by the shared app
+  - viewer source/page config used by the shared app
 
 Notice detail pages support review status updates and comment history through Google Sheets.
 Viewer login is enabled by default. Users can request signup from the viewer
-login screen, admins can approve those requests from the admin app, and users
-with the same email domain share comments, favorites, and review status within
-the same workspace scope.
+login screen. Signup approval and account provisioning are handled in a separate
+private admin app, while users with the same email domain share comments,
+favorites, and review status within the same workspace scope.
 
 ## Required Secrets
 
@@ -59,9 +58,7 @@ Optional:
 pip install -r requirements.txt
 streamlit run app.py
 ```
-
-Viewer only:
-
+Alternate viewer entrypoint:
 ```bash
 streamlit run viewer_app.py
 ```

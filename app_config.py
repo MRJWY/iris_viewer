@@ -58,7 +58,7 @@ class AppModeConfig:
 
 
 def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] = ()) -> AppModeConfig:
-    normalized_mode = "viewer" if str(app_mode or "").strip().lower() == "viewer" else "admin"
+    normalized_mode = "viewer"
 
     tipa_pages = (
         SourcePageConfig("tipa_current", "진행 공고", "notice", "진행 공고", data_key="mss_current", origin_key="mss_current_origin"),
@@ -111,7 +111,6 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
     sources = (
         SourceRouteConfig("dashboard", "Dashboard", "dashboard", True, "dashboard"),
         SourceRouteConfig("iris", "IRIS", "notice", False, "iris"),
-        SourceRouteConfig("admin_requests", "Signup Requests", "requests", False, "admin_requests"),
         SourceRouteConfig("tipa", "중소기업기술정보진흥원", "tipa_current", True, "external", page_configs=tipa_pages),
         SourceRouteConfig("nipa", "NIPA", "nipa_current", True, "external", page_configs=nipa_pages),
         SourceRouteConfig("proposal", "제안관리", "proposal", False, "proposal"),
@@ -193,16 +192,6 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             ),
         ),
     )
-    admin_nav_groups = common_nav_groups + (
-        NavGroupConfig(
-            "admin_tools",
-            "Admin",
-            (
-                NavItemConfig("signup_requests", "Signup Requests", "admin_requests", "requests"),
-            ),
-        ),
-    )
-
     if normalized_mode == "viewer":
         return AppModeConfig(
             mode="viewer",

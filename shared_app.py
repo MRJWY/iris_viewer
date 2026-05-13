@@ -1682,10 +1682,10 @@ def render_operations_source(
 def render_signup_request_public_page() -> None:
     render_page_header(
         "가입 요청",
-        "Viewer 사용 요청을 남기면 admin viewer의 Signup Requests 화면으로 바로 접수됩니다.",
+        "Viewer 사용 요청을 남기면 private admin app에서 바로 검토할 수 있도록 접수됩니다.",
         eyebrow="Support",
     )
-    st.caption("접수된 요청 검토와 승인/반려 처리는 admin viewer의 Signup Requests 화면에서 진행됩니다.")
+    st.caption("접수된 요청 검토와 승인/반려 처리는 별도 private admin app에서 진행됩니다.")
 
     default_email = clean(get_env("APP_USER_EMAIL"))
     default_name = clean(get_env("APP_USER_NAME") or get_env("DEFAULT_COMMENT_AUTHOR"))
@@ -1709,7 +1709,7 @@ def render_signup_request_public_page() -> None:
             st.error("이메일은 비워둘 수 없습니다.")
             return
         if latest_status in {"PENDING", "HOLD"}:
-            st.warning("같은 이메일로 진행 중인 가입 요청이 이미 있습니다. admin 검토 후 다시 확인해주세요.")
+            st.warning("같은 이메일로 진행 중인 가입 요청이 이미 있습니다. private admin app 검토 후 다시 확인해주세요.")
             return
         if latest_status == "APPROVED":
             st.success("이미 승인된 요청이 있습니다. 운영팀 안내 메일을 먼저 확인해주세요.")
@@ -1724,7 +1724,7 @@ def render_signup_request_public_page() -> None:
                 "status": "PENDING",
             }
         )
-        st.success("가입 요청을 접수했습니다. admin viewer의 Signup Requests 화면에서 바로 검토할 수 있습니다.")
+        st.success("가입 요청을 접수했습니다. private admin app에서 바로 검토할 수 있습니다.")
         st.rerun()
 
 
@@ -1902,7 +1902,6 @@ def render_signup_requests_source(
 SOURCE_RENDERERS = {
     "dashboard": render_dashboard_source,
     "iris": render_iris_source,
-    "admin_requests": render_signup_requests_source,
     "tipa": render_tipa_source,
     "nipa": render_nipa_source,
     "proposal": render_proposal_source,
