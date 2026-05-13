@@ -19,13 +19,11 @@ This folder is prepared as a standalone public viewer bundle.
 - `public_viewer_app.py`
   - public viewer body that boots the app runtime and renders the admin-aligned viewer shell
 - `shared_app.py`
-  - shared helper layer for login, Google Sheets access, and domain-scoped collaboration state
+  - shared helper layer for login, Google Sheets access, comments, favorites, and domain-scoped collaboration state
 - `app.py`
   - default public viewer entrypoint that runs `public_viewer_app.main()`
 - `viewer_app.py`
   - alias entrypoint that runs `public_viewer_app.main()`
-- `viewer_v2_app.py`
-  - experimental viewer v2 entrypoint that runs `shared_app.main_viewer_v2(app_mode="viewer")`
 - `app_config.py`
   - viewer source/page config used by the shared app
 
@@ -64,8 +62,4 @@ streamlit run app.py
 Alternate viewer entrypoint:
 ```bash
 streamlit run viewer_app.py
-```
-Experimental admin-body parity entrypoint:
-```bash
-streamlit run viewer_v2_app.py
 ```
