@@ -2985,7 +2985,18 @@ def apply_user_review_statuses(
         return datasets, source_datasets
 
     scoped_datasets = dict(datasets)
-    for key in ["notice", "notice_view", "pending", "opportunity", "opportunity_archive", "summary"]:
+    for key in [
+        "notice",
+        "notice_master",
+        "notice_current",
+        "notice_view",
+        "pending",
+        "notice_archive",
+        "opportunity",
+        "opportunity_all",
+        "opportunity_archive",
+        "summary",
+    ]:
         if key in scoped_datasets:
             scoped_datasets[key] = apply_user_review_statuses_to_df(scoped_datasets[key], "iris", user_reviews_df)
 
@@ -8059,18 +8070,28 @@ def render_notice_page(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) ->
 
 def build_app_datasets(
     *,
-    notice_df: pd.DataFrame,
+    notice_master_df: pd.DataFrame,
+    notice_current_df: pd.DataFrame,
     pending_df: pd.DataFrame,
+    notice_archive_df: pd.DataFrame,
     opportunity_df: pd.DataFrame,
+    opportunity_archive_df: pd.DataFrame,
     summary_df: pd.DataFrame,
     errors_df: pd.DataFrame,
 ) -> dict[str, pd.DataFrame]:
-    notice_view_df = merge_notice_with_analysis(notice_df, opportunity_df)
+    notice_view_base_df = combine_notice_frames(notice_current_df, pending_df, notice_archive_df)
+    opportunity_all_df = combine_opportunity_frames(opportunity_df, opportunity_archive_df)
+    notice_view_df = merge_notice_with_analysis(notice_view_base_df, opportunity_all_df)
     return {
-        "notice": notice_df,
+        "notice": notice_view_base_df,
+        "notice_master": notice_master_df,
+        "notice_current": notice_current_df,
         "notice_view": notice_view_df,
         "pending": pending_df,
+        "notice_archive": notice_archive_df,
         "opportunity": opportunity_df,
+        "opportunity_all": opportunity_all_df,
+        "opportunity_archive": opportunity_archive_df,
         "summary": summary_df,
         "errors": errors_df,
     }
@@ -8078,23 +8099,45 @@ def build_app_datasets(
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_app_datasets(
-    notice_sheet_name: str,
-    pending_sheet_name: str,
+    notice_master_sheet_name: str,
+    notice_current_sheet_name: str,
+    notice_pending_sheet_name: str,
+    notice_archive_sheet_name: str,
     opportunity_sheet_name: str,
+    opportunity_archive_sheet_name: str,
     summary_sheet_name: str,
     error_sheet_name: str,
 ) -> dict[str, pd.DataFrame]:
-    notice_df = enrich_notice_df(load_sheet_as_dataframe(notice_sheet_name))
-    pending_df = enrich_notice_df(load_optional_sheet_as_dataframe(pending_sheet_name))
+    notice_master_df = filter_notice_dataframe_by_source(
+        enrich_notice_df(load_sheet_as_dataframe(notice_master_sheet_name)),
+        "IRIS",
+    )
+    notice_current_df = filter_notice_dataframe_by_source(
+        enrich_notice_df(load_optional_sheet_as_dataframe(notice_current_sheet_name)),
+        "IRIS",
+    )
+    pending_df = filter_notice_dataframe_by_source(
+        enrich_notice_df(load_optional_sheet_as_dataframe(notice_pending_sheet_name)),
+        "IRIS",
+    )
+    notice_archive_df = filter_notice_dataframe_by_source(
+        enrich_notice_df(load_optional_sheet_as_dataframe(notice_archive_sheet_name)),
+        "IRIS",
+    )
     opportunity_df = enrich_opportunity_df(load_optional_sheet_as_dataframe(opportunity_sheet_name))
-    opportunity_df = enrich_opportunity_with_notice_meta(opportunity_df, notice_df)
+    opportunity_df = enrich_opportunity_with_notice_meta(opportunity_df, notice_master_df)
+    opportunity_archive_df = enrich_opportunity_df(load_optional_sheet_as_dataframe(opportunity_archive_sheet_name))
+    opportunity_archive_df = enrich_opportunity_with_notice_meta(opportunity_archive_df, notice_master_df)
     summary_df = enrich_summary_df(load_optional_sheet_as_dataframe(summary_sheet_name))
-    summary_df = enrich_summary_with_notice_meta(summary_df, notice_df)
+    summary_df = enrich_summary_with_notice_meta(summary_df, notice_master_df)
     errors_df = enrich_error_df(load_optional_sheet_as_dataframe(error_sheet_name))
     return build_app_datasets(
-        notice_df=notice_df,
+        notice_master_df=notice_master_df,
+        notice_current_df=notice_current_df,
         pending_df=pending_df,
+        notice_archive_df=notice_archive_df,
         opportunity_df=opportunity_df,
+        opportunity_archive_df=opportunity_archive_df,
         summary_df=summary_df,
         errors_df=errors_df,
     )
@@ -8131,6 +8174,41 @@ def combine_notice_frames(*frames: pd.DataFrame) -> pd.DataFrame:
     elif "notice_id" in combined.columns:
         combined = combined.drop_duplicates(subset=["notice_id"], keep="first")
     return combined
+
+
+def combine_opportunity_frames(*frames: pd.DataFrame) -> pd.DataFrame:
+    available_frames = [frame.copy() for frame in frames if frame is not None and not frame.empty]
+    if not available_frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(available_frames, ignore_index=True)
+    for key_columns in [
+        ["document_id"],
+        ["_row_id"],
+        ["notice_id", "project_name"],
+        ["notice_id", "rfp_title"],
+    ]:
+        if all(column in combined.columns for column in key_columns):
+            non_empty_mask = combined[key_columns].fillna("").astype(str).apply(
+                lambda col: col.str.strip()
+            )
+            valid_rows = non_empty_mask.ne("").all(axis=1)
+            if valid_rows.any():
+                deduped = combined[valid_rows].drop_duplicates(subset=key_columns, keep="first")
+                remainder = combined[~valid_rows]
+                return pd.concat([deduped, remainder], ignore_index=True)
+    return combined
+
+
+def filter_notice_dataframe_by_source(df: pd.DataFrame, source_site: str) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame()
+    if df.empty or "source_site" not in df.columns:
+        return df.copy()
+    normalized_source = clean(source_site).upper()
+    return df[
+        df["source_site"].fillna("").astype(str).str.strip().str.upper().eq(normalized_source)
+    ].copy()
 
 
 def render_notice_page_with_scope(
@@ -8660,6 +8738,23 @@ def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
     )
 
 
+def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
+    del df
+
+    working = ensure_opportunity_row_ids(filter_current_opportunity_rows(opportunity_df.copy()))
+    if working.empty:
+        st.info("?쒖떆??遺꾩꽍 ??곸씠 ?놁뒿?덈떎.")
+        return
+
+    selected_row_id = clean(get_query_param("id"))
+    if not selected_row_id or selected_row_id not in working["_row_id"].fillna("").astype(str).tolist():
+        working = working.sort_values(by=["rfp_score", "project_name"], ascending=[False, True], na_position="last")
+        selected_row_id = clean(working.iloc[0].get("_row_id"))
+
+    selected_row = get_row_by_column_value(working, "_row_id", selected_row_id)
+    render_opportunity_detail_from_row(selected_row)
+
+
 def render_errors_page(df: pd.DataFrame) -> None:
     st.subheader("Errors")
     page_key = "errors"
@@ -8918,8 +9013,12 @@ def main(app_mode: str = "admin"):
     render_workspace_header(mode_config)
 
     sheet_names = {
-        "notice": get_env("NOTICE_MASTER_SHEET", "IRIS_NOTICE_MASTER"),
-        "pending": get_env("PENDING_MASTER_SHEET", "IRIS_PENDING_MASTER"),
+        "notice_master": get_env("CANONICAL_NOTICE_MASTER_SHEET")
+        or get_env("NOTICE_UNIFIED_MASTER_SHEET")
+        or "NOTICE_MASTER",
+        "notice_current": get_env("NOTICE_CURRENT_VIEW_SHEET", "NOTICE_CURRENT_VIEW"),
+        "pending": get_env("NOTICE_PENDING_VIEW_SHEET", "NOTICE_PENDING_VIEW"),
+        "notice_archive": get_env("NOTICE_ARCHIVE_VIEW_SHEET", "NOTICE_ARCHIVE_VIEW"),
         "opportunity": (
             get_env("IRIS_OPPORTUNITY_CURRENT_SHEET")
             or get_env("OPPORTUNITY_CURRENT_SHEET")
@@ -8927,15 +9026,24 @@ def main(app_mode: str = "admin"):
             or get_env("OPPORTUNITY_MASTER_SHEET")
             or get_env("MASTER_SHEET", "IRIS_OPPORTUNITY_CURRENT")
         ),
+        "opportunity_archive": (
+            get_env("IRIS_OPPORTUNITY_ARCHIVE_SHEET")
+            or get_env("OPPORTUNITY_ARCHIVE_SHEET")
+            or get_env("ARCHIVE_SHEET")
+            or "IRIS_OPPORTUNITY_ARCHIVE"
+        ),
         "summary": get_env("SUMMARY_SHEET", "SUMMARY"),
         "errors": get_env("ERROR_SHEET", "OPPORTUNITY_ERRORS"),
     }
 
     try:
         datasets = load_app_datasets(
-            sheet_names["notice"],
+            sheet_names["notice_master"],
+            sheet_names["notice_current"],
             sheet_names["pending"],
+            sheet_names["notice_archive"],
             sheet_names["opportunity"],
+            sheet_names["opportunity_archive"],
             sheet_names["summary"],
             sheet_names["errors"],
         )
