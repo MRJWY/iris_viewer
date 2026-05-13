@@ -4765,27 +4765,207 @@ def render_page_header(title: str, subtitle: str, *, eyebrow: str | None = None)
     )
 
 
+def _inject_viewer_sync_surface_styles() -> None:
+    if st.session_state.get("_viewer_sync_surface_styles_injected"):
+        return
+    st.session_state["_viewer_sync_surface_styles_injected"] = True
+    st.markdown(
+        """
+        <style>
+        .workspace-shell {
+            border: 1px solid rgba(187, 203, 228, 0.72);
+            border-radius: 24px;
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(245,249,255,0.98) 100%),
+                radial-gradient(circle at top left, rgba(79, 124, 255, 0.12), transparent 40%);
+            box-shadow: 0 24px 48px rgba(15, 23, 42, 0.08);
+            padding: 1.4rem 1.5rem 1.2rem;
+        }
+        .workspace-title {
+            color: #0f172a;
+            font-size: clamp(1.65rem, 1.6vw + 1rem, 2.35rem);
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            line-height: 1.08;
+        }
+        .workspace-subtitle {
+            margin-top: 0.5rem;
+            color: #475569;
+            font-size: 0.98rem;
+            line-height: 1.6;
+            max-width: 56rem;
+        }
+        .workspace-meta-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+            margin-top: 0.95rem;
+        }
+        .workspace-meta-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.38rem 0.82rem;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.32);
+            background: rgba(255, 255, 255, 0.92);
+            color: #1e3a8a;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+        }
+        .workspace-updated {
+            margin-top: 0.65rem;
+            color: #64748b;
+            font-size: 0.8rem;
+        }
+        .workspace-action-spacer {
+            min-height: 0.2rem;
+        }
+        .detail-hero,
+        .analysis-hero {
+            border: 1px solid rgba(191, 203, 226, 0.7);
+            border-radius: 24px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(246,249,255,0.96));
+            box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+            padding: 1.35rem 1.4rem;
+        }
+        .detail-card {
+            border: 1px solid rgba(203, 213, 225, 0.82);
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.98);
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
+            padding: 1rem 1.05rem;
+            height: 100%;
+        }
+        .detail-card-title {
+            color: #1d4ed8;
+            font-size: 0.84rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+            text-transform: none;
+        }
+        .detail-field {
+            margin-top: 0.55rem;
+        }
+        .detail-label {
+            color: #64748b;
+            font-size: 0.76rem;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            margin-bottom: 0.18rem;
+        }
+        .detail-value {
+            color: #0f172a;
+            font-size: 0.97rem;
+            font-weight: 700;
+            line-height: 1.55;
+            word-break: keep-all;
+        }
+        .detail-more-body {
+            color: #334155;
+            line-height: 1.7;
+        }
+        .detail-section-title {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            margin: 1.1rem 0 0.7rem;
+            color: #0f172a;
+            font-size: 1.08rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+        .detail-section-title::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: linear-gradient(90deg, rgba(148, 163, 184, 0.45), rgba(148, 163, 184, 0));
+        }
+        .list-table-wrap {
+            border: 1px solid rgba(203, 213, 225, 0.78);
+            border-radius: 24px;
+            background: rgba(255, 255, 255, 0.98);
+            box-shadow: 0 20px 40px rgba(15, 23, 42, 0.06);
+            padding: 0.4rem 0.5rem 0.65rem;
+        }
+        .list-table thead th {
+            background: #eff6ff;
+            color: #1e3a8a;
+            font-weight: 800;
+            border-bottom: 1px solid rgba(191, 219, 254, 0.9);
+        }
+        .list-table tbody td {
+            border-bottom: 1px solid rgba(226, 232, 240, 0.85);
+            vertical-align: top;
+        }
+        .list-row-link,
+        .list-row-link:hover,
+        .list-row-link:focus,
+        .list-link-out,
+        .list-link-out:hover,
+        .list-link-out:focus {
+            color: inherit !important;
+            text-decoration: none !important;
+        }
+        @media (max-width: 900px) {
+            .workspace-shell,
+            .detail-hero,
+            .analysis-hero,
+            .list-table-wrap {
+                border-radius: 18px;
+                padding: 1rem 1rem 0.95rem;
+            }
+            .workspace-title {
+                font-size: 1.55rem;
+            }
+            .detail-section-title {
+                font-size: 1rem;
+                margin-top: 0.9rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_workspace_header(mode_config: AppModeConfig) -> None:
+    _inject_viewer_sync_surface_styles()
+    user_id = get_current_user_id()
+    scope_label = get_current_operation_scope_label()
+    meta_pills: list[str] = []
+    if user_id:
+        meta_pills.append(f'<span class="workspace-meta-pill">로그인 {escape(user_id)}</span>')
+    if scope_label:
+        meta_pills.append(f'<span class="workspace-meta-pill">공유 {escape(scope_label)}</span>')
+    last_updated = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M")
+
     header_cols = st.columns([7, 2, 1.5])
     with header_cols[0]:
-        st.title(mode_config.header_title)
-        st.caption(mode_config.header_caption)
+        st.markdown(
+            (
+                '<div class="workspace-shell">'
+                f'<div class="workspace-title">{escape(mode_config.header_title)}</div>'
+                f'<div class="workspace-subtitle">{escape(mode_config.header_caption)}</div>'
+                f'<div class="workspace-meta-row">{"".join(meta_pills)}</div>'
+                '</div>'
+            ),
+            unsafe_allow_html=True,
+        )
     with header_cols[1]:
-        st.markdown("<div style='height: 1.9rem;'></div>", unsafe_allow_html=True)
+        st.markdown("<div class='workspace-action-spacer'></div>", unsafe_allow_html=True)
         if st.button("새로고침", key=f"{mode_config.mode}_workspace_refresh", use_container_width=True):
             st.rerun()
     with header_cols[2]:
-        user_id = get_current_user_id()
         if user_id:
-            scope_label = get_current_operation_scope_label()
-            st.caption(f"로그인: {user_id}")
-            if scope_label and scope_label != user_id:
-                st.caption(f"공유: {scope_label}")
+            st.markdown("<div class='workspace-action-spacer'></div>", unsafe_allow_html=True)
             if st.button("로그아웃", key=f"{mode_config.mode}_logout", use_container_width=True):
                 logout_current_user()
-
-    last_updated = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M")
-    st.caption(f"마지막 갱신: {last_updated}")
+    st.markdown(
+        f'<div class="workspace-updated">마지막 갱신 {escape(last_updated)}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_section_label(text: str) -> None:
@@ -7968,6 +8148,18 @@ def render_notice_page_with_scope(
         subtitle = "종료되었거나 보관 대상으로 분류된 공고를 모아 봅니다."
     elif default_status_scope == "예정":
         subtitle = "예정 공고와 접수 예정 건을 먼저 확인합니다."
+    current_view, selected_notice_id = get_route_state(page_key)
+    if current_view == "detail":
+        selected_row = get_row_by_column_value(source_df, "공고ID", selected_notice_id)
+        action_col, info_col = st.columns([1, 5])
+        with action_col:
+            if st.button("RFP Dashboard로", key=f"{page_key}_back_to_dashboard", use_container_width=True):
+                navigate_to_route("dashboard", "dashboard")
+        with info_col:
+            st.markdown('<div class="page-note">RFP 추천 화면에서 연결된 공고 상세를 확인하는 화면입니다.</div>', unsafe_allow_html=True)
+        render_notice_detail_from_row(selected_row, opportunity_df)
+        return
+
     render_page_header(title, subtitle, eyebrow="Notice")
 
     filtered = source_df.copy()
@@ -8005,22 +8197,9 @@ def render_notice_page_with_scope(
         ]
     )
 
-    current_view, selected_notice_id = get_route_state(page_key)
-
-    if current_view == "detail":
-        selected_row = get_row_by_column_value(source_df, "공고ID", selected_notice_id)
-        action_col, info_col = st.columns([1, 5])
-        with action_col:
-            if st.button("테이블로 돌아가기", key=f"{page_key}_back_to_table", use_container_width=True):
-                switch_to_table(page_key)
-        with info_col:
-            st.markdown('<div class="page-note">브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
-        render_notice_detail_from_row(selected_row, opportunity_df)
-        return
-
-    render_section_label("Notice Queue")
+    render_section_label("Notice List")
     st.markdown(
-        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
+        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 공고와 연결 RFP를 함께 확인할 수 있습니다. 현재 {len(filtered)}건</div>',
         unsafe_allow_html=True,
     )
     render_clickable_table(
@@ -8461,16 +8640,16 @@ def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
         selected_row = get_row_by_column_value(source_df, "공고ID", selected_notice_id)
         action_col, info_col = st.columns([1, 5])
         with action_col:
-            if st.button("테이블로 돌아가기", key="summary_back_to_table", use_container_width=True):
+            if st.button("목록으로", key="summary_back_to_table", use_container_width=True):
                 switch_to_table(page_key)
         with info_col:
-            st.markdown('<div class="page-note">브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 요약 리스트 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
         render_summary_detail_from_row(selected_row, opportunity_df)
         return
 
     render_section_label("Summary List")
     st.markdown(
-        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
+        f'<div class="page-note">공고명 또는 과제명을 클릭하면 대표 분석 요약과 연결된 RFP 상세를 함께 확인할 수 있습니다. 현재 {len(filtered)}건</div>',
         unsafe_allow_html=True,
     )
     render_clickable_table(
