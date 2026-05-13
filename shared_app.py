@@ -24,6 +24,12 @@ from app_config import (
 )
 from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
+from jobs_common.opportunity_sheet_names import (
+    resolve_mss_opportunity_archive_sheet,
+    resolve_mss_opportunity_current_sheet,
+    resolve_nipa_opportunity_archive_sheet,
+    resolve_nipa_opportunity_current_sheet,
+)
 
 try:
     from jobs_mss.crawl_mss_list import crawl_mss_list
@@ -3380,6 +3386,41 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
     load_auth_user_accounts.clear()
 
 
+def resolve_notice_source_key(row: dict | None) -> str:
+    if row:
+        source_key = clean(row.get("_source_key")).lower()
+
+        source_alias_map = {
+            "tipa": "tipa",
+            "mss": "tipa",
+            "以묒냼湲곗뾽踰ㅼ쿂遺": "tipa",
+            "nipa": "nipa",
+            "iris": "iris",
+        }
+
+        source_key = source_alias_map.get(source_key, source_key)
+
+        if source_key and source_key != "favorites":
+            return source_key
+
+    current_source = clean(get_query_param("source")).lower()
+
+    source_alias_map = {
+        "tipa": "tipa",
+        "mss": "tipa",
+        "以묒냼湲곗뾽踰ㅼ쿂遺": "tipa",
+        "nipa": "nipa",
+        "iris": "iris",
+    }
+
+    current_source = source_alias_map.get(current_source, current_source)
+
+    if current_source in {"tipa", "nipa", "iris"}:
+        return current_source
+
+    return "iris"
+
+
 def normalize_mss_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -3559,13 +3600,25 @@ def load_nipa_past_df() -> tuple[pd.DataFrame, str]:
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_mss_opportunity_df() -> pd.DataFrame:
-    sheet_name = get_env("MSS_OPPORTUNITY_MASTER_SHEET", "MSS_OPPORTUNITY_MASTER")
+    sheet_name = resolve_mss_opportunity_current_sheet(get_env)
+    return enrich_opportunity_df(load_optional_sheet_as_dataframe(sheet_name))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_mss_opportunity_archive_df() -> pd.DataFrame:
+    sheet_name = get_env("MSS_OPPORTUNITY_ARCHIVE_SHEET", "MSS_OPPORTUNITY_ARCHIVE")
     return enrich_opportunity_df(load_optional_sheet_as_dataframe(sheet_name))
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_nipa_opportunity_df() -> pd.DataFrame:
-    sheet_name = get_env("NIPA_OPPORTUNITY_MASTER_SHEET", "NIPA_OPPORTUNITY_MASTER")
+    sheet_name = resolve_nipa_opportunity_current_sheet(get_env)
+    return enrich_opportunity_df(load_optional_sheet_as_dataframe(sheet_name))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_nipa_opportunity_archive_df() -> pd.DataFrame:
+    sheet_name = get_env("NIPA_OPPORTUNITY_ARCHIVE_SHEET", "NIPA_OPPORTUNITY_ARCHIVE")
     return enrich_opportunity_df(load_optional_sheet_as_dataframe(sheet_name))
 
 
@@ -7700,11 +7753,13 @@ def build_source_datasets() -> dict[str, object]:
         "mss_past": mss_past_df,
         "mss_past_origin": mss_past_origin,
         "mss_opportunity": load_mss_opportunity_df(),
+        "mss_opportunity_archive": load_mss_opportunity_archive_df(),
         "nipa_current": nipa_current_df,
         "nipa_current_origin": nipa_current_origin,
         "nipa_past": nipa_past_df,
         "nipa_past_origin": nipa_past_origin,
         "nipa_opportunity": load_nipa_opportunity_df(),
+        "nipa_opportunity_archive": load_nipa_opportunity_archive_df(),
     }
 
 
