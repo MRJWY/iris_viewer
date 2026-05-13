@@ -10,7 +10,6 @@ import viewer_body
 PUBLIC_VIEWER_ROUTE_MAP: dict[str, tuple[str, str]] = {
     "opportunity": ("iris", "opportunity"),
     "notice": ("iris", "notice"),
-    "summary": ("iris", "summary"),
     "opportunity_archive": ("iris", "opportunity_archive"),
     "favorites": ("favorites", "favorites"),
 }
@@ -45,7 +44,6 @@ def render_public_sidebar_navigation(current_page: str) -> None:
     workspace_items: list[tuple[str, str, str]] = [
         ("RFP Queue", "iris", "opportunity"),
         ("Notice Queue", "iris", "notice"),
-        ("Summary", "iris", "summary"),
         ("Archive", "iris", "opportunity_archive"),
         ("Favorites", "favorites", "favorites"),
     ]
@@ -188,9 +186,6 @@ def render_public_viewer_body(
 
     if current_page == "notice":
         viewer_body.render_public_notice_queue_page(datasets, source_datasets)
-        return
-    if current_page == "summary":
-        viewer_body.render_public_summary_page(datasets["summary"], datasets["opportunity_all"])
         return
     if current_page == "opportunity_archive":
         viewer_body.render_public_opportunity_page(
