@@ -24,12 +24,6 @@ from app_config import (
 )
 from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
-from jobs_common.opportunity_sheet_names import (
-    resolve_mss_opportunity_archive_sheet,
-    resolve_mss_opportunity_current_sheet,
-    resolve_nipa_opportunity_archive_sheet,
-    resolve_nipa_opportunity_current_sheet,
-)
 
 try:
     from jobs_mss.crawl_mss_list import crawl_mss_list
@@ -48,6 +42,68 @@ DEFAULT_PAGE_SIZE = 300
 REVIEW_OPTIONS = ["", "검토전", "관심공고", "보류", "완료", "검토완료"]
 FAVORITE_REVIEW_STATUS = "관심공고"
 ARCHIVE_REVIEW_STATUS_VALUES = {"완료", "검토완료"}
+
+
+def _resolve_sheet_name(
+    *,
+    current_keys: tuple[str, ...],
+    legacy_keys: tuple[str, ...] = (),
+    default_name: str,
+    legacy_default_names: tuple[str, ...] = (),
+    getter=None,
+) -> str:
+    getter = getter or (lambda key: clean(os.getenv(key)))
+
+    for key in current_keys:
+        value = clean(getter(key))
+        if value:
+            return value
+
+    for key in legacy_keys:
+        value = clean(getter(key))
+        if not value:
+            continue
+        if value in legacy_default_names:
+            return default_name
+        return value
+
+    return default_name
+
+
+def resolve_mss_opportunity_current_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("MSS_OPPORTUNITY_CURRENT_SHEET",),
+        legacy_keys=("MSS_OPPORTUNITY_MASTER_SHEET",),
+        default_name="MSS_OPPORTUNITY_CURRENT",
+        legacy_default_names=("MSS_OPPORTUNITY_MASTER",),
+        getter=getter,
+    )
+
+
+def resolve_mss_opportunity_archive_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("MSS_OPPORTUNITY_ARCHIVE_SHEET",),
+        default_name="MSS_OPPORTUNITY_ARCHIVE",
+        getter=getter,
+    )
+
+
+def resolve_nipa_opportunity_current_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("NIPA_OPPORTUNITY_CURRENT_SHEET",),
+        legacy_keys=("NIPA_OPPORTUNITY_MASTER_SHEET",),
+        default_name="NIPA_OPPORTUNITY_CURRENT",
+        legacy_default_names=("NIPA_OPPORTUNITY_MASTER",),
+        getter=getter,
+    )
+
+
+def resolve_nipa_opportunity_archive_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("NIPA_OPPORTUNITY_ARCHIVE_SHEET",),
+        default_name="NIPA_OPPORTUNITY_ARCHIVE",
+        getter=getter,
+    )
 
 
 NOTICE_PREFERRED_COLUMNS = [
