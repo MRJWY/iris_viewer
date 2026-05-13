@@ -6615,10 +6615,13 @@ def render_page_tabs(current_page_key: str, tabs: list[tuple[str, str]], *, key:
     return selected_page_key
 
 
-def build_route_href(page_key: str, identifier: str) -> str:
+def build_route_href(page_key: str, identifier: str, *, source_key: str | None = None) -> str:
     params = {"page": normalize_route_page_key(page_key), "view": "detail", "id": clean(identifier)}
+    explicit_source = clean(source_key)
     current_source = get_query_param("source")
-    if current_source and not (current_source == "favorites" and page_key != "favorites"):
+    if explicit_source:
+        params["source"] = explicit_source
+    elif current_source and not (current_source == "favorites" and page_key != "favorites"):
         params["source"] = current_source
     params = with_auth_params(params)
     return f"?{urlencode(params)}"
@@ -6629,6 +6632,9 @@ def render_clickable_table(
     preferred_columns: list[str],
     page_key: str,
     id_column: str,
+    *,
+    source_key_column: str | None = None,
+    source_key_value: str | None = None,
 ) -> None:
     display_columns = [col for col in preferred_columns if col in df.columns]
     display_columns = [
@@ -6674,7 +6680,7 @@ def render_clickable_table(
         "budget": 24,
     }
 
-    internal_link_columns = {"공고명", "notice_title", "해당 과제명", "project_name"}
+    internal_link_columns = {"공고명", "notice_title", "해당 과제명", "연결 과제명", "project_name"}
 
     header_cells = [f"<th>{escape(column)}</th>" for column in display_columns]
     header_html = "".join(header_cells)
@@ -6685,7 +6691,8 @@ def render_clickable_table(
         if not identifier:
             continue
 
-        href = build_route_href(page_key, identifier)
+        row_source_key = source_key_value or clean(row.get(source_key_column)) if source_key_column else source_key_value
+        href = build_route_href(page_key, identifier, source_key=row_source_key)
         cell_html = []
         for column in display_columns:
             value = compact_table_value(row.get(column), max_chars=compact_limits.get(column, 70))
@@ -7260,6 +7267,7 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
         ],
         page_key="opportunity",
         id_column="_row_id",
+        source_key_column="source_key",
     )
 
 
