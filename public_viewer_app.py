@@ -32,6 +32,16 @@ def inject_public_viewer_styles() -> None:
 
 
 def render_public_sidebar_navigation(current_page: str) -> None:
+    user_id = core.get_current_user_id()
+    scope_label = core.get_current_operation_scope_label()
+    st.sidebar.markdown(
+        (
+            '<div class="sidebar-brand">'
+            '<div class="sidebar-brand-mark">RFP<br><span>Intelligence</span></div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
     workspace_items: list[tuple[str, str, str]] = [
         ("RFP Queue", "iris", "opportunity"),
         ("Notice Queue", "iris", "notice"),
@@ -49,6 +59,19 @@ def render_public_sidebar_navigation(current_page: str) -> None:
             use_container_width=True,
         ):
             core.navigate_to_route(source_key, page_key)
+
+    st.sidebar.markdown(
+        '<div class="sidebar-nav-label sidebar-nav-label-secondary">Session</div>',
+        unsafe_allow_html=True,
+    )
+    if user_id:
+        st.sidebar.caption(f"로그인: {user_id}")
+    if scope_label:
+        st.sidebar.caption(f"공유: {scope_label}")
+    if st.sidebar.button("새로고침", key="public_sidebar_refresh", use_container_width=True):
+        st.rerun()
+    if user_id and st.sidebar.button("로그아웃", key="public_sidebar_logout", use_container_width=True):
+        core.logout_current_user()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -157,11 +180,11 @@ def render_public_viewer_body(
     datasets: dict[str, object],
     source_datasets: dict[str, object],
 ) -> None:
+    del mode_config
     current_page = core.normalize_route_page_key(core.get_query_param("page")) or "opportunity"
     if current_page not in PUBLIC_VIEWER_ROUTE_MAP:
         current_page = "opportunity"
     render_public_sidebar_navigation(current_page)
-    core.render_workspace_header(mode_config)
 
     if current_page == "notice":
         viewer_body.render_public_notice_queue_page(datasets, source_datasets)
