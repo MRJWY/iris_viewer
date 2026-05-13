@@ -106,6 +106,57 @@ def resolve_nipa_opportunity_archive_sheet(getter=None) -> str:
     )
 
 
+def resolve_canonical_notice_master_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("CANONICAL_NOTICE_MASTER_SHEET", "NOTICE_UNIFIED_MASTER_SHEET"),
+        default_name="NOTICE_MASTER",
+        getter=getter,
+    )
+
+
+def resolve_notice_current_view_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("NOTICE_CURRENT_VIEW_SHEET",),
+        default_name="NOTICE_CURRENT_VIEW",
+        getter=getter,
+    )
+
+
+def resolve_notice_pending_view_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("NOTICE_PENDING_VIEW_SHEET",),
+        default_name="NOTICE_PENDING_VIEW",
+        getter=getter,
+    )
+
+
+def resolve_notice_archive_view_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("NOTICE_ARCHIVE_VIEW_SHEET",),
+        default_name="NOTICE_ARCHIVE_VIEW",
+        getter=getter,
+    )
+
+
+def resolve_iris_opportunity_current_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("IRIS_OPPORTUNITY_CURRENT_SHEET", "OPPORTUNITY_CURRENT_SHEET"),
+        legacy_keys=("IRIS_OPPORTUNITY_MASTER_SHEET", "OPPORTUNITY_MASTER_SHEET", "MASTER_SHEET"),
+        default_name="IRIS_OPPORTUNITY_CURRENT",
+        legacy_default_names=("IRIS_OPPORTUNITY_MASTER", "OPPORTUNITY_MASTER"),
+        getter=getter,
+    )
+
+
+def resolve_iris_opportunity_archive_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("IRIS_OPPORTUNITY_ARCHIVE_SHEET", "OPPORTUNITY_ARCHIVE_SHEET", "ARCHIVE_SHEET"),
+        default_name="IRIS_OPPORTUNITY_ARCHIVE",
+        legacy_default_names=("OPPORTUNITY_ARCHIVE",),
+        getter=getter,
+    )
+
+
 NOTICE_PREFERRED_COLUMNS = [
     "공고일자",
     "접수기간",
@@ -8671,25 +8722,12 @@ def main(app_mode: str = "viewer"):
     render_workspace_header(mode_config)
 
     sheet_names = {
-        "notice_master": get_env("CANONICAL_NOTICE_MASTER_SHEET")
-        or get_env("NOTICE_UNIFIED_MASTER_SHEET")
-        or "NOTICE_MASTER",
-        "notice_current": get_env("NOTICE_CURRENT_VIEW_SHEET", "NOTICE_CURRENT_VIEW"),
-        "pending": get_env("NOTICE_PENDING_VIEW_SHEET", "NOTICE_PENDING_VIEW"),
-        "notice_archive": get_env("NOTICE_ARCHIVE_VIEW_SHEET", "NOTICE_ARCHIVE_VIEW"),
-        "opportunity": (
-            get_env("IRIS_OPPORTUNITY_CURRENT_SHEET")
-            or get_env("OPPORTUNITY_CURRENT_SHEET")
-            or get_env("IRIS_OPPORTUNITY_MASTER_SHEET")
-            or get_env("OPPORTUNITY_MASTER_SHEET")
-            or get_env("MASTER_SHEET", "IRIS_OPPORTUNITY_CURRENT")
-        ),
-        "opportunity_archive": (
-            get_env("IRIS_OPPORTUNITY_ARCHIVE_SHEET")
-            or get_env("OPPORTUNITY_ARCHIVE_SHEET")
-            or get_env("ARCHIVE_SHEET")
-            or "IRIS_OPPORTUNITY_ARCHIVE"
-        ),
+        "notice_master": resolve_canonical_notice_master_sheet(get_env),
+        "notice_current": resolve_notice_current_view_sheet(get_env),
+        "pending": resolve_notice_pending_view_sheet(get_env),
+        "notice_archive": resolve_notice_archive_view_sheet(get_env),
+        "opportunity": resolve_iris_opportunity_current_sheet(get_env),
+        "opportunity_archive": resolve_iris_opportunity_archive_sheet(get_env),
         "summary": get_env("SUMMARY_SHEET", "SUMMARY"),
         "errors": get_env("ERROR_SHEET", "OPPORTUNITY_ERRORS"),
     }
