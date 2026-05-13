@@ -191,6 +191,7 @@ OPPORTUNITY_PREFERRED_COLUMNS = [
     "점수",
     "예산",
     "공고상태",
+    "archive_reason_label",
     "검토여부",
     "상세링크",
 ]
@@ -4116,6 +4117,40 @@ def is_archived_review_status_value(value: object) -> bool:
     }
 
 
+def derive_archive_reason_for_app(row: dict[str, object] | pd.Series) -> str:
+    row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
+    manual_archive = clean(first_non_empty(row_dict, "manual_archive")).upper() == "Y"
+    review_status = first_non_empty(row_dict, "review_status", "검토여부", "검토 여부")
+    current_value = first_non_empty(row_dict, "notice_is_current", "is_current")
+    status_text = first_non_empty(row_dict, "notice_status", "status", "rcve_status", "공고상태")
+    period_text = first_non_empty(row_dict, "notice_period", "period", "접수기간", "신청기간")
+    period_end = extract_period_end(period_text)
+
+    if manual_archive:
+        return "manual_archive"
+    if is_archived_review_status_value(review_status):
+        return "review_archived"
+    if pd.notna(period_end) and period_end.normalize().lt(pd.Timestamp.now().normalize()):
+        if clean(current_value) == "N" or normalize_notice_status_label(status_text) == "마감":
+            return "notice_closed"
+        return "application_closed"
+    return ""
+
+
+def derive_archive_reason_label_for_app(row: dict[str, object] | pd.Series) -> str:
+    row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
+    existing = first_non_empty(row_dict, "archive_reason_label")
+    if existing:
+        return existing
+    mapping = {
+        "notice_closed": "공고 마감",
+        "application_closed": "접수 마감",
+        "manual_archive": "수동 보관",
+        "review_archived": "검토 보관",
+    }
+    return mapping.get(derive_archive_reason_for_app(row_dict), "")
+
+
 def build_notice_archive_mask(df: pd.DataFrame) -> pd.Series:
     if df.empty:
         return pd.Series(dtype="bool")
@@ -7336,6 +7371,7 @@ def _queue_row_context(row: dict[str, object] | pd.Series) -> dict[str, str]:
     review = first_non_empty(row_dict, "Review", "review_status", "검토여부") or "미검토"
     registered_at = first_non_empty(row_dict, "Date", "ancm_de", "공고일자", "registered_at") or "-"
     file_name = first_non_empty(row_dict, "file_name", "File Name", "rfp_title") or "-"
+    archive_reason_label = derive_archive_reason_label_for_app(row_dict)
     return {
         "recommendation": recommendation,
         "score": str(score) if score else "-",
@@ -7353,6 +7389,7 @@ def _queue_row_context(row: dict[str, object] | pd.Series) -> dict[str, str]:
         "review": review,
         "registered_at": registered_at,
         "file_name": file_name,
+        "archive_reason_label": archive_reason_label,
     }
 
 
@@ -7391,6 +7428,7 @@ def _build_queue_filter_frame(rows: pd.DataFrame) -> pd.DataFrame:
     working["_queue_source"] = [clean(ctx["source"]) or "-" for ctx in contexts]
     working["_queue_status"] = [clean(ctx["status"]) or "-" for ctx in contexts]
     working["_queue_period"] = [clean(ctx["period"]) or "-" for ctx in contexts]
+    working["_queue_archive_reason"] = [clean(ctx["archive_reason_label"]) or "-" for ctx in contexts]
     working["_queue_deadline_sort"] = deadline_sorts
     working["_queue_is_open"] = open_flags
     return working
@@ -7402,6 +7440,7 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
         return
 
     items: list[str] = []
+    archive_mode = "archive" in clean(page_key).lower()
     for _, row in rows.iterrows():
         ctx = _queue_row_context(row)
         detail_href = build_route_href(page_key, clean(row.get("_row_id")))
@@ -7410,7 +7449,13 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
                 _pill_html(ctx["recommendation"]),
                 _pill_html(ctx["score"], kind="score"),
                 _pill_html(ctx["deadline"], kind="deadline"),
+                _pill_html(ctx["archive_reason_label"], kind="archive") if archive_mode else "",
             ]
+        )
+        archive_reason_html = (
+            f'<div class="queue-list-card-reason muted">보관 사유: {escape(ctx["archive_reason_label"])}</div>'
+            if archive_mode and clean(ctx["archive_reason_label"])
+            else ""
         )
         items.append(
             (
@@ -7425,6 +7470,7 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
                 f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">공고 상태</div><div class="queue-list-card-meta-value">{escape(ctx["status"])}</div></div>'
                 '</div>'
                 f'<div class="queue-list-card-reason">{escape(ctx["reason"])}</div>'
+                f'{archive_reason_html}'
                 '</div>'
                 '</a>'
             )
@@ -8701,6 +8747,125 @@ def render_favorite_notice_page(
 def render_other_crawlers_source_page() -> None:
     st.subheader("Other Crawlers")
     st.info("다른 크롤러 소스는 여기에 확장할 수 있습니다.")
+
+
+VIEWER_V2_ROUTE_MAP: dict[str, tuple[str, str]] = {
+    "opportunity": ("iris", "opportunity"),
+    "notice": ("iris", "notice"),
+    "summary": ("iris", "summary"),
+    "opportunity_archive": ("iris", "opportunity_archive"),
+    "favorites": ("favorites", "favorites"),
+}
+
+
+def load_viewer_runtime(app_mode: str = "viewer") -> tuple[AppModeConfig, dict[str, pd.DataFrame], dict[str, object]]:
+    load_dotenv()
+
+    mode_config = build_app_mode_config(
+        app_mode,
+        nipa_view_columns=tuple(NIPA_VIEW_COLUMNS),
+    )
+
+    st.set_page_config(
+        page_title=mode_config.page_title,
+        layout="wide",
+    )
+    inject_page_styles()
+    inject_opportunity_detail_alignment_styles()
+    inject_viewer_layout_styles()
+    require_login(mode_config)
+
+    sheet_names = {
+        "notice_master": resolve_canonical_notice_master_sheet(get_env),
+        "notice_current": resolve_notice_current_view_sheet(get_env),
+        "pending": resolve_notice_pending_view_sheet(get_env),
+        "notice_archive": resolve_notice_archive_view_sheet(get_env),
+        "opportunity": resolve_iris_opportunity_current_sheet(get_env),
+        "opportunity_archive": resolve_iris_opportunity_archive_sheet(get_env),
+        "summary": get_env("SUMMARY_SHEET", "SUMMARY"),
+        "errors": get_env("ERROR_SHEET", "OPPORTUNITY_ERRORS"),
+    }
+
+    datasets = load_app_datasets(
+        sheet_names["notice_master"],
+        sheet_names["notice_current"],
+        sheet_names["pending"],
+        sheet_names["notice_archive"],
+        sheet_names["opportunity"],
+        sheet_names["opportunity_archive"],
+        sheet_names["summary"],
+        sheet_names["errors"],
+    )
+
+    source_datasets = build_source_datasets()
+    if is_user_scoped_operations_enabled():
+        datasets, source_datasets = apply_user_review_statuses(
+            datasets,
+            source_datasets,
+            get_current_operation_scope_key(),
+        )
+    return mode_config, datasets, source_datasets
+
+
+def main_viewer_v2(app_mode: str = "viewer") -> None:
+    try:
+        mode_config, datasets, source_datasets = load_viewer_runtime(app_mode)
+    except Exception as exc:
+        st.error(f"시트 로딩 실패: {exc}")
+        st.stop()
+
+    render_workspace_header(mode_config)
+
+    current_page = normalize_route_page_key(get_query_param("page")) or "opportunity"
+    if current_page not in VIEWER_V2_ROUTE_MAP:
+        current_page = "opportunity"
+
+    selected_page = render_page_tabs(
+        current_page,
+        [
+            ("opportunity", "RFP Queue"),
+            ("notice", "Notice Queue"),
+            ("summary", "Summary"),
+            ("opportunity_archive", "Archive"),
+            ("favorites", "관심공고"),
+        ],
+        key="viewer_v2_primary_tabs",
+    )
+    if selected_page != current_page:
+        target_source, target_page = VIEWER_V2_ROUTE_MAP[selected_page]
+        navigate_to_route(target_source, target_page)
+
+    if current_page == "notice":
+        render_notice_queue_page(datasets, source_datasets)
+        return
+    if current_page == "opportunity_archive":
+        render_opportunity_page(
+            datasets["opportunity_all"],
+            page_key="opportunity_archive",
+            title="Opportunity Archive",
+            archive=True,
+        )
+        return
+    if current_page == "summary":
+        render_summary_page(
+            datasets["summary"],
+            datasets["opportunity_all"],
+        )
+        return
+    if current_page == "favorites":
+        render_favorite_notice_page(
+            datasets["notice_view"],
+            datasets["opportunity_all"],
+            source_datasets,
+        )
+        return
+
+    render_opportunity_page(
+        datasets["opportunity"],
+        page_key="opportunity",
+        title="RFP Queue",
+        archive=False,
+    )
 
 
 def main(app_mode: str = "viewer"):
@@ -10066,12 +10231,19 @@ def render_opportunity_page(
             if clean(value) and value != "-"
         ]
     )
+    archive_reason_options = sorted(
+        [
+            value
+            for value in working["_queue_archive_reason"].dropna().astype(str).unique().tolist()
+            if clean(value) and value != "-"
+        ]
+    )
     st.markdown('<div class="queue-filter-label">요건 / 필터</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="queue-filter-help">추천 상태와 공고 상태만 빠르게 좁혀서 지금 볼 공고를 추려볼 수 있습니다.</div>',
         unsafe_allow_html=True,
     )
-    filter_cols = st.columns(2)
+    filter_cols = st.columns(3 if archive else 2)
     with filter_cols[0]:
         selected_recommendation = st.multiselect(
             "추천 상태",
@@ -10088,6 +10260,16 @@ def render_opportunity_page(
             key=f"{page_key}_filter_status",
             placeholder="전체",
         )
+    selected_archive_reason: list[str] = []
+    if archive:
+        with filter_cols[2]:
+            selected_archive_reason = st.multiselect(
+                "보관 사유",
+                options=archive_reason_options,
+                default=[],
+                key=f"{page_key}_filter_archive_reason",
+                placeholder="전체",
+            )
     st.caption("추천 결과의 행 아무 곳이나 누르면 상세 공고와 RFP 내용으로 이동합니다.")
 
     filtered = working.copy()
@@ -10095,6 +10277,8 @@ def render_opportunity_page(
         filtered = filtered[filtered["_queue_recommendation"].isin(selected_recommendation)]
     if selected_status:
         filtered = filtered[filtered["_queue_status"].isin(selected_status)]
+    if selected_archive_reason:
+        filtered = filtered[filtered["_queue_archive_reason"].isin(selected_archive_reason)]
 
     if filtered.empty:
         st.info("검색 조건에 맞는 RFP가 없습니다.")

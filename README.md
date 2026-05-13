@@ -8,13 +8,13 @@ This folder is prepared as a standalone public viewer bundle.
 - `IRIS`
   - `Notice`: all notices
   - `Opportunity`: opportunity-level rows
-- `중소기업벤처부`
+- `MSS`
   - `MSS_CURRENT`: active/scheduled notices
   - `MSS_PAST`: closed notices
 - `NIPA`
   - `NIPA_CURRENT`: active/scheduled notices
   - `NIPA_PAST`: closed notices
-- `관심 공고`
+- `Favorites`
   - unified view for notices whose review status is `관심공고`
 - `shared_app.py`
   - shared viewer renderer and routing logic
@@ -22,6 +22,8 @@ This folder is prepared as a standalone public viewer bundle.
   - default viewer entrypoint that runs `shared_app.main(app_mode="viewer")`
 - `viewer_app.py`
   - viewer-only alias entrypoint that runs `shared_app.main(app_mode="viewer")`
+- `viewer_v2_app.py`
+  - experimental viewer v2 entrypoint that runs `shared_app.main_viewer_v2(app_mode="viewer")`
 - `app_config.py`
   - viewer source/page config used by the shared app
 
@@ -60,4 +62,8 @@ streamlit run app.py
 Alternate viewer entrypoint:
 ```bash
 streamlit run viewer_app.py
+```
+Experimental admin-body parity entrypoint:
+```bash
+streamlit run viewer_v2_app.py
 ```
