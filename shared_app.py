@@ -1539,14 +1539,14 @@ def render_iris_source(
     del source_config
     del source_datasets
     raw_page_key = normalize_route_page_key(get_query_param("page"))
-    current_page_key = raw_page_key or mode_config.default_iris_page
+    current_page_key = raw_page_key or "rfp_queue"
     current_view = get_query_param("view") or "table"
 
     if current_page_key not in mode_config.valid_iris_pages:
         st.query_params.clear()
         st.query_params.update(with_auth_params({
             "source": "iris",
-            "page": mode_config.default_iris_page,
+            "page": "rfp_queue",
             "view": "table",
         }))
         st.rerun()
@@ -1557,7 +1557,7 @@ def render_iris_source(
             st.query_params.clear()
             st.query_params.update(with_auth_params({
                 "source": "iris",
-                "page": mode_config.default_iris_page,
+                "page": "rfp_queue",
                 "view": "table",
             }))
             st.rerun()
@@ -7162,16 +7162,56 @@ def render_favorite_scrap_button(
     source_key: str = "iris",
     notice_title: str = "",
     button_key: str,
+    compact: bool = False,
+    icon_only: bool = False,
+    use_container_width: bool | None = None,
 ) -> None:
     if not get_bool_env("ENABLE_REVIEW_EDIT", default=True):
         return
 
     normalized_value = clean(current_value)
     is_favorite = normalized_value == FAVORITE_REVIEW_STATUS
-    button_label = "🔖 관심공고 저장됨" if is_favorite else "🔖 관심공고 등록"
+    button_label = "★ 관심공고 저장됨" if is_favorite else "☆ 관심공고 저장"
     button_type = "primary" if is_favorite else "secondary"
+    if icon_only:
+        button_label = "★" if is_favorite else "☆"
 
-    if st.button(button_label, key=button_key, type=button_type, use_container_width=True):
+    if use_container_width is None:
+        use_container_width = not compact
+
+    if compact:
+        active_bg = "#fff7ed" if is_favorite else "#ffffff"
+        active_border = "#fdba74" if is_favorite else "#cbd5e1"
+        active_color = "#c2410c" if is_favorite else "#64748b"
+        min_width = "42px" if icon_only else "auto"
+        padding = "0.1rem 0.7rem" if not icon_only else "0"
+        st.markdown(
+            f"""
+            <style>
+            .st-key-{button_key} {{
+              display: flex;
+              justify-content: flex-end;
+            }}
+            .st-key-{button_key} button {{
+              min-height: 36px !important;
+              min-width: {min_width} !important;
+              padding: {padding} !important;
+              border-radius: 999px !important;
+              border: 1px solid {active_border} !important;
+              background: {active_bg} !important;
+              color: {active_color} !important;
+              font-size: {("1.02rem" if icon_only else "0.88rem")} !important;
+              font-weight: 800 !important;
+              line-height: 1 !important;
+              white-space: nowrap !important;
+              box-shadow: none !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    if st.button(button_label, key=button_key, type=button_type, use_container_width=use_container_width):
         try:
             next_value = "" if is_favorite else FAVORITE_REVIEW_STATUS
             save_review_status(
@@ -10026,7 +10066,7 @@ def main(app_mode: str = "viewer"):
     current_source = get_query_param("source") or mode_config.default_source
     if current_source not in source_config_map:
         current_source = mode_config.default_source
-    current_page = normalize_route_page_key(get_query_param("page")) or get_default_page_for_source(mode_config, current_source)
+    current_page = normalize_route_page_key(get_query_param("page")) or "rfp_queue"
     current_group = find_nav_group_for_route(mode_config, current_source, current_page)
 
     selected_group_key = render_nav_tabs(
