@@ -351,7 +351,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
     def _search_state_key() -> str:
         return f"{detail_page_key}_search_text"
 
-    def _build_filter_href(*, source_value: str | None = None, status_value: str | None = None) -> str:
+    def _build_filter_href(source_value: str | None = None, status_value: str | None = None) -> str:
         params = get_query_params_dict()
         params["page"] = detail_page_key
         params["view"] = "table"
@@ -380,7 +380,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         _replace_params(_auth_params(params))
         st.rerun()
 
-    def _apply_notice_filters(rows: pd.DataFrame, *, source_filter: str, status_filter: str) -> pd.DataFrame:
+    def _apply_notice_filters(rows: pd.DataFrame, source_filter: str, status_filter: str) -> pd.DataFrame:
         if rows is None or rows.empty:
             return pd.DataFrame()
 
@@ -434,13 +434,13 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             )
         st.markdown(f'<div class="notice-summary-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
 
-    def _render_filter_bar(title: str, options: list[tuple[str, str]], *, current_value: str, filter_kind: str) -> None:
+    def _render_filter_bar(title: str, options: list[tuple[str, str]], current_value: str, filter_kind: str) -> None:
         links = []
         for option_value, label in options:
             active_class = " is-active" if option_value == current_value else ""
             href = _build_filter_href(
-                source_value=option_value if filter_kind == "source" else None,
-                status_value=option_value if filter_kind == "status" else None,
+                option_value if filter_kind == "source" else None,
+                option_value if filter_kind == "status" else None,
             )
             links.append(
                 f'<a class="notice-filter-link{active_class}" href="{escape(href, quote=True)}">{escape(label)}</a>'
@@ -693,7 +693,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
 
     def _render_notice_queue_screen(
         source_df: pd.DataFrame,
-        *,
         opportunity_df: pd.DataFrame,
         detail_opportunity_df: pd.DataFrame,
     ) -> None:
@@ -735,14 +734,14 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         _render_filter_bar(
             "Source Filter",
             SOURCE_FILTER_OPTIONS,
-            current_value=_normalize_source_filter(st.session_state.get(source_filter_key, "all")),
-            filter_kind="source",
+            _normalize_source_filter(st.session_state.get(source_filter_key, "all")),
+            "source",
         )
         _render_filter_bar(
             "Status Filter",
             STATUS_FILTER_OPTIONS,
-            current_value=_normalize_status_filter(st.session_state.get(status_filter_key, "all")),
-            filter_kind="status",
+            _normalize_status_filter(st.session_state.get(status_filter_key, "all")),
+            "status",
         )
 
         search_col, reset_col = st.columns([6, 1])
@@ -758,8 +757,8 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
 
         filtered_source_df = _apply_notice_filters(
             source_df,
-            source_filter=st.session_state.get(source_filter_key, "all"),
-            status_filter=st.session_state.get(status_filter_key, "all"),
+            st.session_state.get(source_filter_key, "all"),
+            st.session_state.get(status_filter_key, "all"),
         )
         filtered_source_df = filter_notice_queue_rows(filtered_source_df, search_text=search_text)
 
@@ -813,8 +812,8 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         source_df = build_crawled_notice_collection(datasets, source_datasets)
         _render_notice_queue_screen(
             source_df,
-            opportunity_df=datasets.get("opportunity", pd.DataFrame()),
-            detail_opportunity_df=datasets["opportunity_all"],
+            datasets.get("opportunity", pd.DataFrame()),
+            datasets["opportunity_all"],
         )
 
     def render_notices_source(
@@ -829,8 +828,8 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         source_df = build_crawled_notice_collection(datasets, source_datasets)
         _render_notice_queue_screen(
             source_df,
-            opportunity_df=datasets.get("opportunity", pd.DataFrame()),
-            detail_opportunity_df=datasets["opportunity_all"],
+            datasets.get("opportunity", pd.DataFrame()),
+            datasets["opportunity_all"],
         )
 
     ns["consume_favorite_toggle_query_action"] = consume_favorite_toggle_query_action
