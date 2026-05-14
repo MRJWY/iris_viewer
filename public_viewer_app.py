@@ -10,11 +10,12 @@ import viewer_body
 PUBLIC_VIEWER_ROUTE_MAP: dict[str, tuple[str, str]] = {
     "opportunity": ("iris", "opportunity"),
     "notice": ("iris", "notice"),
-    "opportunity_archive": ("iris", "opportunity_archive"),
+    "notice_archive": ("iris", "notice_archive"),
+    "opportunity_archive": ("iris", "notice_archive"),
     "favorites": ("favorites", "favorites"),
 }
 
-HEAVY_NOTICE_PAGES = {"notice", "favorites"}
+HEAVY_NOTICE_PAGES = {"notice", "notice_archive", "favorites"}
 
 
 def inject_public_viewer_styles() -> None:
@@ -44,7 +45,7 @@ def render_public_sidebar_navigation(current_page: str) -> None:
     workspace_items: list[tuple[str, str, str]] = [
         ("RFP Queue", "iris", "opportunity"),
         ("Notice Queue", "iris", "notice"),
-        ("Archive", "iris", "opportunity_archive"),
+        ("Archive", "iris", "notice_archive"),
         ("Favorites", "favorites", "favorites"),
     ]
 
@@ -180,6 +181,8 @@ def render_public_viewer_body(
 ) -> None:
     del mode_config
     current_page = core.normalize_route_page_key(core.get_query_param("page")) or "opportunity"
+    if current_page == "opportunity_archive":
+        current_page = "notice_archive"
     if current_page not in PUBLIC_VIEWER_ROUTE_MAP:
         current_page = "opportunity"
     render_public_sidebar_navigation(current_page)
@@ -187,13 +190,15 @@ def render_public_viewer_body(
     if current_page == "notice":
         viewer_body.render_public_notice_queue_page(datasets, source_datasets)
         return
-    if current_page == "opportunity_archive":
-        viewer_body.render_public_opportunity_page(
+    if current_page == "notice_archive":
+        core.render_notice_page_with_scope(
+            datasets["notice_view"],
             datasets["opportunity_all"],
-            page_key="opportunity_archive",
-            title="Opportunity Archive",
+            page_key="notice_archive",
+            title="Archive",
+            default_status_scope="?꾩껜",
+            current_only_default=False,
             archive=True,
-            all_df=datasets["opportunity_all"],
         )
         return
     if current_page == "favorites":
@@ -215,6 +220,8 @@ def render_public_viewer_body(
 
 def main() -> None:
     current_page = core.normalize_route_page_key(core.get_query_param("page")) or "opportunity"
+    if current_page == "opportunity_archive":
+        current_page = "notice_archive"
     try:
         mode_config, datasets, source_datasets = load_public_viewer_runtime(current_page)
     except Exception as exc:

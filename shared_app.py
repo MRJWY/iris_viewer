@@ -740,6 +740,7 @@ def build_dashboard_notice_route(source_key: object, notice_id: object) -> str:
         "view": "detail",
         "id": notice_id_text,
     }
+    params = apply_return_route(params)
     return f"?{urlencode(params)}"
 
 
@@ -910,12 +911,12 @@ def navigate_to_notice_detail(source_key: str, notice_id: str) -> None:
         "nipa": "nipa_current",
     }
     st.query_params.clear()
-    st.query_params.update(with_auth_params({
+    st.query_params.update(with_auth_params(apply_return_route({
         "source": source,
         "page": page_map.get(source, "notice"),
         "view": "detail",
         "id": clean(notice_id),
-    }))
+    })))
     st.rerun()
 
 
@@ -2419,6 +2420,72 @@ def replace_query_params(params: dict[str, str]) -> None:
     clean_params = {clean(key): clean(value) for key, value in params.items() if clean(key)}
     if clean_params:
         st.query_params.update(clean_params)
+
+
+def encode_return_route(params: dict[str, str]) -> str:
+    allowed_keys = {"source", "page", "view", "id", "return_to"}
+    payload = {
+        clean(key): clean(value)
+        for key, value in params.items()
+        if clean(key) in allowed_keys and clean(value)
+    }
+    if not payload:
+        return ""
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    return encoded.rstrip("=")
+
+
+def decode_return_route(token: str) -> dict[str, str]:
+    token = clean(token)
+    if not token:
+        return {}
+    padded = token + ("=" * (-len(token) % 4))
+    try:
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        payload = json.loads(decoded)
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        clean(key): clean(value)
+        for key, value in payload.items()
+        if clean(key) in {"source", "page", "view", "id", "return_to"} and clean(value)
+    }
+
+
+def capture_current_route_params() -> dict[str, str]:
+    params: dict[str, str] = {}
+    current_source = get_query_param("source")
+    current_page = normalize_route_page_key(get_query_param("page"))
+    current_view = get_query_param("view") or "table"
+    current_id = get_query_param("id")
+    current_return_to = get_query_param("return_to")
+    if current_source:
+        params["source"] = current_source
+    if current_page:
+        params["page"] = current_page
+    if current_view:
+        params["view"] = current_view
+    if current_id:
+        params["id"] = current_id
+    if current_return_to:
+        params["return_to"] = current_return_to
+    return params
+
+
+def current_return_route_token() -> str:
+    return encode_return_route(capture_current_route_params())
+
+
+def apply_return_route(params: dict[str, str]) -> dict[str, str]:
+    route_token = current_return_route_token()
+    merged = {clean(key): clean(value) for key, value in params.items() if clean(key)}
+    if route_token:
+        merged["return_to"] = route_token
+    return merged
 
 
 def restore_auth_from_query(mode_config: AppModeConfig) -> None:
@@ -6526,13 +6593,19 @@ def switch_to_detail(page_key: str, identifier: str) -> None:
     }
     if current_source:
         params["source"] = current_source
-    st.query_params.update(with_auth_params(params))
+    st.query_params.update(with_auth_params(apply_return_route(params)))
     st.session_state[f"{page_key}_view"] = "detail"
     st.session_state[f"{page_key}_selected_id"] = clean(identifier)
     st.rerun()
 
 
 def switch_to_table(page_key: str) -> None:
+    return_route = decode_return_route(get_query_param("return_to"))
+    if return_route:
+        st.query_params.clear()
+        st.query_params.update(with_auth_params(return_route))
+        st.rerun()
+        return
     current_source = get_query_param("source")
     st.query_params.clear()
     params = {
@@ -6623,8 +6696,37 @@ def build_route_href(page_key: str, identifier: str, *, source_key: str | None =
         params["source"] = explicit_source
     elif current_source and not (current_source == "favorites" and page_key != "favorites"):
         params["source"] = current_source
+    params = apply_return_route(params)
     params = with_auth_params(params)
     return f"?{urlencode(params)}"
+
+
+def resolve_route_source_key_for_row(row: dict | pd.Series | None, source_key: str | None = None) -> str:
+    source_alias_map = {
+        "mss": "tipa",
+        "tipa": "tipa",
+        "nipa": "nipa",
+        "iris": "iris",
+    }
+
+    candidate_values = [source_key]
+    if row:
+        row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row)
+        candidate_values.extend(
+            [
+                row_dict.get("source_key"),
+                row_dict.get("_source_key"),
+                row_dict.get("source"),
+                row_dict.get("Source"),
+                row_dict.get("source_site"),
+            ]
+        )
+
+    for candidate in candidate_values:
+        normalized = source_alias_map.get(clean(candidate).lower(), "")
+        if normalized:
+            return normalized
+    return ""
 
 
 def render_clickable_table(
@@ -6691,7 +6793,10 @@ def render_clickable_table(
         if not identifier:
             continue
 
-        row_source_key = source_key_value or clean(row.get(source_key_column)) if source_key_column else source_key_value
+        row_source_key = resolve_route_source_key_for_row(
+            row,
+            source_key=(row.get(source_key_column) if source_key_column else source_key_value),
+        )
         href = build_route_href(page_key, identifier, source_key=row_source_key)
         cell_html = []
         for column in display_columns:
@@ -7403,6 +7508,51 @@ def _queue_row_context(row: dict[str, object] | pd.Series) -> dict[str, str]:
     }
 
 
+def build_queue_recommendation_options(values: pd.Series) -> list[str]:
+    options = []
+    for value in values.dropna().astype(str).tolist():
+        normalized = clean(value)
+        if not normalized or normalized == "-" or "검토" in normalized:
+            continue
+        options.append(normalized)
+    return sorted(set(options))
+
+
+def build_queue_status_options(values: pd.Series) -> list[str]:
+    options = []
+    for value in values.dropna().astype(str).tolist():
+        normalized = normalize_notice_status_label(value) or clean(value)
+        if not normalized or normalized == "-":
+            continue
+        options.append(normalized)
+    unique_options = sorted(set(options))
+    if "마감" not in unique_options:
+        unique_options.append("마감")
+    return unique_options
+
+
+def filter_queue_working_frame(
+    working: pd.DataFrame,
+    *,
+    selected_recommendation: list[str],
+    selected_status: list[str],
+    archive: bool,
+) -> pd.DataFrame:
+    if working.empty:
+        return working
+
+    filtered = working.copy()
+    if selected_recommendation:
+        filtered = filtered[filtered["_queue_recommendation"].isin(selected_recommendation)]
+    if archive:
+        filtered = filtered[filtered["_queue_is_closed"]]
+    elif not selected_status:
+        filtered = filtered[~filtered["_queue_is_closed"]]
+    if selected_status:
+        filtered = filtered[filtered["_queue_status"].isin(selected_status)]
+    return filtered
+
+
 def _build_queue_filter_frame(rows: pd.DataFrame) -> pd.DataFrame:
     working = ensure_opportunity_row_ids(rows.copy())
     if working.empty:
@@ -7436,11 +7586,19 @@ def _build_queue_filter_frame(rows: pd.DataFrame) -> pd.DataFrame:
     working["_queue_ministry"] = [clean(ctx["ministry"]) or "-" for ctx in contexts]
     working["_queue_notice"] = [clean(ctx["notice"]) or "-" for ctx in contexts]
     working["_queue_source"] = [clean(ctx["source"]) or "-" for ctx in contexts]
-    working["_queue_status"] = [clean(ctx["status"]) or "-" for ctx in contexts]
+    working["_queue_status"] = [
+        normalize_notice_status_label(ctx["status"]) or clean(ctx["status"]) or "-"
+        for ctx in contexts
+    ]
     working["_queue_period"] = [clean(ctx["period"]) or "-" for ctx in contexts]
     working["_queue_archive_reason"] = [clean(ctx["archive_reason_label"]) or "-" for ctx in contexts]
     working["_queue_deadline_sort"] = deadline_sorts
     working["_queue_is_open"] = open_flags
+    working["_queue_is_closed"] = build_opportunity_archive_mask(working)
+    working["_queue_project_sort"] = series_from_candidates(
+        working,
+        ["project_name", "llm_project_name", "?대떦 怨쇱젣紐?"],
+    ).fillna("").astype(str).str.strip()
     return working
 
 
@@ -7453,7 +7611,11 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
     archive_mode = "archive" in clean(page_key).lower()
     for _, row in rows.iterrows():
         ctx = _queue_row_context(row)
-        detail_href = build_route_href(page_key, clean(row.get("_row_id")))
+        detail_href = build_route_href(
+            page_key,
+            clean(row.get("_row_id")),
+            source_key=resolve_route_source_key_for_row(row),
+        )
         badges = "".join(
             [
                 _pill_html(ctx["recommendation"]),
@@ -8048,6 +8210,108 @@ def render_notice_page_with_scope(
         NOTICE_PREFERRED_COLUMNS,
         page_key=page_key,
         id_column="공고ID",
+    )
+
+
+def render_opportunity_page_aligned(
+    df: pd.DataFrame,
+    *,
+    page_key: str | None = None,
+    title: str | None = None,
+    archive: bool = False,
+    all_df: pd.DataFrame | None = None,
+) -> None:
+    page_key = page_key or ("opportunity_archive" if archive else "opportunity")
+    title = title or ("RFP Archive" if archive else "RFP Queue")
+    subtitle = "사업공고 내 지원 가능한 RFP를 추천합니다."
+    if archive:
+        subtitle = "보관 대상으로 분류된 RFP 분석 결과를 가볍게 탐색할 수 있습니다."
+    render_page_header(title, subtitle, eyebrow="RFP")
+
+    source_df = ensure_opportunity_row_ids(df)
+    working_source_df = ensure_opportunity_row_ids(all_df) if all_df is not None and not all_df.empty else source_df
+    if archive:
+        working_source_df = filter_archived_opportunity_rows(working_source_df)
+    if working_source_df.empty:
+        st.info("표시할 RFP가 없습니다.")
+        return
+
+    working = _build_queue_filter_frame(working_source_df)
+    recommendation_options = build_queue_recommendation_options(working["_queue_recommendation"])
+    status_options = build_queue_status_options(working["_queue_status"])
+
+    filter_cols = st.columns(2)
+    with filter_cols[0]:
+        selected_recommendation = st.multiselect(
+            "추천 상태",
+            options=recommendation_options,
+            default=[],
+            key=f"{page_key}_filter_recommendation_aligned",
+            placeholder="전체",
+        )
+    with filter_cols[1]:
+        selected_status = st.multiselect(
+            "공고 상태",
+            options=status_options,
+            default=[],
+            key=f"{page_key}_filter_status_aligned",
+            placeholder="전체",
+        )
+
+    filtered = filter_queue_working_frame(
+        working,
+        selected_recommendation=selected_recommendation,
+        selected_status=selected_status,
+        archive=archive,
+    )
+    if filtered.empty:
+        st.info("검색 조건에 맞는 RFP가 없습니다.")
+        return
+
+    filtered = filtered.sort_values(
+        by=["rfp_score", "_queue_deadline_sort", "_queue_project_sort"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+
+    render_metrics(
+        [
+            ("RFP Count", str(len(filtered))),
+            ("Recommended", str(int((filtered["recommendation"] == "추천").sum()) if "recommendation" in filtered.columns else 0)),
+            ("Avg Score", safe_mean(filtered["rfp_score"]) if "rfp_score" in filtered.columns and len(filtered) > 0 else "-"),
+            ("Notice Count", str(filtered["notice_id"].nunique() if "notice_id" in filtered.columns else 0)),
+        ]
+    )
+
+    current_view, selected_document_id = get_route_state(page_key)
+    if current_view == "detail":
+        selected_row = get_row_by_column_value(source_df, "_row_id", selected_document_id)
+        if selected_row is None and all_df is not None and not all_df.empty:
+            selected_row = get_row_by_column_value(
+                ensure_opportunity_row_ids(all_df),
+                "_row_id",
+                selected_document_id,
+            )
+        action_col, info_col = st.columns([1, 5])
+        with action_col:
+            if st.button("목록으로", key=f"{page_key}_back_to_table_aligned", use_container_width=True):
+                switch_to_table(page_key)
+        with info_col:
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 이전 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
+        render_opportunity_detail_from_row(selected_row)
+        return
+
+    render_section_label("RFP Analysis List")
+    st.markdown(
+        f'<div class="page-note">공고명이나 과제명을 누르면 상세 공고와 RFP 분석 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
+        unsafe_allow_html=True,
+    )
+    render_clickable_table(
+        filtered,
+        OPPORTUNITY_PREFERRED_COLUMNS,
+        page_key=page_key,
+        id_column="_row_id",
+        source_key_column="source_key",
     )
 
 
@@ -8770,7 +9034,8 @@ VIEWER_V2_ROUTE_MAP: dict[str, tuple[str, str]] = {
     "opportunity": ("iris", "opportunity"),
     "notice": ("iris", "notice"),
     "summary": ("iris", "summary"),
-    "opportunity_archive": ("iris", "opportunity_archive"),
+    "notice_archive": ("iris", "notice_archive"),
+    "opportunity_archive": ("iris", "notice_archive"),
     "favorites": ("favorites", "favorites"),
 }
 
@@ -8834,6 +9099,8 @@ def main_viewer_v2(app_mode: str = "viewer") -> None:
     render_workspace_header(mode_config)
 
     current_page = normalize_route_page_key(get_query_param("page")) or "opportunity"
+    if current_page == "opportunity_archive":
+        current_page = "notice_archive"
     if current_page not in VIEWER_V2_ROUTE_MAP:
         current_page = "opportunity"
 
@@ -8843,7 +9110,7 @@ def main_viewer_v2(app_mode: str = "viewer") -> None:
             ("opportunity", "RFP Queue"),
             ("notice", "Notice Queue"),
             ("summary", "Summary"),
-            ("opportunity_archive", "Archive"),
+            ("notice_archive", "Archive"),
             ("favorites", "관심공고"),
         ],
         key="viewer_v2_primary_tabs",
@@ -8855,11 +9122,14 @@ def main_viewer_v2(app_mode: str = "viewer") -> None:
     if current_page == "notice":
         render_notice_queue_page(datasets, source_datasets)
         return
-    if current_page == "opportunity_archive":
-        render_opportunity_page(
+    if current_page == "notice_archive":
+        render_notice_page_with_scope(
+            datasets["notice_view"],
             datasets["opportunity_all"],
-            page_key="opportunity_archive",
-            title="Opportunity Archive",
+            page_key="notice_archive",
+            title="Archive",
+            default_status_scope="전체",
+            current_only_default=False,
             archive=True,
         )
         return
@@ -10463,24 +10733,206 @@ def build_crawled_notice_collection(
     )
 
 
+def render_notice_queue_ui_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .notice-queue-list {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          margin-top: 0.9rem;
+        }
+        .notice-queue-card {
+          display: block;
+          text-decoration: none;
+          color: inherit;
+          background: rgba(255, 255, 255, 0.96);
+          border: 1px solid rgba(148, 163, 184, 0.24);
+          border-radius: 24px;
+          padding: 1.15rem 1.25rem 1.05rem;
+          box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+          transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+        }
+        .notice-queue-card:hover {
+          transform: translateY(-2px);
+          border-color: rgba(37, 99, 235, 0.32);
+          box-shadow: 0 22px 48px rgba(37, 99, 235, 0.1);
+        }
+        .notice-queue-card-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          margin-bottom: 0.7rem;
+        }
+        .notice-queue-kicker {
+          color: var(--text-muted);
+          font-size: 0.84rem;
+          font-weight: 800;
+          line-height: 1.4;
+        }
+        .notice-queue-badges {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+        .notice-queue-badge {
+          display: inline-flex;
+          align-items: center;
+          border-radius: 999px;
+          padding: 0.34rem 0.72rem;
+          font-size: 0.78rem;
+          font-weight: 900;
+          line-height: 1;
+          letter-spacing: 0.02em;
+        }
+        .notice-queue-badge.source {
+          background: rgba(37, 99, 235, 0.1);
+          color: #1d4ed8;
+        }
+        .notice-queue-badge.review {
+          background: rgba(245, 158, 11, 0.14);
+          color: #b45309;
+        }
+        .notice-queue-badge.status-open {
+          background: rgba(16, 185, 129, 0.14);
+          color: #047857;
+        }
+        .notice-queue-badge.status-scheduled {
+          background: rgba(59, 130, 246, 0.14);
+          color: #1d4ed8;
+        }
+        .notice-queue-badge.status-closed {
+          background: rgba(148, 163, 184, 0.18);
+          color: #475569;
+        }
+        .notice-queue-card-title {
+          color: var(--text-strong);
+          font-size: 1.34rem;
+          font-weight: 900;
+          line-height: 1.42;
+          margin-bottom: 0.9rem;
+        }
+        .notice-queue-meta-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 0.8rem 1rem;
+        }
+        .notice-queue-meta-item {
+          min-width: 0;
+        }
+        .notice-queue-meta-label {
+          color: var(--text-muted);
+          font-size: 0.76rem;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          margin-bottom: 0.24rem;
+        }
+        .notice-queue-meta-value {
+          color: var(--text-body);
+          font-size: 0.95rem;
+          font-weight: 800;
+          line-height: 1.45;
+          word-break: break-word;
+        }
+        @media (max-width: 960px) {
+          .notice-queue-card {
+            padding: 1rem 1rem 0.95rem;
+          }
+          .notice-queue-card-top {
+            flex-direction: column;
+            align-items: flex-start;
+          }
+          .notice-queue-badges {
+            justify-content: flex-start;
+          }
+          .notice-queue-meta-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+        @media (max-width: 640px) {
+          .notice-queue-card-title {
+            font-size: 1.1rem;
+          }
+          .notice-queue-meta-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def filter_notice_queue_rows(rows: pd.DataFrame, *, search_text: str) -> pd.DataFrame:
+    if rows.empty or not clean(search_text):
+        return rows.copy()
+    return rows[
+        build_contains_mask(
+            rows,
+            ["매체", "공고명", "공고번호", "전문기관", "담당부서", "소관부처", "공고ID", "공고상태", "접수기간"],
+            search_text,
+        )
+    ].copy()
+
+
+def clear_widget_value(widget_key: str) -> None:
+    st.session_state[widget_key] = ""
+
+
 def render_crawled_notice_rows(rows: pd.DataFrame, *, key_prefix: str, limit: int = 30) -> None:
     del key_prefix
     if rows.empty:
-        st.info("??? ??? ????.")
+        st.info("표시할 공고가 없습니다.")
         return
 
     row_html: list[str] = []
     for _, row in rows.head(limit).iterrows():
-        notice_date = compact_table_value(row.get("????"), max_chars=14) or "-"
-        title = compact_table_value(row.get("???"), max_chars=72) or "-"
-        period = compact_table_value(row.get("????"), max_chars=36) or "-"
+        notice_date = compact_table_value(row.get("공고일자"), max_chars=16) or "-"
+        title = compact_table_value(row.get("공고명"), max_chars=140) or "-"
+        period = compact_table_value(row.get("접수기간"), max_chars=48) or "-"
+        notice_no = compact_table_value(row.get("공고번호"), max_chars=42) or "-"
+        source_label = compact_table_value(row.get("매체"), max_chars=12) or "-"
+        ministry = compact_table_value(row.get("소관부처"), max_chars=28)
+        agency = compact_table_value(row.get("전문기관"), max_chars=28) or compact_table_value(row.get("담당부서"), max_chars=28)
+        review = compact_table_value(row.get("검토 여부"), max_chars=18) or "-"
+        status = normalize_notice_status_label(row.get("공고상태"))
+        scope = clean(row.get("_notice_scope"))
+        if not status:
+            status = "마감" if scope == "archive" else "예정" if scope == "scheduled" else "접수중"
+        status_class = "status-open"
+        if status == "예정":
+            status_class = "status-scheduled"
+        elif status == "마감":
+            status_class = "status-closed"
+        kicker_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
+        kicker = " > ".join(kicker_parts) if kicker_parts else source_label
         href = build_route_href("notice", clean(row.get("_collection_id")))
+        review_badge = ""
+        if review != "-":
+            review_badge = f'<span class="notice-queue-badge review">{escape(review)}</span>'
         row_html.append(
             (
-                f'<a class="notice-queue-row" href="{escape(href, quote=True)}" target="_self">'
-                f'<div class="notice-queue-date">{escape(notice_date)}</div>'
-                f'<div class="notice-queue-title">{escape(title)}</div>'
-                f'<div class="notice-queue-period">{escape(period)}</div>'
+                f'<a class="notice-queue-card" href="{escape(href, quote=True)}" target="_self">'
+                '<div class="notice-queue-card-top">'
+                f'<div class="notice-queue-kicker">{escape(kicker)}</div>'
+                '<div class="notice-queue-badges">'
+                f'<span class="notice-queue-badge source">{escape(source_label)}</span>'
+                f'{review_badge}'
+                f'<span class="notice-queue-badge {status_class}">{escape(status)}</span>'
+                '</div>'
+                '</div>'
+                f'<div class="notice-queue-card-title">{escape(title)}</div>'
+                '<div class="notice-queue-meta-grid">'
+                f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">공고번호</div><div class="notice-queue-meta-value">{escape(notice_no)}</div></div>'
+                f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">공고일자</div><div class="notice-queue-meta-value">{escape(notice_date)}</div></div>'
+                f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">접수기간</div><div class="notice-queue-meta-value">{escape(period)}</div></div>'
+                f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">전문기관</div><div class="notice-queue-meta-value">{escape(agency or "-")}</div></div>'
+                '</div>'
                 '</a>'
             )
         )
@@ -10508,6 +10960,7 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
         "IRIS, MSS, NIPA?? ?? ??? ? ??? ?????.",
         eyebrow="Notices",
     )
+    render_notice_queue_ui_styles()
     if source_df.empty:
         st.info("?? ??? ?? ??? ????.")
         return
@@ -10527,6 +10980,43 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
             ("??/??", str(len(archive_rows))),
         ]
     )
+
+    search_col, reset_col = st.columns([6, 1])
+    with search_col:
+        search_text = st.text_input(
+            "공고명",
+            key="viewer_notice_queue_search_text",
+            placeholder="공고명을 입력하세요",
+        )
+    with reset_col:
+        st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
+        st.button(
+            "초기화",
+            key="viewer_notice_queue_search_reset",
+            use_container_width=True,
+            on_click=clear_widget_value,
+            args=("viewer_notice_queue_search_text",),
+        )
+
+    filtered_source_df = filter_notice_queue_rows(source_df, search_text=search_text)
+    if clean(search_text):
+        st.caption(f"검색 결과 {len(filtered_source_df)}건")
+    else:
+        st.caption(f"전체 {len(source_df)}건")
+
+    iris_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("iris") & filtered_source_df["_notice_scope"].isin(["current", "scheduled"])
+    ].copy()
+    mss_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("tipa") & filtered_source_df["_notice_scope"].eq("current")
+    ].copy()
+    nipa_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("nipa") & filtered_source_df["_notice_scope"].eq("current")
+    ].copy()
+    archive_rows = filtered_source_df[filtered_source_df["_notice_scope"].eq("archive")].copy()
+    favorite_rows = filtered_source_df[
+        filtered_source_df["검토 여부"].fillna("").astype(str).str.strip().eq(FAVORITE_REVIEW_STATUS)
+    ].copy()
 
     tab_iris, tab_mss, tab_nipa, tab_archive, tab_favorites = st.tabs(["IRIS", "MSS", "NIPA", "Archive", "Favorites"])
     with tab_iris:
