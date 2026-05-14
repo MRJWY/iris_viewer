@@ -578,9 +578,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         st.markdown(
             """
             <style>
-            .notice-filter-group {
-              margin: 0.9rem 0 0.35rem;
-            }
             .notice-filter-group-title {
               color: var(--text-muted);
               font-size: 0.83rem;
@@ -604,82 +601,18 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               font-size: 0.92rem;
               line-height: 1.6;
             }
+            .notice-queue-header-label {
+              color: #64748b;
+              font-size: 0.78rem;
+              font-weight: 800;
+              text-transform: uppercase;
+              letter-spacing: 0.04em;
+            }
             .notice-queue-divider {
               width: 100%;
               height: 1px;
               background: rgba(226, 232, 240, 0.95);
-              margin: 0.35rem 0 0.55rem;
-            }
-            .notice-queue-row-card {
-              padding: 0.15rem 0 1rem;
-            }
-            .notice-queue-breadcrumb {
-              color: #4f6db8;
-              font-size: 0.83rem;
-              font-weight: 700;
-              line-height: 1.45;
-              margin-bottom: 0.3rem;
-            }
-            .notice-queue-list {
-              display: flex;
-              flex-direction: column;
-              width: 100%;
-              margin-top: 0.7rem;
-              border-top: 1px solid rgba(226, 232, 240, 0.95);
-            }
-            .notice-queue-row-shell {
-              position: relative;
-              width: 100%;
-              border-bottom: 1px solid rgba(226, 232, 240, 0.95);
-            }
-            .notice-queue-row-link {
-              position: absolute;
-              inset: 0;
-              z-index: 1;
-              display: block;
-            }
-            .notice-queue-row-link:focus-visible {
-              outline: 2px solid #60a5fa;
-              outline-offset: -2px;
-            }
-            .notice-queue-row {
-              display: block;
-              position: relative;
-              z-index: 2;
-              width: 100%;
-              padding: 1.05rem 0.15rem;
-              pointer-events: none;
-              transition: background-color 140ms ease;
-            }
-            .notice-queue-row-shell:hover .notice-queue-row {
-              background: #f8fafc;
-            }
-            .notice-queue-row-main {
-              display: grid;
-              grid-template-columns: minmax(0, 1fr) 220px;
-              align-items: flex-start;
-              gap: 1.25rem;
-              width: 100%;
-            }
-            .notice-queue-row-left {
-              min-width: 0;
-              width: 100%;
-            }
-            .notice-queue-row-right {
-              width: 220px;
-              min-width: 220px;
-              display: flex;
-              flex-direction: column;
-              align-items: flex-end;
-              justify-self: end;
-              gap: 0.55rem;
-            }
-            .notice-queue-topline {
-              display: flex;
-              align-items: center;
-              flex-wrap: wrap;
-              gap: 0.45rem;
-              margin-bottom: 0.5rem;
+              margin: 0.15rem 0;
             }
             .notice-chip {
               display: inline-flex;
@@ -692,10 +625,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               font-weight: 800;
               line-height: 1;
               white-space: nowrap;
-            }
-            .notice-chip-source {
-              background: #f1f5f9;
-              color: #334155;
             }
             .notice-chip-status {
               background: #eff6ff;
@@ -713,69 +642,54 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               background: #ecfdf5;
               color: #047857;
             }
-            .notice-chip-review {
-              background: #fffbeb;
-              color: #b45309;
-            }
             .notice-chip-neutral {
               background: #f8fafc;
               color: #475569;
             }
-            .notice-chip-favorite {
-              background: #fff7ed;
-              color: #c2410c;
-            }
             .notice-queue-title {
               color: var(--text-strong);
-              font-size: 1.05rem;
-              font-weight: 900;
+              font-size: 1rem;
+              font-weight: 800;
+              line-height: 1.45;
+            }
+            .notice-queue-title-meta {
+              margin-top: 0.18rem;
+              color: #64748b;
+              font-size: 0.82rem;
+              line-height: 1.45;
+            }
+            .notice-queue-cell {
+              padding: 0.8rem 0.15rem 0.8rem 0;
+              min-width: 0;
+            }
+            .notice-queue-cell-text {
+              color: var(--text-body);
+              font-size: 0.9rem;
               line-height: 1.5;
             }
-            .notice-queue-summary {
-              margin-top: 0.32rem;
-              color: #475569;
-              font-size: 0.9rem;
-              line-height: 1.55;
+            .notice-queue-cell-muted {
+              color: #64748b;
+              font-size: 0.84rem;
+              line-height: 1.45;
             }
-            .notice-queue-summary.is-empty {
+            .notice-queue-status-cell,
+            .notice-queue-recommend-cell,
+            .notice-queue-favorite-cell {
+              display: flex;
+              align-items: flex-start;
+              justify-content: flex-start;
+              min-height: 100%;
+            }
+            .notice-queue-favorite-cell {
+              justify-content: center;
+            }
+            .notice-queue-empty {
               color: #94a3b8;
               font-weight: 600;
             }
-            .notice-queue-meta-grid {
-              display: grid;
-              grid-template-columns: repeat(2, minmax(0, 1fr));
-              gap: 0.25rem 1.2rem;
-              margin-top: 0.7rem;
-            }
-            .notice-queue-meta-item {
-              color: var(--text-body);
-              font-size: 0.88rem;
-              line-height: 1.5;
-            }
-            .notice-queue-meta-label {
-              color: var(--text-muted);
-              font-weight: 800;
-              margin-right: 0.28rem;
-            }
-            .notice-queue-side {
-              display: flex;
-              flex-direction: column;
-              align-items: flex-end;
-              gap: 0.55rem;
-              padding-top: 0.2rem;
-            }
-            @media (max-width: 960px) {
-              .notice-queue-meta-grid {
-                grid-template-columns: 1fr;
-              }
-              .notice-queue-side {
-                align-items: flex-start;
-                padding-top: 0;
-              }
-            }
             @media (max-width: 640px) {
               .notice-queue-title {
-                font-size: 1.02rem;
+                font-size: 0.96rem;
               }
               div[data-testid="stRadio"] > div {
                 gap: 0.35rem;
@@ -925,6 +839,258 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             "notice_archive": pd.DataFrame(),
         }
         return build_crawled_notice_collection(datasets, source_datasets)
+
+    def _render_notice_title_button(title: str, *, button_key: str, row: pd.Series) -> None:
+        safe_key = _css_safe_key(button_key)
+        st.markdown(
+            f"""
+            <style>
+            .st-key-{safe_key} {{
+              width: 100%;
+            }}
+            .st-key-{safe_key} [data-testid="stButton"] {{
+              width: 100%;
+            }}
+            .st-key-{safe_key} [data-testid="stButton"] > button,
+            .st-key-{safe_key} button {{
+              display: block;
+              width: 100%;
+              padding: 0.02rem 0;
+              margin: 0;
+              border: 0 !important;
+              border-radius: 0 !important;
+              background: transparent !important;
+              box-shadow: none !important;
+              color: var(--text-strong) !important;
+              font-size: 1rem !important;
+              font-weight: 800 !important;
+              line-height: 1.45 !important;
+              text-align: left !important;
+              justify-content: flex-start !important;
+              white-space: normal !important;
+              min-height: 0 !important;
+              cursor: pointer !important;
+            }}
+            .st-key-{safe_key} [data-testid="stButton"] > button:hover,
+            .st-key-{safe_key} [data-testid="stButton"] > button:active,
+            .st-key-{safe_key} [data-testid="stButton"] > button:focus,
+            .st-key-{safe_key} button:hover,
+            .st-key-{safe_key} button:active,
+            .st-key-{safe_key} button:focus {{
+              border: 0 !important;
+              background: transparent !important;
+              box-shadow: none !important;
+              color: var(--text-strong) !important;
+            }}
+            .st-key-{safe_key} [data-testid="stButton"] > button p,
+            .st-key-{safe_key} button p {{
+              font-size: 1rem !important;
+              font-weight: 800 !important;
+              line-height: 1.45 !important;
+              margin: 0 !important;
+              text-align: left !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button(title, key=button_key, use_container_width=True):
+            _open_notice_detail(row)
+
+    def _queue_display_date_text(row: pd.Series) -> str:
+        date_value = clean(first_non_empty(row, "registered_at", "공고일자", "ancm_de"))
+        if date_value:
+            return date_value
+        period_value = clean(first_non_empty(row, "notice_period", "period", "접수기간", "신청기간"))
+        return period_value or "-"
+
+    def render_crawled_notice_rows(
+        rows: pd.DataFrame,
+        *,
+        key_prefix: str,
+        limit: int = 30,
+        page_key: str = detail_page_key,
+        empty_message: str = "?쒖떆??怨듦퀬媛 ?놁뒿?덈떎.",
+    ) -> None:
+        del page_key
+        if rows is None or rows.empty:
+            st.info(empty_message)
+            return
+
+        header_columns = st.columns([1.15, 5.6, 2.2, 1.5, 1.25, 0.8], gap="small")
+        for col, label in zip(header_columns, ["상태", "공고명", "기관", "등록일", "추천", "관심"]):
+            with col:
+                st.markdown(f'<div class="notice-queue-header-label">{escape(label)}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="notice-queue-divider"></div>', unsafe_allow_html=True)
+
+        for position, (_, row) in enumerate(rows.head(limit).iterrows()):
+            notice_id = _resolve_notice_id(row)
+            source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
+            title = clean(first_non_empty(row, "notice_title", "공고명")) or notice_id or "-"
+            ministry = clean(first_non_empty(row, "ministry", "소관부처", "주관부처")) or "-"
+            agency = clean(first_non_empty(row, "agency", "전문기관", "수행기관")) or "-"
+            notice_no = clean(first_non_empty(row, "notice_no", "공고번호", "ancm_no")) or "-"
+            notice_date = _queue_display_date_text(row)
+            recommendation = clean(row.get("_queue_recommendation"))
+            recommendation_text = _normalize_recommendation_value(recommendation) or "보통"
+            review_value = _review_value(row)
+            source_label = clean(first_non_empty(row, "source_label", "source_site", "매체")) or (source_key or "IRIS").upper()
+            scope = clean(first_non_empty(row, "_notice_scope"))
+            status = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태"))
+            if not status:
+                if scope == "archive":
+                    status = "마감"
+                elif scope == "scheduled":
+                    status = "예정"
+                else:
+                    status = "진행중"
+
+            agency_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
+            agency_text = " / ".join(agency_parts) if agency_parts else source_label
+            title_meta_parts = [source_label]
+            if notice_no and notice_no != "-":
+                title_meta_parts.append(f"공고번호 {notice_no}")
+            title_meta = " · ".join(title_meta_parts)
+
+            row_columns = st.columns([1.15, 5.6, 2.2, 1.5, 1.25, 0.8], gap="small")
+            with row_columns[0]:
+                st.markdown('<div class="notice-queue-cell notice-queue-status-cell">', unsafe_allow_html=True)
+                st.markdown(f'<span class="{_status_badge_class(status)}">{escape(status)}</span>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            with row_columns[1]:
+                st.markdown('<div class="notice-queue-cell">', unsafe_allow_html=True)
+                if notice_id:
+                    _render_notice_title_button(
+                        title,
+                        button_key=f"{key_prefix}_open_notice_{notice_id}_{position}",
+                        row=row,
+                    )
+                else:
+                    st.markdown(f'<div class="notice-queue-title">{escape(title)}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="notice-queue-title-meta">{escape(title_meta)}</div>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            with row_columns[2]:
+                agency_class = "notice-queue-cell-text" if agency_text != "-" else "notice-queue-cell-muted"
+                st.markdown(f'<div class="notice-queue-cell {agency_class}">{escape(agency_text)}</div>', unsafe_allow_html=True)
+            with row_columns[3]:
+                date_class = "notice-queue-cell-text" if notice_date != "-" else "notice-queue-cell-muted"
+                st.markdown(f'<div class="notice-queue-cell {date_class}">{escape(notice_date)}</div>', unsafe_allow_html=True)
+            with row_columns[4]:
+                st.markdown('<div class="notice-queue-cell notice-queue-recommend-cell">', unsafe_allow_html=True)
+                st.markdown(_recommendation_badge_html(recommendation_text), unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            with row_columns[5]:
+                st.markdown('<div class="notice-queue-cell notice-queue-favorite-cell">', unsafe_allow_html=True)
+                if notice_id:
+                    render_favorite_scrap_button(
+                        notice_id=notice_id,
+                        current_value=review_value,
+                        source_key=source_key or "iris",
+                        notice_title=title,
+                        button_key=f"{key_prefix}_favorite_{notice_id}_{position}",
+                        compact=True,
+                        icon_only=True,
+                        use_container_width=False,
+                    )
+                else:
+                    st.markdown('<div class="notice-queue-empty">-</div>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('<div class="notice-queue-divider"></div>', unsafe_allow_html=True)
+
+    def _queue_render_inbox_rows(
+        rows: pd.DataFrame,
+        *,
+        key_prefix: str,
+        limit: int = 30,
+        page_key: str = detail_page_key,
+        empty_message: str = "?쒖떆??怨듦퀬媛 ?놁뒿?덈떎.",
+    ) -> None:
+        del page_key
+        if rows is None or rows.empty:
+            st.info(empty_message)
+            return
+
+        header_columns = st.columns([1.15, 5.6, 2.2, 1.5, 1.25, 0.8], gap="small")
+        for col, label in zip(header_columns, ["상태", "공고명", "기관", "등록일", "추천", "관심"]):
+            with col:
+                st.markdown(f'<div class="notice-queue-header-label">{escape(label)}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="notice-queue-divider"></div>', unsafe_allow_html=True)
+
+        for position, (_, row) in enumerate(rows.head(limit).iterrows()):
+            notice_id = _resolve_notice_id(row)
+            source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
+            title = clean(first_non_empty(row, "notice_title", "공고명")) or notice_id or "-"
+            ministry = clean(first_non_empty(row, "ministry", "소관부처", "주관부처")) or "-"
+            agency = clean(first_non_empty(row, "agency", "전문기관", "수행기관")) or "-"
+            notice_no = clean(first_non_empty(row, "notice_no", "공고번호", "ancm_no")) or "-"
+            notice_date = _queue_display_date_text(row)
+            recommendation = clean(row.get("_queue_recommendation"))
+            recommendation_text = _normalize_recommendation_value(recommendation) or "보통"
+            review_value = _review_value(row)
+            source_label = clean(first_non_empty(row, "source_label", "source_site", "매체")) or (source_key or "IRIS").upper()
+            scope = clean(first_non_empty(row, "_notice_scope"))
+            status = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태"))
+            if not status:
+                if scope == "archive":
+                    status = "마감"
+                elif scope == "scheduled":
+                    status = "예정"
+                else:
+                    status = "진행중"
+
+            agency_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
+            agency_text = " / ".join(agency_parts) if agency_parts else source_label
+            title_meta_parts = [source_label]
+            if notice_no and notice_no != "-":
+                title_meta_parts.append(f"공고번호 {notice_no}")
+            title_meta = " · ".join(title_meta_parts)
+
+            row_columns = st.columns([1.15, 5.6, 2.2, 1.5, 1.25, 0.8], gap="small")
+            with row_columns[0]:
+                st.markdown('<div class="notice-queue-cell notice-queue-status-cell">', unsafe_allow_html=True)
+                st.markdown(f'<span class="{_status_badge_class(status)}">{escape(status)}</span>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            with row_columns[1]:
+                st.markdown('<div class="notice-queue-cell">', unsafe_allow_html=True)
+                if notice_id:
+                    _render_notice_title_button(
+                        title,
+                        button_key=f"{key_prefix}_open_notice_{notice_id}_{position}",
+                        row=row,
+                    )
+                else:
+                    st.markdown(f'<div class="notice-queue-title">{escape(title)}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="notice-queue-title-meta">{escape(title_meta)}</div>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            with row_columns[2]:
+                agency_class = "notice-queue-cell-text" if agency_text != "-" else "notice-queue-cell-muted"
+                st.markdown(f'<div class="notice-queue-cell {agency_class}">{escape(agency_text)}</div>', unsafe_allow_html=True)
+            with row_columns[3]:
+                date_class = "notice-queue-cell-text" if notice_date != "-" else "notice-queue-cell-muted"
+                st.markdown(f'<div class="notice-queue-cell {date_class}">{escape(notice_date)}</div>', unsafe_allow_html=True)
+            with row_columns[4]:
+                st.markdown('<div class="notice-queue-cell notice-queue-recommend-cell">', unsafe_allow_html=True)
+                st.markdown(_recommendation_badge_html(recommendation_text), unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            with row_columns[5]:
+                st.markdown('<div class="notice-queue-cell notice-queue-favorite-cell">', unsafe_allow_html=True)
+                if notice_id:
+                    render_favorite_scrap_button(
+                        notice_id=notice_id,
+                        current_value=review_value,
+                        source_key=source_key or "iris",
+                        notice_title=title,
+                        button_key=f"{key_prefix}_favorite_{notice_id}_{position}",
+                        compact=True,
+                        icon_only=True,
+                        use_container_width=False,
+                    )
+                else:
+                    st.markdown('<div class="notice-queue-empty">-</div>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('<div class="notice-queue-divider"></div>', unsafe_allow_html=True)
+
+    render_crawled_notice_rows = _queue_render_inbox_rows
 
     def _render_notice_queue_screen(
         source_df: pd.DataFrame,
@@ -1450,6 +1616,8 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             datasets.get("opportunity", pd.DataFrame()),
             datasets["opportunity_all"],
         )
+
+    render_crawled_notice_rows = _queue_render_inbox_rows
 
     ns["consume_favorite_toggle_query_action"] = consume_favorite_toggle_query_action
     ns["render_favorite_scrap_button"] = render_favorite_scrap_button
