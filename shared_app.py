@@ -10480,7 +10480,7 @@ def render_notice_detail_sidebar_card(
     keyword_tags = parse_detail_tag_items(keyword_text, limit=4)
     deadline_badge, period_text = _notice_detail_deadline_parts(period_value)
     button_html = (
-        f'<a class="notice-detail-action-link" href="{escape(detail_link, quote=True)}" target="_blank">'
+        f'<a class="notice-detail-action-link" href="{escape(detail_link, quote=True)}">'
         f'{escape(detail_button_label)}'
         '</a>'
         if detail_link

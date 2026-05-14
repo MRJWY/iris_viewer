@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from html import escape
-from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
@@ -280,27 +279,30 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
     def _search_state_key() -> str:
         return f"{detail_page_key}_search_text"
 
-    def _build_filter_href(*, status_value: str | None = None, recommendation_value: str | None = None) -> str:
-        params = get_query_params_dict()
-        params["page"] = detail_page_key
-        params["view"] = "table"
-        if status_value is not None:
-            params["notice_status_filter_select"] = _normalize_status_filter(status_value)
-        if recommendation_value is not None:
-            params["notice_recommendation_filter_select"] = _normalize_recommendation_filter(recommendation_value)
-        return f"?{urlencode(_auth_params(params))}"
+    def _selected_notice_state_key() -> str:
+        return f"{detail_page_key}_selected_notice_id"
+
+    def _resolve_notice_id(row: dict | pd.Series | None) -> str:
+        if row is None:
+            return ""
+        return clean(first_non_empty(row, "怨듦퀬ID", "notice_id"))
+
+    def _get_notice_row_by_id(rows: pd.DataFrame, notice_id: str) -> dict | pd.Series | None:
+        selected_notice_id = clean(notice_id)
+        if rows is None or rows.empty or not selected_notice_id:
+            return None
+        selected_row = get_row_by_column_value(rows, "怨듦퀬ID", selected_notice_id)
+        if selected_row:
+            return selected_row
+        return get_row_by_column_value(rows, "notice_id", selected_notice_id)
 
     def _consume_notice_filter_query_actions() -> None:
-        status_param = get_query_param("notice_status_filter_select")
-        recommendation_param = get_query_param("notice_recommendation_filter_select")
         st.session_state.setdefault(_status_filter_state_key(), "all")
         st.session_state.setdefault(_recommendation_filter_state_key(), "all")
+        status_param = get_query_param("notice_status_filter_select")
+        recommendation_param = get_query_param("notice_recommendation_filter_select")
         if not clean(status_param) and not clean(recommendation_param):
             return
-        if clean(status_param):
-            st.session_state[_status_filter_state_key()] = _normalize_status_filter(status_param)
-        if clean(recommendation_param):
-            st.session_state[_recommendation_filter_state_key()] = _normalize_recommendation_filter(recommendation_param)
         params = get_query_params_dict()
         params["page"] = detail_page_key
         params["view"] = "table"
@@ -468,24 +470,23 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         search_mask = _matches_search(filtered, search_text)
         return filtered[search_mask].copy()
 
-    def _render_filter_bar(title: str, options: list[tuple[str, str]], current_value: str, filter_kind: str) -> None:
-        links = []
-        for option_value, label in options:
-            active_class = " is-active" if option_value == current_value else ""
-            href = _build_filter_href(
-                status_value=option_value if filter_kind == "status" else None,
-                recommendation_value=option_value if filter_kind == "recommendation" else None,
-            )
-            links.append(
-                f'<a class="notice-filter-link{active_class}" href="{escape(href, quote=True)}">{escape(label)}</a>'
-            )
-        st.markdown(
-            '<div class="notice-filter-group">'
-            f'<div class="notice-filter-group-title">{escape(title)}</div>'
-            f'<div class="notice-filter-bar">{"".join(links)}</div>'
-            "</div>",
-            unsafe_allow_html=True,
+    def _render_filter_control(title: str, options: list[tuple[str, str]], state_key: str) -> str:
+        option_values = [value for value, _ in options]
+        option_labels = {value: label for value, label in options}
+        current_value = clean(st.session_state.get(state_key, option_values[0]))
+        if current_value not in option_labels:
+            st.session_state[state_key] = option_values[0]
+
+        st.markdown(f'<div class="notice-filter-group-title">{escape(title)}</div>', unsafe_allow_html=True)
+        selected_value = st.radio(
+            title,
+            options=option_values,
+            key=state_key,
+            horizontal=True,
+            label_visibility="collapsed",
+            format_func=lambda value: option_labels.get(value, value),
         )
+        return clean(selected_value)
 
     def _inject_notice_queue_dashboard_styles() -> None:
         st.markdown(
@@ -500,37 +501,16 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               font-weight: 800;
               margin-bottom: 0.45rem;
             }
-            .notice-filter-bar {
-              display: flex;
+            div[data-testid="stRadio"] > div {
+              gap: 0.55rem;
               flex-wrap: wrap;
-              gap: 0.7rem;
-              margin-bottom: 0.3rem;
             }
-            .notice-filter-link {
-              display: inline-flex;
-              align-items: center;
-              justify-content: center;
-              min-height: 38px;
-              padding: 0 14px;
-              border-radius: 999px;
-              border: 1px solid rgba(203, 213, 225, 0.92);
-              background: #ffffff;
-              color: var(--text-body) !important;
+            div[data-testid="stRadio"] label {
+              margin: 0;
+            }
+            div[data-testid="stRadio"] label p {
               font-size: 0.92rem;
               font-weight: 700;
-              line-height: 1;
-              text-decoration: none !important;
-              transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
-            }
-            .notice-filter-link:hover {
-              background: #f8fafc;
-              border-color: rgba(148, 163, 184, 0.95);
-              text-decoration: none !important;
-            }
-            .notice-filter-link.is-active {
-              background: #eff6ff;
-              border-color: #60a5fa;
-              color: #1d4ed8 !important;
             }
             .notice-queue-note {
               margin: 0.9rem 0 0.35rem;
@@ -541,11 +521,13 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             .notice-queue-list {
               display: flex;
               flex-direction: column;
+              width: 100%;
               margin-top: 0.7rem;
               border-top: 1px solid rgba(226, 232, 240, 0.95);
             }
             .notice-queue-row-shell {
               position: relative;
+              width: 100%;
               border-bottom: 1px solid rgba(226, 232, 240, 0.95);
             }
             .notice-queue-row-link {
@@ -562,6 +544,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               display: block;
               position: relative;
               z-index: 2;
+              width: 100%;
               padding: 1.05rem 0.15rem;
               pointer-events: none;
               transition: background-color 140ms ease;
@@ -570,20 +553,23 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               background: #f8fafc;
             }
             .notice-queue-row-main {
-              display: flex;
+              display: grid;
+              grid-template-columns: minmax(0, 1fr) 220px;
               align-items: flex-start;
-              justify-content: space-between;
-              gap: 1.5rem;
+              gap: 1.25rem;
+              width: 100%;
             }
             .notice-queue-row-left {
               min-width: 0;
-              flex: 1 1 auto;
+              width: 100%;
             }
             .notice-queue-row-right {
-              flex: 0 0 210px;
+              width: 220px;
+              min-width: 220px;
               display: flex;
               flex-direction: column;
               align-items: flex-end;
+              justify-self: end;
               gap: 0.55rem;
             }
             .notice-queue-topline {
@@ -712,21 +698,22 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             }
             @media (max-width: 960px) {
               .notice-queue-row-main {
-                flex-direction: column;
+                grid-template-columns: 1fr;
                 gap: 0.95rem;
               }
               .notice-queue-row-right {
-                flex: 1 1 auto;
                 width: 100%;
+                min-width: 0;
                 align-items: flex-start;
+                justify-self: stretch;
               }
             }
             @media (max-width: 640px) {
               .notice-queue-title {
                 font-size: 1.02rem;
               }
-              .notice-filter-link {
-                width: calc(50% - 0.35rem);
+              div[data-testid="stRadio"] > div {
+                gap: 0.35rem;
               }
             }
             </style>
@@ -759,6 +746,13 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         if callable(resolve_external_detail_link):
             return clean(resolve_external_detail_link(row, source_key=source_key))
         return clean(first_non_empty(row, "상세링크", "detail_link"))
+
+    def _queue_click_href(row: pd.Series, collection_id: str, source_key: str) -> str:
+        del collection_id
+        notice_id = _resolve_notice_id(row)
+        if notice_id:
+            return build_route_href(detail_page_key, notice_id, source_key=source_key)
+        return ""
 
     def render_crawled_notice_rows(
         rows: pd.DataFrame,
@@ -809,8 +803,10 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
                 else ""
             )
             click_href = _queue_click_href(row, collection_id, source_key)
+            cta_label = "Notice Detail"
             cta_label = "상세 보기" if clean(collection_id) else "원문 보기"
 
+            cta_label = "Notice Detail"
             title_badges = [f'<span class="notice-chip notice-chip-source">{escape(source_label)}</span>']
             if is_favorite:
                 title_badges.append(_favorite_badge_html())
@@ -883,13 +879,19 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
 
         current_view, selected_id = get_route_state(detail_page_key)
         if current_view == "detail":
-            selected_row = get_row_by_column_value(source_df, "_collection_id", selected_id)
+            selected_notice_id = clean(selected_id) or clean(st.session_state.get(_selected_notice_state_key(), ""))
+            if clean(selected_id):
+                st.session_state[_selected_notice_state_key()] = clean(selected_id)
+            selected_row = _get_notice_row_by_id(source_df, selected_notice_id)
             back_col, info_col = st.columns([1, 5])
             with back_col:
                 if st.button("목록으로", key=f"{detail_page_key}_back_to_table", use_container_width=True):
                     switch_to_table(detail_page_key)
             with info_col:
                 st.markdown('<div class="page-note">공고 탐색 Queue에서 선택한 상세 화면입니다.</div>', unsafe_allow_html=True)
+            if not selected_row:
+                st.info("?좏깮???怨듦퀬 ?곸꽭瑜?李얠쓣 ???놁뒿?덈떎.")
+                return
             render_notice_detail_from_row(selected_row, detail_opportunity_df)
             return
 
@@ -912,18 +914,14 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             '<div class="notice-queue-note">공고 상태와 추천 상태만 빠르게 좁히고, 카드 전체를 눌러 상세 화면으로 바로 이동할 수 있습니다.</div>',
             unsafe_allow_html=True,
         )
-        _render_filter_bar(
-            "공고상태 필터",
-            STATUS_FILTER_OPTIONS,
-            _normalize_status_filter(st.session_state.get(status_filter_key, "all")),
-            "status",
+        selected_status = _normalize_status_filter(
+            _render_filter_control("공고상태 필터", STATUS_FILTER_OPTIONS, status_filter_key)
         )
-        _render_filter_bar(
-            "추천여부 필터",
-            RECOMMENDATION_FILTER_OPTIONS,
-            _normalize_recommendation_filter(st.session_state.get(recommendation_filter_key, "all")),
-            "recommendation",
+        st.session_state[status_filter_key] = selected_status
+        selected_recommendation = _normalize_recommendation_filter(
+            _render_filter_control("추천여부 필터", RECOMMENDATION_FILTER_OPTIONS, recommendation_filter_key)
         )
+        st.session_state[recommendation_filter_key] = selected_recommendation
 
         search_col, reset_col = st.columns([6, 1])
         with search_col:
@@ -942,8 +940,8 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
 
         filtered_source_df = _apply_notice_filters(
             source_df,
-            st.session_state.get(status_filter_key, "all"),
-            st.session_state.get(recommendation_filter_key, "all"),
+            selected_status,
+            selected_recommendation,
             search_text,
         )
 
