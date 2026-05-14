@@ -158,6 +158,7 @@ def render_public_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -
 
 
 def render_public_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
+    core.consume_favorite_toggle_query_action()
     source_df = core.build_crawled_notice_collection(datasets, source_datasets)
 
     current_view, selected_id = core.get_route_state("notice")
@@ -360,4 +361,3 @@ def render_public_opportunity_page(
 
     st.markdown('<div class="queue-results-label">추천 결과</div>', unsafe_allow_html=True)
     core._render_rfp_queue_list(filtered.head(30), page_key=page_key)
-
