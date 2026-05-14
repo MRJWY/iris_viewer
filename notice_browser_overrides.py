@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+import re
 
 import pandas as pd
 import streamlit as st
@@ -1026,6 +1027,55 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
     def _notice_detail_state_key() -> str:
         return f"{detail_page_key}_notice_detail_state"
 
+    def _css_safe_key(value: str) -> str:
+        return re.sub(r"[^0-9A-Za-z_-]", "-", clean(value))
+
+    def _render_notice_title_button(title: str, *, button_key: str, row: pd.Series) -> None:
+        safe_key = _css_safe_key(button_key)
+        st.markdown(
+            f"""
+            <style>
+            .st-key-{safe_key} {{
+              width: 100%;
+            }}
+            .st-key-{safe_key} button {{
+              display: block;
+              width: 100%;
+              padding: 0;
+              margin: 0;
+              border: 0 !important;
+              background: transparent !important;
+              box-shadow: none !important;
+              color: var(--text-strong) !important;
+              font-size: 1.12rem !important;
+              font-weight: 900 !important;
+              line-height: 1.45 !important;
+              text-align: left !important;
+              justify-content: flex-start !important;
+              white-space: normal !important;
+              min-height: 0 !important;
+            }}
+            .st-key-{safe_key} button:hover,
+            .st-key-{safe_key} button:active,
+            .st-key-{safe_key} button:focus {{
+              border: 0 !important;
+              background: transparent !important;
+              box-shadow: none !important;
+              color: var(--text-strong) !important;
+            }}
+            .st-key-{safe_key} button p {{
+              font-size: 1.12rem !important;
+              font-weight: 900 !important;
+              line-height: 1.45 !important;
+              text-align: left !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button(title, key=button_key, use_container_width=True):
+            _open_notice_detail(row)
+
     def _default_notice_detail_state() -> dict[str, str]:
         return {
             "view": "table",
@@ -1113,12 +1163,11 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
                     if is_favorite:
                         title_badges.append(_favorite_badge_html())
                     st.markdown(f'<div class="notice-queue-topline">{"".join(title_badges)}</div>', unsafe_allow_html=True)
-                    if st.button(
+                    _render_notice_title_button(
                         title,
-                        key=f"{key_prefix}_open_notice_{notice_id}_{position}",
-                        use_container_width=True,
-                    ):
-                        _open_notice_detail(row)
+                        button_key=f"{key_prefix}_open_notice_{notice_id}_{position}",
+                        row=row,
+                    )
                     analysis_class = "notice-queue-analysis" if clean(row.get("_queue_analysis")) else "notice-queue-analysis is-empty"
                     st.markdown('<div class="notice-queue-analysis-label">Analysis</div>', unsafe_allow_html=True)
                     st.markdown(f'<div class="{analysis_class}">{escape(analysis_text)}</div>', unsafe_allow_html=True)
