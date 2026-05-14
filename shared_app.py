@@ -10920,6 +10920,11 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
 
         st.markdown('<div class="detail-section-title">연결된 Opportunity</div>', unsafe_allow_html=True)
 
+    related_view = ensure_opportunity_row_ids(related.copy()) if not related.empty else pd.DataFrame()
+    primary_rfp_id = ""
+    if not related_view.empty:
+        primary_rfp_id = clean(first_non_empty(related_view.iloc[0].to_dict(), "_row_id", "document_id"))
+
     with sidebar_col:
         render_notice_detail_sidebar_card(
             source_label=source_label,
@@ -10931,10 +10936,15 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
             ministry=row.get("소관부처"),
             recommendation=first_non_empty(top_related, "llm_recommendation", "recommendation", "추천정도"),
             score=clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("추천점수")),
-            detail_link=detail_link,
-            detail_button_label=detail_button_label,
+            detail_link="",
+            detail_button_label="",
             related_count=len(related),
         )
+        if detail_link:
+            st.link_button("원문 공고", detail_link, use_container_width=True)
+        if primary_rfp_id:
+            if st.button("연결 RFP 보기", key=f"notice_related_rfp_{clean(row.get('怨듦퀬ID'))}", use_container_width=True):
+                switch_to_detail("rfp_queue", primary_rfp_id)
 
     if related.empty:
         st.info("이 공고에 연결된 Opportunity가 아직 없습니다.")

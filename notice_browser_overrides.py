@@ -10,15 +10,15 @@ FAVORITE_REVIEW_STATUS = "관심공고"
 UNFAVORITE_REVIEW_STATUS = "검토전"
 
 STATUS_FILTER_OPTIONS: list[tuple[str, str]] = [
-    ("all", "전체"),
-    ("current", "진행중"),
-    ("scheduled", "예정"),
-    ("archive", "마감"),
-    ("favorite", "관심공고"),
+    ("전체", "전체"),
+    ("진행중", "진행중"),
+    ("예정", "예정"),
+    ("마감", "마감"),
+    ("관심공고", "관심공고"),
 ]
 
 RECOMMENDATION_FILTER_OPTIONS: list[tuple[str, str]] = [
-    ("all", "전체"),
+    ("전체", "전체"),
     ("추천", "추천"),
     ("검토권장", "검토권장"),
     ("보통", "보통"),
@@ -243,9 +243,20 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
 
     def _normalize_status_filter(value: str) -> str:
         normalized = clean(value).lower()
-        if normalized in {option for option, _ in STATUS_FILTER_OPTIONS}:
-            return normalized
-        return "all"
+        alias_map = {
+            "all": "전체",
+            "전체": "전체",
+            "current": "진행중",
+            "진행중": "진행중",
+            "scheduled": "예정",
+            "예정": "예정",
+            "archive": "마감",
+            "closed": "마감",
+            "마감": "마감",
+            "favorite": "관심공고",
+            "관심공고": "관심공고",
+        }
+        return alias_map.get(normalized, "전체")
 
     def _normalize_recommendation_value(value: object) -> str:
         text = clean(value)
@@ -266,9 +277,12 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
 
     def _normalize_recommendation_filter(value: str) -> str:
         normalized = _normalize_recommendation_value(value)
-        if normalized in {option for option, _ in RECOMMENDATION_FILTER_OPTIONS if option != "all"}:
+        if normalized in {option for option, _ in RECOMMENDATION_FILTER_OPTIONS if option != "전체"}:
             return normalized
-        return "all"
+        lowered = clean(value).lower()
+        if lowered in {"all", "전체"}:
+            return "전체"
+        return "전체"
 
     def _status_filter_state_key() -> str:
         return f"{detail_page_key}_selected_status_filter"
@@ -455,16 +469,16 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         normalized_status = _normalize_status_filter(status_filter)
         normalized_recommendation = _normalize_recommendation_filter(recommendation_filter)
 
-        if normalized_status == "current":
+        if normalized_status == "진행중":
             filtered = filtered[filtered["_notice_scope"].fillna("").astype(str).str.strip().eq("current")].copy()
-        elif normalized_status == "scheduled":
+        elif normalized_status == "예정":
             filtered = filtered[filtered["_notice_scope"].fillna("").astype(str).str.strip().eq("scheduled")].copy()
-        elif normalized_status == "archive":
+        elif normalized_status == "마감":
             filtered = filtered[filtered["_notice_scope"].fillna("").astype(str).str.strip().eq("archive")].copy()
-        elif normalized_status == "favorite":
+        elif normalized_status == "관심공고":
             filtered = filtered[_review_series(filtered).eq(FAVORITE_REVIEW_STATUS)].copy()
 
-        if normalized_recommendation != "all":
+        if normalized_recommendation != "전체":
             filtered = filtered[filtered["_queue_recommendation"].eq(normalized_recommendation)].copy()
 
         search_mask = _matches_search(filtered, search_text)
@@ -952,6 +966,290 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             page_key=detail_page_key,
         )
 
+    def _notice_filters_state_key() -> str:
+        return "notice_filters"
+
+    def _notice_filter_widget_key(field_name: str) -> str:
+        return f"{detail_page_key}_notice_filter_widget_{field_name}"
+
+    def _default_notice_filters() -> dict[str, str]:
+        return {
+            "status": "전체",
+            "recommendation": "전체",
+            "search": "",
+        }
+
+    def _get_notice_filters() -> dict[str, str]:
+        defaults = _default_notice_filters()
+        current_value = st.session_state.get(_notice_filters_state_key(), {})
+        filters = defaults.copy()
+        if isinstance(current_value, dict):
+            filters.update(
+                {
+                    "status": _normalize_status_filter(current_value.get("status", defaults["status"])),
+                    "recommendation": _normalize_recommendation_filter(
+                        current_value.get("recommendation", defaults["recommendation"])
+                    ),
+                    "search": clean(current_value.get("search", defaults["search"])),
+                }
+            )
+        st.session_state[_notice_filters_state_key()] = filters
+        return filters
+
+    def _set_notice_filters(filters: dict[str, str]) -> dict[str, str]:
+        next_filters = {
+            "status": _normalize_status_filter(filters.get("status", "전체")),
+            "recommendation": _normalize_recommendation_filter(filters.get("recommendation", "전체")),
+            "search": clean(filters.get("search", "")),
+        }
+        st.session_state[_notice_filters_state_key()] = next_filters
+        return next_filters
+
+    def _sync_notice_filter(field_name: str) -> None:
+        filters = _get_notice_filters()
+        widget_key = _notice_filter_widget_key(field_name)
+        widget_value = st.session_state.get(widget_key, filters.get(field_name, ""))
+        if field_name == "status":
+            filters["status"] = _normalize_status_filter(widget_value)
+        elif field_name == "recommendation":
+            filters["recommendation"] = _normalize_recommendation_filter(widget_value)
+        else:
+            filters["search"] = clean(widget_value)
+        _set_notice_filters(filters)
+
+    def _reset_notice_filters() -> None:
+        filters = _set_notice_filters(_default_notice_filters())
+        st.session_state[_notice_filter_widget_key("status")] = filters["status"]
+        st.session_state[_notice_filter_widget_key("recommendation")] = filters["recommendation"]
+        st.session_state[_notice_filter_widget_key("search")] = filters["search"]
+
+    def _notice_detail_state_key() -> str:
+        return f"{detail_page_key}_notice_detail_state"
+
+    def _default_notice_detail_state() -> dict[str, str]:
+        return {
+            "view": "table",
+            "selected_notice_id": "",
+            "source": "",
+        }
+
+    def _get_notice_detail_state() -> dict[str, str]:
+        current_value = st.session_state.get(_notice_detail_state_key(), {})
+        state = _default_notice_detail_state()
+        if isinstance(current_value, dict):
+            state.update(
+                {
+                    "view": clean(current_value.get("view", state["view"])) or "table",
+                    "selected_notice_id": clean(current_value.get("selected_notice_id", "")),
+                    "source": clean(current_value.get("source", "")),
+                }
+            )
+        st.session_state[_notice_detail_state_key()] = state
+        return state
+
+    def _set_notice_detail_state(view: str, notice_id: str = "", source: str = "") -> dict[str, str]:
+        next_state = {
+            "view": clean(view) or "table",
+            "selected_notice_id": clean(notice_id),
+            "source": clean(source),
+        }
+        st.session_state[_notice_detail_state_key()] = next_state
+        st.session_state["selected_notice_id"] = next_state["selected_notice_id"]
+        st.session_state[_selected_notice_state_key()] = next_state["selected_notice_id"]
+        return next_state
+
+    def _open_notice_detail(row: pd.Series) -> None:
+        notice_id = _resolve_notice_id(row)
+        if not notice_id:
+            return
+        source_value = clean(first_non_empty(row, "source_site", "source_key", "_source_key"))
+        _set_notice_detail_state("notice_detail", notice_id, source_value)
+        st.rerun()
+
+    def _close_notice_detail() -> None:
+        _set_notice_detail_state("table", "", "")
+        st.rerun()
+
+    def render_crawled_notice_rows(
+        rows: pd.DataFrame,
+        *,
+        key_prefix: str,
+        limit: int = 30,
+        page_key: str = detail_page_key,
+        empty_message: str = "표시할 공고가 없습니다.",
+    ) -> None:
+        del page_key
+        if rows is None or rows.empty:
+            st.info(empty_message)
+            return
+
+        for position, (_, row) in enumerate(rows.head(limit).iterrows()):
+            notice_id = _resolve_notice_id(row)
+            source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
+            title = clean(first_non_empty(row, "notice_title", "공고명")) or notice_id or "-"
+            ministry = clean(first_non_empty(row, "ministry", "소관부처")) or "-"
+            agency = clean(first_non_empty(row, "agency", "전문기관", "담당부서")) or "-"
+            period = clean(first_non_empty(row, "notice_period", "period", "접수기간", "요청기간")) or "-"
+            budget = clean(row.get("_queue_budget")) or "-"
+            recommendation = clean(row.get("_queue_recommendation"))
+            analysis_text = clean(row.get("_queue_analysis")) or "-"
+            review_value = _review_value(row)
+            source_label = clean(first_non_empty(row, "source_label", "매체")) or (source_key or "IRIS").upper()
+            is_favorite = _is_favorite(review_value)
+            scope = clean(first_non_empty(row, "_notice_scope"))
+            status = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태"))
+            if not status:
+                if scope == "archive":
+                    status = "마감"
+                elif scope == "scheduled":
+                    status = "예정"
+                else:
+                    status = "진행중"
+
+            with st.container(border=True):
+                left_col, right_col = st.columns([5.2, 1.8], gap="medium")
+                with left_col:
+                    title_badges = [f'<span class="notice-chip notice-chip-source">{escape(source_label)}</span>']
+                    if is_favorite:
+                        title_badges.append(_favorite_badge_html())
+                    st.markdown(f'<div class="notice-queue-topline">{"".join(title_badges)}</div>', unsafe_allow_html=True)
+                    if st.button(
+                        title,
+                        key=f"{key_prefix}_open_notice_{notice_id}_{position}",
+                        use_container_width=True,
+                    ):
+                        _open_notice_detail(row)
+                    analysis_class = "notice-queue-analysis" if clean(row.get("_queue_analysis")) else "notice-queue-analysis is-empty"
+                    st.markdown('<div class="notice-queue-analysis-label">Analysis</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="{analysis_class}">{escape(analysis_text)}</div>', unsafe_allow_html=True)
+                    st.markdown(
+                        (
+                            '<div class="notice-queue-meta">'
+                            f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">Org</span>{escape(ministry)} / {escape(agency)}</div>'
+                            f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">Period</span>{escape(period)}</div>'
+                            f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">Budget</span>{escape(budget)}</div>'
+                            "</div>"
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                with right_col:
+                    st.markdown(
+                        (
+                            f'<div class="{_status_badge_class(status)}">{escape(status)}</div>'
+                            f'{_recommendation_badge_html(recommendation)}'
+                            '<div class="notice-queue-cta">Notice Detail</div>'
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    if notice_id:
+                        render_favorite_scrap_button(
+                            notice_id=notice_id,
+                            current_value=review_value,
+                            source_key=source_key or "iris",
+                            notice_title=title,
+                            button_key=f"{key_prefix}_favorite_{notice_id}_{position}",
+                        )
+
+    def _render_notice_queue_screen(
+        source_df: pd.DataFrame,
+        opportunity_df: pd.DataFrame,
+        detail_opportunity_df: pd.DataFrame,
+    ) -> None:
+        del opportunity_df
+        consume_favorite_toggle_query_action()
+        source_df = _enrich_notice_rows(source_df, detail_opportunity_df)
+
+        detail_state = _get_notice_detail_state()
+        if detail_state["view"] == "notice_detail":
+            selected_row = _get_notice_row_by_id(source_df, detail_state["selected_notice_id"])
+            back_col, info_col = st.columns([1, 5])
+            with back_col:
+                if st.button("목록으로", key=f"{detail_page_key}_back_to_table", use_container_width=True):
+                    _close_notice_detail()
+            with info_col:
+                st.markdown('<div class="page-note">선택한 Notice 상세 화면입니다.</div>', unsafe_allow_html=True)
+            if not selected_row:
+                st.info("선택한 공고 상세를 찾을 수 없습니다.")
+                return
+            render_notice_detail_from_row(selected_row, detail_opportunity_df)
+            return
+
+        render_page_header(
+            "Notice Queue",
+            "빠르게 훑고, 바로 판단하고, 같은 앱 안에서 Notice 상세로 진입하는 공고 탐색 Queue입니다.",
+            eyebrow="Notices",
+        )
+        render_notice_queue_ui_styles()
+        _inject_notice_queue_dashboard_styles()
+        if source_df is None or source_df.empty:
+            st.info("표시할 공고가 없습니다.")
+            return
+
+        filters = _get_notice_filters()
+        status_widget_key = _notice_filter_widget_key("status")
+        recommendation_widget_key = _notice_filter_widget_key("recommendation")
+        search_widget_key = _notice_filter_widget_key("search")
+        st.session_state.setdefault(status_widget_key, filters["status"])
+        st.session_state.setdefault(recommendation_widget_key, filters["recommendation"])
+        st.session_state.setdefault(search_widget_key, filters["search"])
+
+        st.markdown(
+            '<div class="notice-queue-note">공고상태, 추천여부, 검색을 함께 유지하면서 즉시 필터링하고 같은 앱 안에서 Notice 상세를 확인합니다.</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="notice-filter-group-title">공고상태 필터</div>', unsafe_allow_html=True)
+        st.radio(
+            "status-filter",
+            options=[value for value, _ in STATUS_FILTER_OPTIONS],
+            key=status_widget_key,
+            horizontal=True,
+            label_visibility="collapsed",
+            format_func=lambda value: dict(STATUS_FILTER_OPTIONS).get(value, value),
+            on_change=_sync_notice_filter,
+            args=("status",),
+        )
+        st.markdown('<div class="notice-filter-group-title">추천여부 필터</div>', unsafe_allow_html=True)
+        st.radio(
+            "recommendation-filter",
+            options=[value for value, _ in RECOMMENDATION_FILTER_OPTIONS],
+            key=recommendation_widget_key,
+            horizontal=True,
+            label_visibility="collapsed",
+            format_func=lambda value: dict(RECOMMENDATION_FILTER_OPTIONS).get(value, value),
+            on_change=_sync_notice_filter,
+            args=("recommendation",),
+        )
+
+        search_col, reset_col = st.columns([6, 1])
+        with search_col:
+            st.text_input(
+                "search-filter",
+                key=search_widget_key,
+                placeholder="공고명 / 과제명 / 기관명 검색",
+                label_visibility="collapsed",
+                on_change=_sync_notice_filter,
+                args=("search",),
+            )
+        with reset_col:
+            st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
+            if st.button("초기화", key=f"{detail_page_key}_search_reset", use_container_width=True):
+                _reset_notice_filters()
+                st.rerun()
+
+        filters = _get_notice_filters()
+        filtered_source_df = _apply_notice_filters(
+            source_df,
+            filters["status"],
+            filters["recommendation"],
+            filters["search"],
+        )
+
+        st.caption(f"결과 {len(filtered_source_df)}건")
+        render_crawled_notice_rows(
+            filtered_source_df,
+            key_prefix=f"{detail_page_key}_list",
+            page_key=detail_page_key,
+        )
     def render_favorite_notice_page(
         notice_view_df: pd.DataFrame,
         opportunity_df: pd.DataFrame,
