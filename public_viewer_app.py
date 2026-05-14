@@ -8,14 +8,14 @@ import viewer_body
 
 
 PUBLIC_VIEWER_ROUTE_MAP: dict[str, tuple[str, str]] = {
-    "opportunity": ("iris", "opportunity"),
-    "notice": ("iris", "notice"),
+    "rfp_queue": ("iris", "rfp_queue"),
+    "notice_queue": ("iris", "notice_queue"),
     "notice_archive": ("iris", "notice_archive"),
     "opportunity_archive": ("iris", "notice_archive"),
     "favorites": ("favorites", "favorites"),
 }
 
-HEAVY_NOTICE_PAGES = {"notice", "notice_archive", "favorites"}
+HEAVY_NOTICE_PAGES = {"notice_queue", "notice_archive", "favorites"}
 
 
 def inject_public_viewer_styles() -> None:
@@ -43,8 +43,8 @@ def render_public_sidebar_navigation(current_page: str) -> None:
         unsafe_allow_html=True,
     )
     workspace_items: list[tuple[str, str, str]] = [
-        ("RFP Queue", "iris", "opportunity"),
-        ("Notice Queue", "iris", "notice"),
+        ("RFP Queue", "iris", "rfp_queue"),
+        ("Notice Queue", "iris", "notice_queue"),
         ("Archive", "iris", "notice_archive"),
         ("Favorites", "favorites", "favorites"),
     ]
@@ -174,20 +174,28 @@ def load_public_viewer_runtime(current_page: str) -> tuple[core.AppModeConfig, d
     return mode_config, datasets, source_datasets
 
 
+def clear_public_viewer_caches() -> None:
+    load_public_rfp_datasets.clear()
+    load_public_source_notice_datasets.clear()
+    core.load_sheet_as_dataframe.clear()
+    core.load_optional_sheet_as_dataframe.clear()
+    core.load_app_datasets.clear()
+
+
 def render_public_viewer_body(
     mode_config: core.AppModeConfig,
     datasets: dict[str, object],
     source_datasets: dict[str, object],
 ) -> None:
     del mode_config
-    current_page = core.normalize_route_page_key(core.get_query_param("page")) or "opportunity"
+    current_page = core.normalize_route_page_key(core.get_query_param("page")) or "rfp_queue"
     if current_page == "opportunity_archive":
         current_page = "notice_archive"
     if current_page not in PUBLIC_VIEWER_ROUTE_MAP:
-        current_page = "opportunity"
+        current_page = "rfp_queue"
     render_public_sidebar_navigation(current_page)
 
-    if current_page == "notice":
+    if current_page == "notice_queue":
         viewer_body.render_public_notice_queue_page(datasets, source_datasets)
         return
     if current_page == "notice_archive":
@@ -211,7 +219,7 @@ def render_public_viewer_body(
 
     viewer_body.render_public_opportunity_page(
         datasets["opportunity"],
-        page_key="opportunity",
+        page_key="rfp_queue",
         title="RFP Queue",
         archive=False,
         all_df=datasets["opportunity_all"],
@@ -219,9 +227,11 @@ def render_public_viewer_body(
 
 
 def main() -> None:
-    current_page = core.normalize_route_page_key(core.get_query_param("page")) or "opportunity"
+    current_page = core.normalize_route_page_key(core.get_query_param("page")) or "rfp_queue"
     if current_page == "opportunity_archive":
         current_page = "notice_archive"
+    if core.get_query_param("favorite_toggle") == "1":
+        clear_public_viewer_caches()
     try:
         mode_config, datasets, source_datasets = load_public_viewer_runtime(current_page)
     except Exception as exc:

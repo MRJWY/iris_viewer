@@ -110,7 +110,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
 
     sources = (
         SourceRouteConfig("dashboard", "Dashboard", "dashboard", True, "dashboard"),
-        SourceRouteConfig("iris", "IRIS", "notice", False, "iris"),
+        SourceRouteConfig("iris", "IRIS", "rfp_queue", False, "iris"),
         SourceRouteConfig("tipa", "중소기업기술정보진흥원", "tipa_current", True, "external", page_configs=tipa_pages),
         SourceRouteConfig("nipa", "NIPA", "nipa_current", True, "external", page_configs=nipa_pages),
         SourceRouteConfig("proposal", "제안관리", "proposal", False, "proposal"),
@@ -123,8 +123,8 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             "workspace",
             "Workspace",
             (
-                NavItemConfig("rfp_queue", "RFP Queue", "iris", "opportunity"),
-                NavItemConfig("notice_queue", "Notice Queue", "iris", "notice"),
+                NavItemConfig("rfp_queue", "RFP Queue", "iris", "rfp_queue"),
+                NavItemConfig("notice_queue", "Notice Queue", "iris", "notice_queue"),
             ),
         ),
         NavGroupConfig(
@@ -140,41 +140,41 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
     if normalized_mode == "viewer":
         return AppModeConfig(
             mode="viewer",
-            page_title="Crawler Hub Viewer",
-            header_title="Crawler Hub Viewer",
+            page_title="RFP Intelligence Viewer",
+            header_title="RFP Intelligence Viewer",
             header_caption="정부사업 공고 수집, 추천, 검토를 한 곳에서 보는 뷰어입니다.",
             supports_summary=False,
             nav_groups=viewer_nav_groups,
             sources=sources,
             default_source="iris",
-            default_iris_page="opportunity",
+            default_iris_page="rfp_queue",
             iris_tabs=(
-                ("opportunity", "RFP Queue"),
-                ("notice", "Notice Queue"),
+                ("rfp_queue", "RFP Queue"),
+                ("notice_queue", "Notice Queue"),
                 ("notice_scheduled", "예정 공고"),
                 ("notice_archive", "Archive"),
             ),
-            valid_iris_pages=frozenset({"opportunity", "notice", "notice_scheduled", "notice_archive"}),
+            valid_iris_pages=frozenset({"rfp_queue", "notice_queue", "notice_scheduled", "notice_archive"}),
             iris_tab_key="iris_page_tabs",
         )
 
     return AppModeConfig(
         mode="viewer",
-        page_title="Crawler Hub Viewer",
-        header_title="Crawler Hub Viewer",
+        page_title="RFP Intelligence Viewer",
+        header_title="RFP Intelligence Viewer",
         header_caption="?????? ??? ???, ???, ????? ?????????? ????????",
         supports_summary=False,
         nav_groups=viewer_nav_groups,
         sources=sources,
         default_source="iris",
-        default_iris_page="opportunity",
+        default_iris_page="rfp_queue",
         iris_tabs=(
-            ("opportunity", "RFP Queue"),
-            ("notice", "Notice Queue"),
+            ("rfp_queue", "RFP Queue"),
+            ("notice_queue", "Notice Queue"),
             ("notice_scheduled", "??? ???"),
             ("notice_archive", "Archive"),
         ),
-        valid_iris_pages=frozenset({"opportunity", "notice", "notice_scheduled", "notice_archive"}),
+        valid_iris_pages=frozenset({"rfp_queue", "notice_queue", "notice_scheduled", "notice_archive"}),
         iris_tab_key="iris_page_tabs",
     )
 

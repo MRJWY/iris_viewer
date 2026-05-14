@@ -382,12 +382,23 @@ def run_gspread_call(operation, *args, **kwargs):
 
 
 def render_iris_page(page_key: str, datasets: dict[str, pd.DataFrame]) -> None:
-    if page_key == "opportunity":
-        render_opportunity_page(datasets["opportunity"], all_df=datasets["opportunity_all"])
+    if page_key in {"opportunity", "rfp_queue"}:
+        render_opportunity_page(
+            datasets["opportunity"],
+            page_key="rfp_queue",
+            all_df=datasets["opportunity_all"],
+        )
     elif page_key == "summary":
         render_summary_page(datasets["summary"], datasets["opportunity"])
-    elif page_key == "notice":
-        render_notice_page(datasets["notice_view"], datasets["opportunity"])
+    elif page_key in {"notice", "notice_queue"}:
+        render_notice_page_with_scope(
+            datasets["notice_view"],
+            datasets["opportunity"],
+            page_key="notice_queue",
+            title="Notice Queue",
+            default_status_scope="접수중",
+            current_only_default=True,
+        )
     elif page_key == "notice_scheduled":
         render_notice_page_with_scope(
             datasets["notice_view"],
@@ -907,7 +918,7 @@ def navigate_to_route(source_key: str, page_key: str) -> None:
 def navigate_to_notice_detail(source_key: str, notice_id: str) -> None:
     source = clean(source_key).lower() or "iris"
     page_map = {
-        "iris": "notice",
+        "iris": "notice_queue",
         "tipa": "tipa_current",
         "nipa": "nipa_current",
     }
@@ -1017,7 +1028,7 @@ def render_grant_search_dashboard_intro(
 
     if submitted:
         st.session_state["sidebar_search"] = clean(search_text)
-        navigate_to_route("iris", "notice")
+        navigate_to_route("iris", "notice_queue")
 
     st.markdown(
         """
@@ -1429,10 +1440,10 @@ def render_dashboard_source(
                             navigate_to_notice_detail(clean(row.get("source_key")), clean(row.get("Notice ID")))
                     with action_cols[1]:
                         if st.button("추천기회 전체", key=f"dashboard_opp_all_{rank}", use_container_width=True):
-                            navigate_to_route("iris", "opportunity")
+                            navigate_to_route("iris", "rfp_queue")
 
         if st.button("추천기회 전체 보기", key="dashboard_go_opportunity_all", use_container_width=True):
-            navigate_to_route("iris", "opportunity")
+            navigate_to_route("iris", "rfp_queue")
 
     with section_right:
         render_section_label("마감 임박 공고")
@@ -1713,7 +1724,7 @@ def render_proposal_source(
     action_cols = st.columns(3)
     with action_cols[0]:
         if st.button("추천기회로 이동", key="proposal_go_opportunity", use_container_width=True):
-            navigate_to_route("iris", "opportunity")
+            navigate_to_route("iris", "rfp_queue")
     with action_cols[1]:
         if st.button("관심 공고 보기", key="proposal_go_favorites", use_container_width=True):
             navigate_to_route("favorites", "favorites")
@@ -6629,6 +6640,8 @@ def get_query_param(name: str) -> str:
 
 
 LEGACY_PAGE_KEY_MAP = {
+    "opportunity": "rfp_queue",
+    "notice": "notice_queue",
     "mss_current": "tipa_current",
     "mss_past": "tipa_archive",
     "mss_archive": "tipa_archive",
@@ -6641,7 +6654,7 @@ def normalize_route_page_key(page_key: str) -> str:
 
 
 def get_route_state(page_key: str) -> tuple[str, str]:
-    current_page = normalize_route_page_key(get_query_param("page") or "notice")
+    current_page = normalize_route_page_key(get_query_param("page") or "rfp_queue")
     if current_page != page_key:
         return "table", ""
 
@@ -7425,7 +7438,7 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
             "예산",
             "파일명",
         ],
-        page_key="opportunity",
+        page_key="rfp_queue",
         id_column="_row_id",
         source_key_column="source_key",
     )
@@ -9841,8 +9854,8 @@ def render_other_crawlers_source_page() -> None:
 
 
 VIEWER_V2_ROUTE_MAP: dict[str, tuple[str, str]] = {
-    "opportunity": ("iris", "opportunity"),
-    "notice": ("iris", "notice"),
+    "rfp_queue": ("iris", "rfp_queue"),
+    "notice_queue": ("iris", "notice_queue"),
     "summary": ("iris", "summary"),
     "notice_archive": ("iris", "notice_archive"),
     "opportunity_archive": ("iris", "notice_archive"),
@@ -9908,17 +9921,17 @@ def main_viewer_v2(app_mode: str = "viewer") -> None:
 
     render_workspace_header(mode_config)
 
-    current_page = normalize_route_page_key(get_query_param("page")) or "opportunity"
+    current_page = normalize_route_page_key(get_query_param("page")) or "rfp_queue"
     if current_page == "opportunity_archive":
         current_page = "notice_archive"
     if current_page not in VIEWER_V2_ROUTE_MAP:
-        current_page = "opportunity"
+        current_page = "rfp_queue"
 
     selected_page = render_page_tabs(
         current_page,
         [
-            ("opportunity", "RFP Queue"),
-            ("notice", "Notice Queue"),
+            ("rfp_queue", "RFP Queue"),
+            ("notice_queue", "Notice Queue"),
             ("summary", "Summary"),
             ("notice_archive", "Archive"),
             ("favorites", "관심공고"),
@@ -9929,7 +9942,7 @@ def main_viewer_v2(app_mode: str = "viewer") -> None:
         target_source, target_page = VIEWER_V2_ROUTE_MAP[selected_page]
         navigate_to_route(target_source, target_page)
 
-    if current_page == "notice":
+    if current_page == "notice_queue":
         render_notice_queue_page(datasets, source_datasets)
         return
     if current_page == "notice_archive":
@@ -9959,7 +9972,7 @@ def main_viewer_v2(app_mode: str = "viewer") -> None:
 
     render_opportunity_page(
         datasets["opportunity"],
-        page_key="opportunity",
+        page_key="rfp_queue",
         title="RFP Queue",
         archive=False,
     )
@@ -10944,7 +10957,7 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
             "예산",
             "파일명",
         ],
-        page_key="opportunity",
+        page_key="rfp_queue",
         id_column="_row_id",
     )
 
@@ -11983,7 +11996,7 @@ def render_iris_source(
             key=mode_config.iris_tab_key,
         )
 
-    if current_page_key == "notice":
+    if current_page_key == "notice_queue":
         render_notice_queue_page(datasets, source_datasets)
         return
 
@@ -12183,4 +12196,4 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
 
 from notice_browser_overrides import apply_notice_browser_overrides
 
-apply_notice_browser_overrides(globals(), detail_page_key="notice")
+apply_notice_browser_overrides(globals(), detail_page_key="notice_queue")
