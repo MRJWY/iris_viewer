@@ -3561,9 +3561,10 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
     load_auth_user_accounts.clear()
 
 
-def resolve_notice_source_key(row: dict | None) -> str:
-    if row:
-        source_key = clean(row.get("_source_key")).lower()
+def resolve_notice_source_key(row: dict | pd.Series | None) -> str:
+    if row is not None:
+        row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row)
+        source_key = clean(row_dict.get("_source_key")).lower()
 
         source_alias_map = {
             "tipa": "tipa",
@@ -10752,15 +10753,25 @@ def render_notice_queue_ui_styles() -> None:
           margin-top: 0.9rem;
         }
         .notice-queue-card {
-          display: block;
-          text-decoration: none;
-          color: inherit;
+          display: block !important;
+          text-decoration: none !important;
+          color: var(--text-strong) !important;
           background: rgba(255, 255, 255, 0.96);
           border: 1px solid rgba(148, 163, 184, 0.24);
           border-radius: 24px;
-          padding: 1.15rem 1.25rem 1.05rem;
+          padding: 1.05rem 1.15rem 0.95rem;
           box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
           transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+        }
+        .notice-queue-card:link,
+        .notice-queue-card:visited,
+        .notice-queue-card:hover,
+        .notice-queue-card:active {
+          color: var(--text-strong) !important;
+          text-decoration: none !important;
+        }
+        .notice-queue-card * {
+          text-decoration: none !important;
         }
         .notice-queue-card:hover {
           transform: translateY(-2px);
@@ -10819,15 +10830,15 @@ def render_notice_queue_ui_styles() -> None:
         }
         .notice-queue-card-title {
           color: var(--text-strong);
-          font-size: 1.34rem;
+          font-size: 1.22rem;
           font-weight: 900;
-          line-height: 1.42;
-          margin-bottom: 0.9rem;
+          line-height: 1.38;
+          margin-bottom: 0.8rem;
         }
         .notice-queue-meta-grid {
           display: grid;
           grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 0.8rem 1rem;
+          gap: 0.7rem 0.9rem;
         }
         .notice-queue-meta-item {
           min-width: 0;
@@ -10842,14 +10853,14 @@ def render_notice_queue_ui_styles() -> None:
         }
         .notice-queue-meta-value {
           color: var(--text-body);
-          font-size: 0.95rem;
+          font-size: 0.92rem;
           font-weight: 800;
           line-height: 1.45;
           word-break: break-word;
         }
         @media (max-width: 960px) {
           .notice-queue-card {
-            padding: 1rem 1rem 0.95rem;
+            padding: 0.95rem 1rem 0.9rem;
           }
           .notice-queue-card-top {
             flex-direction: column;
@@ -10924,8 +10935,8 @@ def render_crawled_notice_rows(rows: pd.DataFrame, *, key_prefix: str, limit: in
         if review != "-":
             review_badge = f'<span class="notice-queue-badge review">{escape(review)}</span>'
         href = build_route_href("notice", collection_id)
-        with st.container(border=True):
-            content_col, action_col = st.columns([6.4, 1.15], gap="medium")
+        with st.container():
+            content_col, action_col = st.columns([6.6, 1.05], gap="medium")
             with content_col:
                 st.markdown(
                     (
