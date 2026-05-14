@@ -6764,7 +6764,7 @@ def resolve_route_source_key_for_row(row: dict | pd.Series | None, source_key: s
     }
 
     candidate_values = [source_key]
-    if row:
+    if row is not None:
         row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row)
         candidate_values.extend(
             [
