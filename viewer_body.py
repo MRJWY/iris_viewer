@@ -67,6 +67,13 @@ def render_public_opportunity_detail_from_row(row: dict) -> None:
             tone="blue",
         )
     with summary_col:
+        core.render_favorite_scrap_button(
+            notice_id=core.clean(row.get("notice_id")),
+            current_value=core.clean(row.get("review_status")),
+            source_key=source_key,
+            notice_title=core.first_non_empty(row, "notice_title", "공고명"),
+            button_key=f"favorite_opportunity_{core.clean(row.get('_row_id') or row.get('notice_id'))}",
+        )
         core.render_notice_detail_rows_panel(
             "빠른 요약",
             [
@@ -80,18 +87,11 @@ def render_public_opportunity_detail_from_row(row: dict) -> None:
             tone="green",
         )
 
-    action_cols = st.columns([1.15, 1, 1, 1.2])
+    action_cols = st.columns([1, 1, 1.2])
     with action_cols[0]:
-        core.render_favorite_scrap_button(
-            notice_id=core.clean(row.get("notice_id")),
-            current_value=core.clean(row.get("review_status")),
-            source_key=source_key,
-            button_key=f"favorite_opportunity_{core.clean(row.get('_row_id') or row.get('notice_id'))}",
-        )
-    with action_cols[1]:
         if detail_link:
             st.link_button("원문 보기", detail_link, use_container_width=True)
-    with action_cols[2]:
+    with action_cols[1]:
         if download_path:
             with open(download_path, "rb") as file_handle:
                 st.download_button(
@@ -101,7 +101,7 @@ def render_public_opportunity_detail_from_row(row: dict) -> None:
                     mime="application/octet-stream",
                     use_container_width=True,
                 )
-    with action_cols[3]:
+    with action_cols[2]:
         if st.button(
             "관련 공고 보기",
             key=f"oppty_notice_detail_{core.clean(row.get('_row_id'))}",

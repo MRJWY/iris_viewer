@@ -7101,9 +7101,10 @@ def render_favorite_scrap_button(
 
     normalized_value = clean(current_value)
     is_favorite = normalized_value == FAVORITE_REVIEW_STATUS
-    button_label = "★ 관심공고 저장됨" if is_favorite else "☆ 관심공고 스크랩"
+    button_label = "🔖 관심공고 저장됨" if is_favorite else "🔖 관심공고 등록"
+    button_type = "primary" if is_favorite else "secondary"
 
-    if st.button(button_label, key=button_key, use_container_width=True):
+    if st.button(button_label, key=button_key, type=button_type, use_container_width=True):
         try:
             next_value = "" if is_favorite else FAVORITE_REVIEW_STATUS
             save_review_status(
@@ -10404,6 +10405,13 @@ def render_opportunity_detail_from_row(row: dict) -> None:
             tone="blue",
         )
     with summary_col:
+        render_favorite_scrap_button(
+            notice_id=clean(row.get("notice_id")),
+            current_value=clean(row.get("review_status")),
+            source_key=source_key,
+            notice_title=first_non_empty(row, "notice_title", "공고명"),
+            button_key=f"favorite_opportunity_{clean(row.get('notice_id'))}",
+        )
         render_notice_detail_rows_panel(
             "빠른 요약",
             [
@@ -10417,18 +10425,11 @@ def render_opportunity_detail_from_row(row: dict) -> None:
             tone="green",
         )
 
-    action_cols = st.columns([1.15, 1, 1, 1.2])
+    action_cols = st.columns([1, 1, 1.2])
     with action_cols[0]:
-        render_favorite_scrap_button(
-            notice_id=clean(row.get("notice_id")),
-            current_value=clean(row.get("review_status")),
-            source_key=source_key,
-            button_key=f"favorite_opportunity_{clean(row.get('notice_id'))}",
-        )
-    with action_cols[1]:
         if detail_link:
             st.link_button("원문 보기", detail_link, use_container_width=True)
-    with action_cols[2]:
+    with action_cols[1]:
         if download_path:
             with open(download_path, "rb") as file_handle:
                 st.download_button(
@@ -10438,7 +10439,7 @@ def render_opportunity_detail_from_row(row: dict) -> None:
                     mime="application/octet-stream",
                     use_container_width=True,
                 )
-    with action_cols[3]:
+    with action_cols[2]:
         if st.button("관련 공고 보기", key=f"oppty_notice_detail_{clean(row.get('_row_id'))}", use_container_width=True):
             navigate_to_notice_detail(source_key, clean(row.get("notice_id")))
 
@@ -10885,13 +10886,14 @@ def clear_widget_value(widget_key: str) -> None:
 
 
 def render_crawled_notice_rows(rows: pd.DataFrame, *, key_prefix: str, limit: int = 30) -> None:
-    del key_prefix
     if rows.empty:
         st.info("표시할 공고가 없습니다.")
         return
 
-    row_html: list[str] = []
-    for _, row in rows.head(limit).iterrows():
+    for index, (_, row) in enumerate(rows.head(limit).iterrows(), start=1):
+        collection_id = clean(row.get("_collection_id"))
+        notice_id = clean(row.get("공고ID") or row.get("notice_id"))
+        source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
         notice_date = compact_table_value(row.get("공고일자"), max_chars=16) or "-"
         title = compact_table_value(row.get("공고명"), max_chars=140) or "-"
         period = compact_table_value(row.get("접수기간"), max_chars=48) or "-"
@@ -10911,33 +10913,49 @@ def render_crawled_notice_rows(rows: pd.DataFrame, *, key_prefix: str, limit: in
             status_class = "status-closed"
         kicker_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
         kicker = " > ".join(kicker_parts) if kicker_parts else source_label
-        href = build_route_href("notice", clean(row.get("_collection_id")))
         review_badge = ""
         if review != "-":
             review_badge = f'<span class="notice-queue-badge review">{escape(review)}</span>'
-        row_html.append(
-            (
-                f'<a class="notice-queue-card" href="{escape(href, quote=True)}" target="_self">'
-                '<div class="notice-queue-card-top">'
-                f'<div class="notice-queue-kicker">{escape(kicker)}</div>'
-                '<div class="notice-queue-badges">'
-                f'<span class="notice-queue-badge source">{escape(source_label)}</span>'
-                f'{review_badge}'
-                f'<span class="notice-queue-badge {status_class}">{escape(status)}</span>'
-                '</div>'
-                '</div>'
-                f'<div class="notice-queue-card-title">{escape(title)}</div>'
-                '<div class="notice-queue-meta-grid">'
-                f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">공고번호</div><div class="notice-queue-meta-value">{escape(notice_no)}</div></div>'
-                f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">공고일자</div><div class="notice-queue-meta-value">{escape(notice_date)}</div></div>'
-                f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">접수기간</div><div class="notice-queue-meta-value">{escape(period)}</div></div>'
-                f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">전문기관</div><div class="notice-queue-meta-value">{escape(agency or "-")}</div></div>'
-                '</div>'
-                '</a>'
-            )
-        )
-
-    st.markdown(f'<div class="notice-queue-list">{"".join(row_html)}</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            content_col, action_col = st.columns([6.2, 1.4], gap="medium")
+            with content_col:
+                st.markdown(
+                    (
+                        '<div class="notice-queue-card">'
+                        '<div class="notice-queue-card-top">'
+                        f'<div class="notice-queue-kicker">{escape(kicker)}</div>'
+                        '<div class="notice-queue-badges">'
+                        f'<span class="notice-queue-badge source">{escape(source_label)}</span>'
+                        f'{review_badge}'
+                        f'<span class="notice-queue-badge {status_class}">{escape(status)}</span>'
+                        '</div>'
+                        '</div>'
+                        f'<div class="notice-queue-card-title">{escape(title)}</div>'
+                        '<div class="notice-queue-meta-grid">'
+                        f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">공고번호</div><div class="notice-queue-meta-value">{escape(notice_no)}</div></div>'
+                        f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">공고일자</div><div class="notice-queue-meta-value">{escape(notice_date)}</div></div>'
+                        f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">접수기간</div><div class="notice-queue-meta-value">{escape(period)}</div></div>'
+                        f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">전문기관</div><div class="notice-queue-meta-value">{escape(agency or "-")}</div></div>'
+                        '</div>'
+                        '</div>'
+                    ),
+                    unsafe_allow_html=True,
+                )
+            with action_col:
+                if notice_id:
+                    render_favorite_scrap_button(
+                        notice_id=notice_id,
+                        current_value=clean(row.get("검토 여부") or row.get("review_status")),
+                        source_key=source_key or "iris",
+                        notice_title=clean(row.get("공고명") or row.get("notice_title")),
+                        button_key=f"{key_prefix}_favorite_{collection_id or notice_id or index}",
+                    )
+                if collection_id and st.button(
+                    "상세 보기",
+                    key=f"{key_prefix}_detail_{collection_id or notice_id or index}",
+                    use_container_width=True,
+                ):
+                    switch_to_detail("notice", collection_id)
 
 
 def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
