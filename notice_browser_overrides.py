@@ -58,6 +58,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
     resolve_external_detail_link = ns.get("resolve_external_detail_link")
     replace_query_params = ns.get("replace_query_params")
     with_auth_params = ns.get("with_auth_params")
+    build_project_analysis_text = ns.get("build_project_analysis_text")
     update_notice_review_status = ns.get("update_notice_review_status")
     update_mss_review_status = ns.get("update_mss_review_status")
     update_nipa_review_status = ns.get("update_nipa_review_status")
@@ -99,6 +100,55 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         if rows is None or rows.empty:
             return pd.Series(dtype="object")
         return series_from_candidates(rows, columns).fillna("").astype(str).str.strip()
+
+    def _normalize_key_text(value: object) -> str:
+        return re.sub(r"\s+", " ", clean(value)).strip().lower()
+
+    def _truncate_queue_text(value: object, max_chars: int = 170) -> str:
+        text = re.sub(r"\s+", " ", clean(value)).strip()
+        if len(text) <= max_chars:
+            return text
+        trimmed = text[:max_chars].rsplit(" ", 1)[0].strip()
+        return (trimmed or text[:max_chars].strip()).rstrip("., ") + "..."
+
+    def _compose_queue_analysis(row: dict | pd.Series | None) -> str:
+        row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
+        title_text = _normalize_key_text(first_non_empty(row_dict, "notice_title", "공고명"))
+        project_text = clean(first_non_empty(row_dict, "_queue_project_name"))
+        reason_text = clean(first_non_empty(row_dict, "_queue_reason"))
+        field_text = clean(first_non_empty(row_dict, "_queue_application_field"))
+        market_text = clean(first_non_empty(row_dict, "_queue_target_market"))
+        keyword_text = clean(first_non_empty(row_dict, "_queue_keywords"))
+
+        if callable(build_project_analysis_text):
+            try:
+                analysis_text = clean(build_project_analysis_text(row_dict))
+                if analysis_text:
+                    first_paragraph = next(
+                        (part.strip() for part in re.split(r"\n\s*\n", analysis_text) if clean(part)),
+                        analysis_text,
+                    )
+                    compact = _truncate_queue_text(first_paragraph)
+                    if compact and _normalize_key_text(compact) != title_text:
+                        return compact
+            except Exception:
+                pass
+
+        if reason_text and _normalize_key_text(reason_text) != title_text:
+            return _truncate_queue_text(reason_text)
+        if project_text and _normalize_key_text(project_text) != title_text:
+            if field_text:
+                return _truncate_queue_text(f"{project_text}. {field_text} 분야와 연결된 과제로 검토할 수 있습니다.")
+            return _truncate_queue_text(project_text)
+        if market_text and field_text:
+            return _truncate_queue_text(f"{market_text}과 {field_text} 분야 확장 가능성이 있는 과제로 보입니다.")
+        if field_text:
+            return _truncate_queue_text(f"{field_text} 분야 중심의 과제로 판단됩니다.")
+        if market_text:
+            return _truncate_queue_text(f"{market_text} 시장과의 연결성이 높은 과제로 보입니다.")
+        if keyword_text:
+            return _truncate_queue_text(f"{keyword_text} 중심의 기술 Opportunity로 검토할 수 있습니다.")
+        return ""
 
     def _review_value(row: dict | pd.Series | None) -> str:
         row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
@@ -308,7 +358,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         st.rerun()
 
     def _build_notice_analysis_summary(opportunity_df: pd.DataFrame) -> pd.DataFrame:
-        if opportunity_df is None or opportunity_df.empty or "notice_id" not in opportunity_df.columns:
+        if opportunity_df is None or opportunity_df.empty:
             return pd.DataFrame(
                 columns=[
                     "notice_id",
@@ -317,11 +367,17 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
                     "_queue_budget",
                     "_queue_reason",
                     "_queue_keywords",
+                    "_queue_application_field",
+                    "_queue_target_market",
+                    "_queue_support_type",
+                    "_queue_notice_period",
+                    "_queue_notice_no",
+                    "_queue_notice_date",
                 ]
             )
 
         working = opportunity_df.copy()
-        working["notice_id"] = working["notice_id"].fillna("").astype(str).str.strip()
+        working["notice_id"] = _safe_series(working, ["notice_id", "공고ID", "Notice ID", "source_notice_id"])
         working = working[working["notice_id"].ne("")].copy()
         if working.empty:
             return pd.DataFrame(
@@ -332,6 +388,12 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
                     "_queue_budget",
                     "_queue_reason",
                     "_queue_keywords",
+                    "_queue_application_field",
+                    "_queue_target_market",
+                    "_queue_support_type",
+                    "_queue_notice_period",
+                    "_queue_notice_no",
+                    "_queue_notice_date",
                 ]
             )
 
@@ -356,6 +418,30 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         )
         working["_queue_reason"] = _safe_series(working, ["llm_reason", "reason", "Reason"])
         working["_queue_keywords"] = _safe_series(working, ["llm_keywords", "keywords", "Keywords"])
+        working["_queue_application_field"] = _safe_series(
+            working,
+            ["llm_application_field", "application_field", "Application Field"],
+        )
+        working["_queue_target_market"] = _safe_series(
+            working,
+            ["target_market", "대표관심영역", "llm_score_target_markets"],
+        )
+        working["_queue_support_type"] = _safe_series(
+            working,
+            ["pbofr_type", "공모유형", "support_type", "project_type"],
+        )
+        working["_queue_notice_period"] = _safe_series(
+            working,
+            ["notice_period", "period", "접수기간", "신청기간", "요청기간"],
+        )
+        working["_queue_notice_no"] = _safe_series(
+            working,
+            ["notice_no", "ancm_no", "공고번호"],
+        )
+        working["_queue_notice_date"] = _safe_series(
+            working,
+            ["registered_at", "ancm_de", "공고일자", "등록일"],
+        )
         working["_queue_score"] = pd.to_numeric(
             series_from_candidates(working, ["llm_fit_score", "rfp_score", "Score"]),
             errors="coerce",
@@ -378,6 +464,12 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
                 "_queue_budget",
                 "_queue_reason",
                 "_queue_keywords",
+                "_queue_application_field",
+                "_queue_target_market",
+                "_queue_support_type",
+                "_queue_notice_period",
+                "_queue_notice_no",
+                "_queue_notice_date",
             ]
         ].reset_index(drop=True)
 
@@ -402,19 +494,21 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             "_queue_budget",
             "_queue_reason",
             "_queue_keywords",
+            "_queue_application_field",
+            "_queue_target_market",
+            "_queue_support_type",
+            "_queue_notice_period",
+            "_queue_notice_no",
+            "_queue_notice_date",
         ):
             if column not in enriched.columns:
                 enriched[column] = ""
             enriched[column] = enriched[column].fillna("").astype(str).str.strip()
-        enriched["_queue_analysis"] = enriched["_queue_project_name"]
-        enriched.loc[
-            enriched["_queue_analysis"].eq(""),
-            "_queue_analysis",
-        ] = enriched["_queue_reason"]
-        enriched.loc[
-            enriched["_queue_analysis"].eq(""),
-            "_queue_analysis",
-        ] = enriched["_queue_keywords"]
+        enriched["notice_no"] = _safe_series(enriched, ["notice_no", "공고번호", "ancm_no", "_queue_notice_no"])
+        enriched["registered_at"] = _safe_series(enriched, ["registered_at", "공고일자", "ancm_de", "_queue_notice_date"])
+        enriched["pbofr_type"] = _safe_series(enriched, ["pbofr_type", "공모유형", "support_type", "_queue_support_type"])
+        enriched["notice_period"] = _safe_series(enriched, ["notice_period", "접수기간", "period", "신청기간", "_queue_notice_period"])
+        enriched["_queue_analysis"] = enriched.apply(_compose_queue_analysis, axis=1)
         return enriched
 
     def _matches_search(rows: pd.DataFrame, search_text: str) -> pd.Series:
@@ -994,23 +1088,32 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             .st-key-{safe_key} {{
               width: 100%;
             }}
+            .st-key-{safe_key} [data-testid="stButton"] {{
+              width: 100%;
+            }}
+            .st-key-{safe_key} [data-testid="stButton"] > button,
             .st-key-{safe_key} button {{
               display: block;
               width: 100%;
               padding: 0;
               margin: 0;
               border: 0 !important;
+              border-radius: 0 !important;
               background: transparent !important;
               box-shadow: none !important;
               color: var(--text-strong) !important;
-              font-size: 1.12rem !important;
+              font-size: 1.05rem !important;
               font-weight: 900 !important;
-              line-height: 1.45 !important;
+              line-height: 1.5 !important;
               text-align: left !important;
               justify-content: flex-start !important;
               white-space: normal !important;
               min-height: 0 !important;
+              cursor: pointer !important;
             }}
+            .st-key-{safe_key} [data-testid="stButton"] > button:hover,
+            .st-key-{safe_key} [data-testid="stButton"] > button:active,
+            .st-key-{safe_key} [data-testid="stButton"] > button:focus,
             .st-key-{safe_key} button:hover,
             .st-key-{safe_key} button:active,
             .st-key-{safe_key} button:focus {{
@@ -1019,10 +1122,12 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               box-shadow: none !important;
               color: var(--text-strong) !important;
             }}
+            .st-key-{safe_key} [data-testid="stButton"] > button p,
             .st-key-{safe_key} button p {{
-              font-size: 1.12rem !important;
+              font-size: 1.05rem !important;
               font-weight: 900 !important;
-              line-height: 1.45 !important;
+              line-height: 1.5 !important;
+              margin: 0 !important;
               text-align: left !important;
             }}
             </style>
@@ -1136,7 +1241,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
 
             st.markdown('<div class="notice-queue-divider"></div>', unsafe_allow_html=True)
             with st.container():
-                left_col, right_col = st.columns([8.8, 1.2], gap="medium")
+                left_col, right_col = st.columns([9.4, 1.1], gap="medium")
                 with left_col:
                     st.markdown(f'<div class="notice-queue-breadcrumb">{escape(breadcrumb)}</div>', unsafe_allow_html=True)
                     _render_notice_title_button(
