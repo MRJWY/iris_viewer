@@ -10751,10 +10751,11 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
         st.markdown('<div style="height: 1.1rem;"></div>', unsafe_allow_html=True)
         render_favorite_scrap_button(
             notice_id=clean(row.get("공고ID")),
-            current_value=clean(row.get("검토여부")),
+            current_value=clean(first_non_empty(row, "검토여부", "검토 여부", "review_status")),
             source_key=source_key,
             notice_title=clean(row.get("공고명")),
             button_key=f"favorite_notice_header_{clean(row.get('공고ID'))}",
+            compact=True,
         )
 
     related = find_related_opportunities_for_notice(row, opportunity_df)

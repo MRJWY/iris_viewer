@@ -15,7 +15,6 @@ STATUS_FILTER_OPTIONS: list[tuple[str, str]] = [
     ("진행중", "진행중"),
     ("예정", "예정"),
     ("마감", "마감"),
-    ("관심공고", "관심공고"),
 ]
 
 RECOMMENDATION_FILTER_OPTIONS: list[tuple[str, str]] = [
@@ -23,6 +22,15 @@ RECOMMENDATION_FILTER_OPTIONS: list[tuple[str, str]] = [
     ("추천", "추천"),
     ("검토권장", "검토권장"),
     ("보통", "보통"),
+]
+
+TOP_TAB_OPTIONS: list[tuple[str, str]] = [
+    ("전체", "all"),
+    ("IRIS", "iris"),
+    ("MSS", "tipa"),
+    ("NIPA", "nipa"),
+    ("관심공고", "favorite"),
+    ("보관/마감", "archive"),
 ]
 
 RECOMMENDATION_RANK = {
@@ -114,33 +122,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
     def _favorite_badge_html() -> str:
         return '<span class="notice-chip notice-chip-favorite">관심</span>'
 
-    def _build_favorite_href(*, page_key: str, notice_id: str, current_value: str, source_key: str, notice_title: str) -> str:
-        try:
-            return build_favorite_toggle_href(
-                page_key=page_key,
-                notice_id=notice_id,
-                current_value=current_value,
-                source_key=source_key,
-                notice_title=notice_title,
-            )
-        except TypeError:
-            return build_favorite_toggle_href(
-                page_key=page_key,
-                notice_id=notice_id,
-                current_value=current_value,
-                source_key=source_key,
-            )
-
-    def _favorite_button_html(href: str, current_value: str) -> str:
-        is_favorite, label = _favorite_button_label(current_value)
-        class_name = "notice-queue-row-action is-active" if is_favorite else "notice-queue-row-action"
-        return (
-            f'<a class="{class_name}" href="{escape(href, quote=True)}" '
-            "onclick=\"event.preventDefault(); event.stopPropagation(); window.location.href=this.href;\">"
-            f"{escape(label)}"
-            "</a>"
-        )
-
     def _sync_user_scoped_review(*, notice_id: str, source_key: str, notice_title: str, review_status: str) -> None:
         if not callable(is_user_scoped_operations_enabled) or not callable(upsert_user_review_status):
             return
@@ -185,33 +166,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             _clear_notice_caches()
 
     def consume_favorite_toggle_query_action() -> None:
-        if get_query_param("favorite_toggle") != "1":
-            return
-        notice_id = clean(get_query_param("favorite_notice_id"))
-        source_key = clean(get_query_param("favorite_source_key")) or "iris"
-        current_value = clean(get_query_param("favorite_current_value"))
-        notice_title = clean(get_query_param("favorite_notice_title"))
-        next_value = UNFAVORITE_REVIEW_STATUS if current_value == FAVORITE_REVIEW_STATUS else FAVORITE_REVIEW_STATUS
-        try:
-            if notice_id:
-                _persist_review_status(
-                    notice_id=notice_id,
-                    source_key=source_key,
-                    review_status=next_value,
-                    notice_title=notice_title,
-                )
-        finally:
-            params = get_query_params_dict()
-            for key in (
-                "favorite_toggle",
-                "favorite_notice_id",
-                "favorite_source_key",
-                "favorite_current_value",
-                "favorite_notice_title",
-            ):
-                params.pop(key, None)
-            _replace_params(_auth_params(params))
-            st.rerun()
+        return
 
     def render_favorite_scrap_button(
         *,
@@ -220,23 +175,44 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         source_key: str = "iris",
         notice_title: str = "",
         button_key: str,
+        compact: bool = False,
+        use_container_width: bool | None = None,
     ) -> None:
-        del button_key
         if not clean(notice_id):
             return
-        action_href = _build_favorite_href(
-            page_key=clean(get_query_param("page")) or detail_page_key,
-            notice_id=notice_id,
-            current_value=clean(current_value),
-            source_key=clean(source_key) or "iris",
-            notice_title=clean(notice_title),
-        )
-        st.markdown(
-            '<div style="display:flex;justify-content:flex-end;align-items:flex-start;">'
-            f"{_favorite_button_html(action_href, current_value)}"
-            "</div>",
-            unsafe_allow_html=True,
-        )
+        is_favorite, button_label, _ = favorite_button_props(current_value)
+        next_value = UNFAVORITE_REVIEW_STATUS if is_favorite else FAVORITE_REVIEW_STATUS
+        safe_key = _css_safe_key(button_key)
+        if compact:
+            st.markdown(
+                f"""
+                <style>
+                .st-key-{safe_key} {{
+                  display: flex;
+                  justify-content: flex-end;
+                }}
+                .st-key-{safe_key} button {{
+                  min-height: 36px !important;
+                  padding: 0.15rem 0.8rem !important;
+                  border-radius: 999px !important;
+                  font-size: 0.88rem !important;
+                  font-weight: 800 !important;
+                  white-space: nowrap !important;
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+        if use_container_width is None:
+            use_container_width = not compact
+        if st.button(button_label, key=button_key, use_container_width=use_container_width, type="secondary"):
+            _persist_review_status(
+                notice_id=notice_id,
+                source_key=clean(source_key) or "iris",
+                review_status=next_value,
+                notice_title=clean(notice_title),
+            )
+            st.rerun()
 
     def favorite_button_props(current_value: str) -> tuple[bool, str, str]:
         is_favorite, label = _favorite_button_label(current_value)
@@ -254,8 +230,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             "archive": "마감",
             "closed": "마감",
             "마감": "마감",
-            "favorite": "관심공고",
-            "관심공고": "관심공고",
         }
         return alias_map.get(normalized, "전체")
 
@@ -476,9 +450,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             filtered = filtered[filtered["_notice_scope"].fillna("").astype(str).str.strip().eq("scheduled")].copy()
         elif normalized_status == "마감":
             filtered = filtered[filtered["_notice_scope"].fillna("").astype(str).str.strip().eq("archive")].copy()
-        elif normalized_status == "관심공고":
-            filtered = filtered[_review_series(filtered).eq(FAVORITE_REVIEW_STATUS)].copy()
-
         if normalized_recommendation != "전체":
             filtered = filtered[filtered["_queue_recommendation"].eq(normalized_recommendation)].copy()
 
@@ -1076,6 +1047,21 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         if st.button(title, key=button_key, use_container_width=True):
             _open_notice_detail(row)
 
+    def _filter_rows_for_tab(rows: pd.DataFrame, tab_key: str) -> pd.DataFrame:
+        if rows is None or rows.empty:
+            return pd.DataFrame()
+        if tab_key == "iris":
+            return rows[rows["source_key"].fillna("").astype(str).str.strip().eq("iris")].copy()
+        if tab_key == "tipa":
+            return rows[rows["source_key"].fillna("").astype(str).str.strip().eq("tipa")].copy()
+        if tab_key == "nipa":
+            return rows[rows["source_key"].fillna("").astype(str).str.strip().eq("nipa")].copy()
+        if tab_key == "favorite":
+            return rows[_review_series(rows).eq(FAVORITE_REVIEW_STATUS)].copy()
+        if tab_key == "archive":
+            return rows[rows["_notice_scope"].fillna("").astype(str).str.strip().eq("archive")].copy()
+        return rows.copy()
+
     def _default_notice_detail_state() -> dict[str, str]:
         return {
             "view": "table",
@@ -1197,6 +1183,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
                             source_key=source_key or "iris",
                             notice_title=title,
                             button_key=f"{key_prefix}_favorite_{notice_id}_{position}",
+                            compact=True,
                         )
 
     def _render_notice_queue_screen(
@@ -1205,7 +1192,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         detail_opportunity_df: pd.DataFrame,
     ) -> None:
         del opportunity_df
-        consume_favorite_toggle_query_action()
         source_df = _enrich_notice_rows(source_df, detail_opportunity_df)
 
         detail_state = _get_notice_detail_state()
@@ -1243,7 +1229,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         st.session_state.setdefault(search_widget_key, filters["search"])
 
         st.markdown(
-            '<div class="notice-queue-note">공고상태, 추천여부, 검색을 함께 유지하면서 즉시 필터링하고 같은 앱 안에서 Notice 상세를 확인합니다.</div>',
+            '<div class="notice-queue-note">탭으로 범위를 나누고, 필터와 검색은 그대로 유지한 채 같은 앱 안에서 Notice 상세를 확인합니다.</div>',
             unsafe_allow_html=True,
         )
         st.markdown('<div class="notice-filter-group-title">공고상태 필터</div>', unsafe_allow_html=True)
@@ -1294,17 +1280,21 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         )
 
         st.caption(f"결과 {len(filtered_source_df)}건")
-        render_crawled_notice_rows(
-            filtered_source_df,
-            key_prefix=f"{detail_page_key}_list",
-            page_key=detail_page_key,
-        )
+        tabs = st.tabs([label for label, _ in TOP_TAB_OPTIONS])
+        for tab, (label, tab_key) in zip(tabs, TOP_TAB_OPTIONS):
+            with tab:
+                tab_rows = _filter_rows_for_tab(filtered_source_df, tab_key)
+                render_crawled_notice_rows(
+                    tab_rows,
+                    key_prefix=f"{detail_page_key}_{tab_key}_list",
+                    page_key=detail_page_key,
+                    empty_message=f"{label} 탭에 표시할 공고가 없습니다.",
+                )
     def render_favorite_notice_page(
         notice_view_df: pd.DataFrame,
         opportunity_df: pd.DataFrame,
         source_datasets: dict[str, object] | None = None,
     ) -> None:
-        consume_favorite_toggle_query_action()
         current_view, selected_id = get_route_state("favorites")
         source_df = _ensure_collection_for_favorites(notice_view_df, source_datasets)
         source_df = _enrich_notice_rows(source_df, opportunity_df)
