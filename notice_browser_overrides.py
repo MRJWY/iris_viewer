@@ -537,22 +537,56 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
                 stacked = stacked + " " + rows[column].fillna("").astype(str)
         return stacked.str.lower().str.contains(query, na=False)
 
-    def _apply_notice_filters(rows: pd.DataFrame, status_filter: str, recommendation_filter: str, search_text: str) -> pd.DataFrame:
+    def _normalize_status_filter_values(value: object) -> list[str]:
+        allowed_values = [option for option, _ in STATUS_FILTER_OPTIONS if clean(option) and option != "전체"]
+        if isinstance(value, (list, tuple, set)):
+            normalized: list[str] = []
+            for item in value:
+                item_value = _normalize_status_filter(item)
+                if item_value in allowed_values and item_value not in normalized:
+                    normalized.append(item_value)
+            return normalized
+        normalized_value = _normalize_status_filter(value)
+        return [normalized_value] if normalized_value in allowed_values else []
+
+    def _normalize_recommendation_filter_values(value: object) -> list[str]:
+        allowed_values = [option for option, _ in RECOMMENDATION_FILTER_OPTIONS if clean(option) and option != "전체"]
+        if isinstance(value, (list, tuple, set)):
+            normalized: list[str] = []
+            for item in value:
+                item_value = _normalize_recommendation_filter(item)
+                if item_value in allowed_values and item_value not in normalized:
+                    normalized.append(item_value)
+            return normalized
+        normalized_value = _normalize_recommendation_filter(value)
+        return [normalized_value] if normalized_value in allowed_values else []
+
+    def _apply_notice_filters(
+        rows: pd.DataFrame,
+        status_filter: object,
+        recommendation_filter: object,
+        search_text: str,
+    ) -> pd.DataFrame:
         if rows is None or rows.empty:
             return pd.DataFrame()
 
         filtered = rows.copy()
-        normalized_status = _normalize_status_filter(status_filter)
-        normalized_recommendation = _normalize_recommendation_filter(recommendation_filter)
+        normalized_statuses = _normalize_status_filter_values(status_filter)
+        normalized_recommendations = _normalize_recommendation_filter_values(recommendation_filter)
 
-        if normalized_status == "진행중":
-            filtered = filtered[filtered["_notice_scope"].fillna("").astype(str).str.strip().eq("current")].copy()
-        elif normalized_status == "예정":
-            filtered = filtered[filtered["_notice_scope"].fillna("").astype(str).str.strip().eq("scheduled")].copy()
-        elif normalized_status == "마감":
-            filtered = filtered[filtered["_notice_scope"].fillna("").astype(str).str.strip().eq("archive")].copy()
-        if normalized_recommendation != "전체":
-            filtered = filtered[filtered["_queue_recommendation"].eq(normalized_recommendation)].copy()
+        if normalized_statuses:
+            scope_map = {
+                "진행중": "current",
+                "예정": "scheduled",
+                "마감": "archive",
+            }
+            allowed_scopes = [scope_map[value] for value in normalized_statuses if value in scope_map]
+            if allowed_scopes:
+                filtered = filtered[
+                    filtered["_notice_scope"].fillna("").astype(str).str.strip().isin(allowed_scopes)
+                ].copy()
+        if normalized_recommendations:
+            filtered = filtered[filtered["_queue_recommendation"].isin(normalized_recommendations)].copy()
 
         search_mask = _matches_search(filtered, search_text)
         return filtered[search_mask].copy()
@@ -579,23 +613,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         st.markdown(
             """
             <style>
-            .notice-filter-group-title {
-              color: var(--text-muted);
-              font-size: 0.82rem;
-              font-weight: 800;
-              margin-bottom: 0.4rem;
-            }
-            div[data-testid="stRadio"] > div {
-              gap: 0.5rem;
-              flex-wrap: wrap;
-            }
-            div[data-testid="stRadio"] label {
-              margin: 0;
-            }
-            div[data-testid="stRadio"] label p {
-              font-size: 0.9rem;
-              font-weight: 700;
-            }
             .notice-queue-note {
               margin: 0.85rem 0 0.35rem;
               color: var(--text-muted);
@@ -612,21 +629,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             .notice-queue-card-shell {
               display: block;
               text-decoration: none !important;
-            }
-            .notice-queue-card-shell .queue-card {
-              background: #ffffff;
-              border: 1px solid rgba(148, 163, 184, 0.18);
-              border-radius: 22px;
-              box-shadow: 0 10px 26px rgba(15, 23, 42, 0.04);
-              padding: 1.12rem 1.18rem;
-              margin-bottom: 0;
-            }
-            .notice-queue-card-shell:hover .queue-card,
-            .notice-queue-card-shell:focus-visible .queue-card {
-              border-color: rgba(59, 130, 246, 0.22);
-              background: #fcfdff;
-              box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
-              transform: translateY(-1px);
             }
             .notice-queue-card-topline {
               display: flex;
@@ -752,66 +754,9 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               color: #94a3b8;
               font-weight: 600;
             }
-            .queue-list-card-title {
-              color: var(--text-strong);
-              font-size: 1.08rem;
-              line-height: 1.42;
-              font-weight: 780;
-              letter-spacing: -0.018em;
-              margin-bottom: 0.38rem;
-            }
-            .queue-list-card-subtitle {
-              color: #64748b;
-              font-size: 0.86rem;
-              line-height: 1.48;
-              margin-bottom: 0.82rem;
-            }
-            .queue-list-card-meta {
-              display: grid;
-              grid-template-columns: repeat(2, minmax(0, 1fr));
-              gap: 0.65rem 0.75rem;
-              margin-bottom: 0.82rem;
-            }
-            .queue-list-card-meta-item {
-              background: #f8fafc;
-              border: 1px solid rgba(226, 232, 240, 0.95);
-              border-radius: 14px;
-              padding: 0.72rem 0.82rem;
-            }
-            .queue-list-card-meta-label {
-              color: #64748b;
-              font-size: 0.74rem;
-              font-weight: 700;
-              margin-bottom: 0.24rem;
-            }
-            .queue-list-card-meta-value {
-              color: #0f172a;
-              font-size: 0.9rem;
-              font-weight: 700;
-              line-height: 1.42;
-            }
-            .queue-list-card-reason {
-              color: #334155;
-              font-size: 0.92rem;
-              line-height: 1.62;
-              margin-top: 0.08rem;
-            }
-            .queue-list-card-reason.muted {
-              color: #64748b;
-            }
             @media (max-width: 640px) {
               .notice-queue-title {
                 font-size: 0.96rem;
-              }
-              div[data-testid="stRadio"] > div {
-                gap: 0.35rem;
-              }
-              .queue-list-card-meta {
-                grid-template-columns: 1fr;
-              }
-              .notice-queue-card-shell .queue-card {
-                border-radius: 18px;
-                padding: 1rem 1rem;
               }
             }
             </style>
@@ -1328,22 +1273,22 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
     def _notice_filter_widget_key(field_name: str) -> str:
         return f"{detail_page_key}_notice_filter_widget_{field_name}"
 
-    def _default_notice_filters() -> dict[str, str]:
+    def _default_notice_filters() -> dict[str, object]:
         return {
-            "status": "전체",
-            "recommendation": RECOMMENDATION_FILTER_OPTIONS[0][0],
+            "status": [],
+            "recommendation": [],
             "search": "",
         }
 
-    def _get_notice_filters() -> dict[str, str]:
+    def _get_notice_filters() -> dict[str, object]:
         defaults = _default_notice_filters()
         current_value = st.session_state.get(_notice_filters_state_key(), {})
         filters = defaults.copy()
         if isinstance(current_value, dict):
             filters.update(
                 {
-                    "status": _normalize_status_filter(current_value.get("status", defaults["status"])),
-                    "recommendation": _normalize_recommendation_filter(
+                    "status": _normalize_status_filter_values(current_value.get("status", defaults["status"])),
+                    "recommendation": _normalize_recommendation_filter_values(
                         current_value.get("recommendation", defaults["recommendation"])
                     ),
                     "search": clean(current_value.get("search", defaults["search"])),
@@ -1352,12 +1297,10 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         st.session_state[_notice_filters_state_key()] = filters
         return filters
 
-    def _set_notice_filters(filters: dict[str, str]) -> dict[str, str]:
+    def _set_notice_filters(filters: dict[str, object]) -> dict[str, object]:
         next_filters = {
-            "status": _normalize_status_filter(filters.get("status", "전체")),
-            "recommendation": _normalize_recommendation_filter(
-                filters.get("recommendation", RECOMMENDATION_FILTER_OPTIONS[0][0])
-            ),
+            "status": _normalize_status_filter_values(filters.get("status", [])),
+            "recommendation": _normalize_recommendation_filter_values(filters.get("recommendation", [])),
             "search": clean(filters.get("search", "")),
         }
         st.session_state[_notice_filters_state_key()] = next_filters
@@ -1368,9 +1311,9 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         widget_key = _notice_filter_widget_key(field_name)
         widget_value = st.session_state.get(widget_key, filters.get(field_name, ""))
         if field_name == "status":
-            filters["status"] = _normalize_status_filter(widget_value)
+            filters["status"] = _normalize_status_filter_values(widget_value)
         elif field_name == "recommendation":
-            filters["recommendation"] = _normalize_recommendation_filter(widget_value)
+            filters["recommendation"] = _normalize_recommendation_filter_values(widget_value)
         else:
             filters["search"] = clean(widget_value)
         _set_notice_filters(filters)
@@ -1634,33 +1577,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         st.session_state.setdefault(recommendation_widget_key, filters["recommendation"])
         st.session_state.setdefault(search_widget_key, filters["search"])
 
-        st.markdown(
-            '<div class="notice-queue-note">탭으로 범위를 나누고, 필터와 검색은 그대로 유지한 채 같은 앱 안에서 Notice 상세를 확인합니다.</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown('<div class="notice-filter-group-title">공고상태 필터</div>', unsafe_allow_html=True)
-        st.radio(
-            "status-filter",
-            options=[value for value, _ in STATUS_FILTER_OPTIONS],
-            key=status_widget_key,
-            horizontal=True,
-            label_visibility="collapsed",
-            format_func=lambda value: dict(STATUS_FILTER_OPTIONS).get(value, value),
-            on_change=_sync_notice_filter,
-            args=("status",),
-        )
-        st.markdown('<div class="notice-filter-group-title">추천여부 필터</div>', unsafe_allow_html=True)
-        st.radio(
-            "recommendation-filter",
-            options=[value for value, _ in RECOMMENDATION_FILTER_OPTIONS],
-            key=recommendation_widget_key,
-            horizontal=True,
-            label_visibility="collapsed",
-            format_func=lambda value: dict(RECOMMENDATION_FILTER_OPTIONS).get(value, value),
-            on_change=_sync_notice_filter,
-            args=("recommendation",),
-        )
-
+        st.markdown('<div class="queue-search-label">검색</div>', unsafe_allow_html=True)
         search_col, reset_col = st.columns([6, 1])
         with search_col:
             st.text_input(
@@ -1676,6 +1593,31 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             if st.button("초기화", key=f"{detail_page_key}_search_reset", use_container_width=True):
                 _reset_notice_filters()
                 st.rerun()
+
+        st.markdown('<div class="queue-filter-label">요건 / 필터</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="queue-filter-help">추천 상태와 공고 상태만 빠르게 좁혀서 지금 볼 공고를 추려볼 수 있습니다.</div>',
+            unsafe_allow_html=True,
+        )
+        filter_cols = st.columns(2)
+        with filter_cols[0]:
+            st.multiselect(
+                "추천 상태",
+                options=[value for value, _ in RECOMMENDATION_FILTER_OPTIONS if value != "전체"],
+                key=recommendation_widget_key,
+                placeholder="전체",
+                on_change=_sync_notice_filter,
+                args=("recommendation",),
+            )
+        with filter_cols[1]:
+            st.multiselect(
+                "공고 상태",
+                options=[value for value, _ in STATUS_FILTER_OPTIONS if value != "전체"],
+                key=status_widget_key,
+                placeholder="전체",
+                on_change=_sync_notice_filter,
+                args=("status",),
+            )
 
         filters = _get_notice_filters()
         filtered_source_df = _apply_notice_filters(
