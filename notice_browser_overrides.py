@@ -581,48 +581,84 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             <style>
             .notice-filter-group-title {
               color: var(--text-muted);
-              font-size: 0.83rem;
+              font-size: 0.82rem;
               font-weight: 800;
-              margin-bottom: 0.45rem;
+              margin-bottom: 0.4rem;
             }
             div[data-testid="stRadio"] > div {
-              gap: 0.55rem;
+              gap: 0.5rem;
               flex-wrap: wrap;
             }
             div[data-testid="stRadio"] label {
               margin: 0;
             }
             div[data-testid="stRadio"] label p {
-              font-size: 0.92rem;
+              font-size: 0.9rem;
               font-weight: 700;
             }
             .notice-queue-note {
-              margin: 0.9rem 0 0.35rem;
+              margin: 0.85rem 0 0.35rem;
               color: var(--text-muted);
-              font-size: 0.92rem;
-              line-height: 1.6;
+              font-size: 0.9rem;
+              line-height: 1.55;
             }
             .notice-queue-card-row {
               display: grid;
-              grid-template-columns: minmax(0, 1fr) 58px;
-              gap: 0.9rem;
+              grid-template-columns: minmax(0, 1fr) 62px;
+              gap: 0.85rem;
               align-items: flex-start;
-              margin: 0.95rem 0;
+              margin: 0.8rem 0;
             }
             .notice-queue-card-shell {
               display: block;
               text-decoration: none !important;
             }
+            .notice-queue-card-shell .queue-card {
+              background: #ffffff;
+              border: 1px solid rgba(148, 163, 184, 0.18);
+              border-radius: 22px;
+              box-shadow: 0 10px 26px rgba(15, 23, 42, 0.04);
+              padding: 1.12rem 1.18rem;
+              margin-bottom: 0;
+            }
+            .notice-queue-card-shell:hover .queue-card,
+            .notice-queue-card-shell:focus-visible .queue-card {
+              border-color: rgba(59, 130, 246, 0.22);
+              background: #fcfdff;
+              box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+              transform: translateY(-1px);
+            }
             .notice-queue-card-topline {
               display: flex;
               flex-wrap: wrap;
-              gap: 0.45rem;
-              margin-bottom: 0.7rem;
+              gap: 0.42rem;
+              margin-bottom: 0.72rem;
             }
             .notice-queue-favorite-wrap {
-              padding-top: 0.55rem;
+              padding-top: 0.42rem;
               display: flex;
               justify-content: center;
+            }
+            .notice-queue-favorite-wrap div[data-testid="stButton"] {
+              width: 100%;
+            }
+            .notice-queue-favorite-wrap div[data-testid="stButton"] > button {
+              width: 42px;
+              min-width: 42px;
+              height: 42px;
+              border-radius: 999px;
+              border: 1px solid rgba(148, 163, 184, 0.26);
+              background: #ffffff;
+              color: #64748b;
+              box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+              padding: 0;
+              transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+            }
+            .notice-queue-favorite-wrap div[data-testid="stButton"] > button:hover {
+              border-color: rgba(59, 130, 246, 0.22);
+              background: #f8fbff;
+              color: #1d4ed8;
+              transform: translateY(-1px);
             }
             .notice-queue-header-label {
               color: #64748b;
@@ -641,32 +677,38 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               display: inline-flex;
               align-items: center;
               justify-content: center;
-              min-height: 24px;
+              min-height: 26px;
               padding: 0 10px;
               border-radius: 999px;
-              font-size: 0.78rem;
-              font-weight: 800;
+              border: 1px solid transparent;
+              font-size: 0.77rem;
+              font-weight: 700;
               line-height: 1;
               white-space: nowrap;
             }
             .notice-chip-status {
               background: #eff6ff;
+              border-color: rgba(59, 130, 246, 0.16);
               color: #1d4ed8;
             }
             .notice-chip-status.is-archive {
               background: #fff1f2;
+              border-color: rgba(225, 29, 72, 0.12);
               color: #be123c;
             }
             .notice-chip-status.is-scheduled {
               background: #fff7ed;
+              border-color: rgba(234, 88, 12, 0.12);
               color: #c2410c;
             }
             .notice-chip-recommend {
               background: #ecfdf5;
+              border-color: rgba(5, 150, 105, 0.12);
               color: #047857;
             }
             .notice-chip-neutral {
               background: #f8fafc;
+              border-color: rgba(148, 163, 184, 0.18);
               color: #475569;
             }
             .notice-queue-title {
@@ -710,12 +752,66 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               color: #94a3b8;
               font-weight: 600;
             }
+            .queue-list-card-title {
+              color: var(--text-strong);
+              font-size: 1.08rem;
+              line-height: 1.42;
+              font-weight: 780;
+              letter-spacing: -0.018em;
+              margin-bottom: 0.38rem;
+            }
+            .queue-list-card-subtitle {
+              color: #64748b;
+              font-size: 0.86rem;
+              line-height: 1.48;
+              margin-bottom: 0.82rem;
+            }
+            .queue-list-card-meta {
+              display: grid;
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 0.65rem 0.75rem;
+              margin-bottom: 0.82rem;
+            }
+            .queue-list-card-meta-item {
+              background: #f8fafc;
+              border: 1px solid rgba(226, 232, 240, 0.95);
+              border-radius: 14px;
+              padding: 0.72rem 0.82rem;
+            }
+            .queue-list-card-meta-label {
+              color: #64748b;
+              font-size: 0.74rem;
+              font-weight: 700;
+              margin-bottom: 0.24rem;
+            }
+            .queue-list-card-meta-value {
+              color: #0f172a;
+              font-size: 0.9rem;
+              font-weight: 700;
+              line-height: 1.42;
+            }
+            .queue-list-card-reason {
+              color: #334155;
+              font-size: 0.92rem;
+              line-height: 1.62;
+              margin-top: 0.08rem;
+            }
+            .queue-list-card-reason.muted {
+              color: #64748b;
+            }
             @media (max-width: 640px) {
               .notice-queue-title {
                 font-size: 0.96rem;
               }
               div[data-testid="stRadio"] > div {
                 gap: 0.35rem;
+              }
+              .queue-list-card-meta {
+                grid-template-columns: 1fr;
+              }
+              .notice-queue-card-shell .queue-card {
+                border-radius: 18px;
+                padding: 1rem 1rem;
               }
             }
             </style>
