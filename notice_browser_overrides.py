@@ -59,6 +59,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
     replace_query_params = ns.get("replace_query_params")
     with_auth_params = ns.get("with_auth_params")
     build_project_analysis_text = ns.get("build_project_analysis_text")
+    pill_html = ns.get("_pill_html")
     update_notice_review_status = ns.get("update_notice_review_status")
     update_mss_review_status = ns.get("update_mss_review_status")
     update_nipa_review_status = ns.get("update_nipa_review_status")
@@ -601,6 +602,28 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               font-size: 0.92rem;
               line-height: 1.6;
             }
+            .notice-queue-card-row {
+              display: grid;
+              grid-template-columns: minmax(0, 1fr) 58px;
+              gap: 0.9rem;
+              align-items: flex-start;
+              margin: 0.95rem 0;
+            }
+            .notice-queue-card-shell {
+              display: block;
+              text-decoration: none !important;
+            }
+            .notice-queue-card-topline {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 0.45rem;
+              margin-bottom: 0.7rem;
+            }
+            .notice-queue-favorite-wrap {
+              padding-top: 0.55rem;
+              display: flex;
+              justify-content: center;
+            }
             .notice-queue-header-label {
               color: #64748b;
               font-size: 0.78rem;
@@ -904,6 +927,21 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         period_value = clean(first_non_empty(row, "notice_period", "period", "접수기간", "신청기간"))
         return period_value or "-"
 
+    def _queue_card_badge_html(text: object, *, kind: str = "recommendation") -> str:
+        value = clean(text)
+        if not value:
+            return ""
+        if callable(pill_html):
+            try:
+                return pill_html(value, kind=kind)
+            except Exception:
+                pass
+        if kind == "recommendation":
+            return _recommendation_badge_html(value)
+        if kind == "status":
+            return f'<span class="{_status_badge_class(value)}">{escape(value)}</span>'
+        return f'<span class="notice-chip notice-chip-neutral">{escape(value)}</span>'
+
     def render_crawled_notice_rows(
         rows: pd.DataFrame,
         *,
@@ -1010,12 +1048,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             st.info(empty_message)
             return
 
-        header_columns = st.columns([1.15, 5.6, 2.2, 1.5, 1.25, 0.8], gap="small")
-        for col, label in zip(header_columns, ["상태", "공고명", "기관", "등록일", "추천", "관심"]):
-            with col:
-                st.markdown(f'<div class="notice-queue-header-label">{escape(label)}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="notice-queue-divider"></div>', unsafe_allow_html=True)
-
         for position, (_, row) in enumerate(rows.head(limit).iterrows()):
             notice_id = _resolve_notice_id(row)
             source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
@@ -1024,6 +1056,8 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             agency = clean(first_non_empty(row, "agency", "전문기관", "수행기관")) or "-"
             notice_no = clean(first_non_empty(row, "notice_no", "공고번호", "ancm_no")) or "-"
             notice_date = _queue_display_date_text(row)
+            period_text = clean(first_non_empty(row, "notice_period", "접수기간", "period", "_queue_notice_period", "신청기간")) or "-"
+            budget_text = clean(first_non_empty(row, "_queue_budget", "budget", "total_budget_text", "사업비")) or "미기재"
             recommendation = clean(row.get("_queue_recommendation"))
             recommendation_text = _normalize_recommendation_value(recommendation) or "보통"
             review_value = _review_value(row)
@@ -1040,18 +1074,30 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
 
             agency_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
             agency_text = " / ".join(agency_parts) if agency_parts else source_label
-            title_meta_parts = [source_label]
+            analysis_text = clean(first_non_empty(row, "_queue_analysis", "_queue_reason", "_queue_project_name"))
+            subtitle_parts = [source_label]
             if notice_no and notice_no != "-":
-                title_meta_parts.append(f"공고번호 {notice_no}")
-            title_meta = " · ".join(title_meta_parts)
+                subtitle_parts.append(f"공고번호 {notice_no}")
+            subtitle_text = " · ".join(subtitle_parts)
+            meta_html = (
+                '<div class="queue-list-card-meta">'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">기관</div><div class="queue-list-card-meta-value">{escape(agency_text)}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">등록일</div><div class="queue-list-card-meta-value">{escape(notice_date)}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">접수기간</div><div class="queue-list-card-meta-value">{escape(period_text)}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">예산</div><div class="queue-list-card-meta-value">{escape(budget_text)}</div></div>'
+                '</div>'
+            )
+            badges = "".join(
+                [
+                    _queue_card_badge_html(status, kind="status"),
+                    _queue_card_badge_html(recommendation_text, kind="recommendation"),
+                    _queue_card_badge_html(source_label, kind="neutral"),
+                ]
+            )
 
-            row_columns = st.columns([1.15, 5.6, 2.2, 1.5, 1.25, 0.8], gap="small")
-            with row_columns[0]:
-                st.markdown('<div class="notice-queue-cell notice-queue-status-cell">', unsafe_allow_html=True)
-                st.markdown(f'<span class="{_status_badge_class(status)}">{escape(status)}</span>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-            with row_columns[1]:
-                st.markdown('<div class="notice-queue-cell">', unsafe_allow_html=True)
+            card_left, card_right = st.columns([16, 1], gap="medium")
+            with card_left:
+                st.markdown('<div class="notice-queue-card-topline">' + badges + '</div>', unsafe_allow_html=True)
                 if notice_id:
                     _render_notice_title_button(
                         title,
@@ -1059,21 +1105,21 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
                         row=row,
                     )
                 else:
-                    st.markdown(f'<div class="notice-queue-title">{escape(title)}</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="notice-queue-title-meta">{escape(title_meta)}</div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-            with row_columns[2]:
-                agency_class = "notice-queue-cell-text" if agency_text != "-" else "notice-queue-cell-muted"
-                st.markdown(f'<div class="notice-queue-cell {agency_class}">{escape(agency_text)}</div>', unsafe_allow_html=True)
-            with row_columns[3]:
-                date_class = "notice-queue-cell-text" if notice_date != "-" else "notice-queue-cell-muted"
-                st.markdown(f'<div class="notice-queue-cell {date_class}">{escape(notice_date)}</div>', unsafe_allow_html=True)
-            with row_columns[4]:
-                st.markdown('<div class="notice-queue-cell notice-queue-recommend-cell">', unsafe_allow_html=True)
-                st.markdown(_recommendation_badge_html(recommendation_text), unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-            with row_columns[5]:
-                st.markdown('<div class="notice-queue-cell notice-queue-favorite-cell">', unsafe_allow_html=True)
+                    st.markdown(f'<div class="queue-list-card-title">{escape(title)}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="queue-list-card-subtitle">{escape(subtitle_text)}</div>', unsafe_allow_html=True)
+                st.markdown(meta_html, unsafe_allow_html=True)
+                if analysis_text:
+                    st.markdown(
+                        f'<div class="queue-list-card-reason">{escape(_truncate_queue_text(analysis_text, max_chars=200))}</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        '<div class="queue-list-card-reason muted">연결된 RFP 분석이 아직 없습니다. 공고 상세에서 원문과 첨부파일을 확인할 수 있습니다.</div>',
+                        unsafe_allow_html=True,
+                    )
+            with card_right:
+                st.markdown('<div class="notice-queue-favorite-wrap">', unsafe_allow_html=True)
                 if notice_id:
                     render_favorite_scrap_button(
                         notice_id=notice_id,
@@ -1088,7 +1134,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
                 else:
                     st.markdown('<div class="notice-queue-empty">-</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('<div class="notice-queue-divider"></div>', unsafe_allow_html=True)
 
     render_crawled_notice_rows = _queue_render_inbox_rows
 
@@ -1617,7 +1662,111 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             datasets["opportunity_all"],
         )
 
-    render_crawled_notice_rows = _queue_render_inbox_rows
+    def _queue_render_card_rows_v2(
+        rows: pd.DataFrame,
+        *,
+        key_prefix: str,
+        limit: int = 30,
+        page_key: str = detail_page_key,
+        empty_message: str = "표시할 공고가 없습니다.",
+    ) -> None:
+        del page_key
+        if rows is None or rows.empty:
+            st.info(empty_message)
+            return
+
+        for position, (_, row) in enumerate(rows.head(limit).iterrows()):
+            notice_id = _resolve_notice_id(row)
+            source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
+            title = clean(first_non_empty(row, "notice_title", "공고명")) or notice_id or "-"
+            ministry = clean(first_non_empty(row, "ministry", "소관부처", "주관부처")) or "-"
+            agency = clean(first_non_empty(row, "agency", "전문기관", "수행기관")) or "-"
+            notice_no = clean(first_non_empty(row, "notice_no", "공고번호", "ancm_no")) or "-"
+            notice_date = _queue_display_date_text(row)
+            period_text = clean(first_non_empty(row, "notice_period", "접수기간", "period", "_queue_notice_period", "신청기간")) or "-"
+            budget_text = clean(first_non_empty(row, "_queue_budget", "budget", "total_budget_text", "사업비")) or "미기재"
+            recommendation = clean(row.get("_queue_recommendation"))
+            recommendation_text = _normalize_recommendation_value(recommendation) or "보통"
+            review_value = _review_value(row)
+            source_label = clean(first_non_empty(row, "source_label", "source_site", "매체")) or (source_key or "IRIS").upper()
+            scope = clean(first_non_empty(row, "_notice_scope"))
+            status = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태"))
+            if not status:
+                if scope == "archive":
+                    status = "마감"
+                elif scope == "scheduled":
+                    status = "예정"
+                else:
+                    status = "진행중"
+
+            agency_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
+            agency_text = " / ".join(agency_parts) if agency_parts else source_label
+            analysis_text = clean(first_non_empty(row, "_queue_analysis", "_queue_reason", "_queue_project_name"))
+            subtitle_parts = [source_label]
+            if notice_no and notice_no != "-":
+                subtitle_parts.append(f"공고번호 {notice_no}")
+            subtitle_text = " · ".join(subtitle_parts)
+            meta_html = (
+                '<div class="queue-list-card-meta">'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">기관</div><div class="queue-list-card-meta-value">{escape(agency_text)}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">등록일</div><div class="queue-list-card-meta-value">{escape(notice_date)}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">접수기간</div><div class="queue-list-card-meta-value">{escape(period_text)}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">예산</div><div class="queue-list-card-meta-value">{escape(budget_text)}</div></div>'
+                '</div>'
+            )
+            badges = "".join(
+                [
+                    _queue_card_badge_html(status, kind="status"),
+                    _queue_card_badge_html(recommendation_text, kind="recommendation"),
+                    _queue_card_badge_html(source_label, kind="neutral"),
+                ]
+            )
+            reason_html = (
+                f'<div class="queue-list-card-reason">{escape(_truncate_queue_text(analysis_text, max_chars=200))}</div>'
+                if analysis_text
+                else '<div class="queue-list-card-reason muted">연결된 RFP 분석이 아직 없습니다. 공고 상세에서 원문과 첨부파일을 확인할 수 있습니다.</div>'
+            )
+            detail_href = build_route_href(detail_page_key, notice_id, source_key=source_key) if notice_id else ""
+            card_html = (
+                f'<a class="queue-list-link notice-queue-card-shell" href="{escape(detail_href, quote=True)}" target="_self">'
+                '<div class="queue-card queue-list-card">'
+                f'<div class="notice-queue-card-topline">{badges}</div>'
+                f'<div class="queue-list-card-title">{escape(_truncate_queue_text(title, max_chars=110))}</div>'
+                f'<div class="queue-list-card-subtitle">{escape(subtitle_text)}</div>'
+                f'{meta_html}'
+                f'{reason_html}'
+                '</div></a>'
+            ) if detail_href else (
+                '<div class="queue-card queue-list-card">'
+                f'<div class="notice-queue-card-topline">{badges}</div>'
+                f'<div class="queue-list-card-title">{escape(_truncate_queue_text(title, max_chars=110))}</div>'
+                f'<div class="queue-list-card-subtitle">{escape(subtitle_text)}</div>'
+                f'{meta_html}'
+                f'{reason_html}'
+                '</div>'
+            )
+
+            card_left, card_right = st.columns([16, 1], gap="medium")
+            with card_left:
+                st.markdown(card_html, unsafe_allow_html=True)
+            with card_right:
+                st.markdown('<div class="notice-queue-favorite-wrap">', unsafe_allow_html=True)
+                if notice_id:
+                    render_favorite_scrap_button(
+                        notice_id=notice_id,
+                        current_value=review_value,
+                        source_key=source_key or "iris",
+                        notice_title=title,
+                        button_key=f"{key_prefix}_favorite_{notice_id}_{position}",
+                        compact=True,
+                        icon_only=True,
+                        use_container_width=False,
+                    )
+                else:
+                    st.markdown('<div class="notice-queue-empty">-</div>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    render_crawled_notice_rows = _queue_render_card_rows_v2
 
     ns["consume_favorite_toggle_query_action"] = consume_favorite_toggle_query_action
     ns["render_favorite_scrap_button"] = render_favorite_scrap_button
