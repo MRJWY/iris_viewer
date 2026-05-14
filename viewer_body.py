@@ -52,6 +52,15 @@ def render_public_opportunity_detail_from_row(row: dict) -> None:
 
     info_col, summary_col = st.columns([1.65, 0.95], gap="large")
     with info_col:
+        _, favorite_col = st.columns([4.2, 1.1], gap="small")
+        with favorite_col:
+            core.render_favorite_scrap_button(
+                notice_id=core.clean(row.get("notice_id")),
+                current_value=core.clean(row.get("review_status")),
+                source_key=source_key,
+                notice_title=core.first_non_empty(row, "notice_title", "공고명"),
+                button_key=f"favorite_opportunity_main_{core.clean(row.get('_row_id') or row.get('notice_id'))}",
+            )
         core.render_notice_detail_rows_panel(
             "주요 정보",
             [
@@ -67,13 +76,6 @@ def render_public_opportunity_detail_from_row(row: dict) -> None:
             tone="blue",
         )
     with summary_col:
-        core.render_favorite_scrap_button(
-            notice_id=core.clean(row.get("notice_id")),
-            current_value=core.clean(row.get("review_status")),
-            source_key=source_key,
-            notice_title=core.first_non_empty(row, "notice_title", "공고명"),
-            button_key=f"favorite_opportunity_{core.clean(row.get('_row_id') or row.get('notice_id'))}",
-        )
         core.render_notice_detail_rows_panel(
             "빠른 요약",
             [
@@ -223,7 +225,7 @@ def render_public_notice_queue_page(datasets: dict[str, pd.DataFrame], source_da
     mss_rows = filtered_source_df[filtered_source_df["source_key"].eq("tipa") & filtered_source_df["_notice_scope"].eq("current")].copy()
     nipa_rows = filtered_source_df[filtered_source_df["source_key"].eq("nipa") & filtered_source_df["_notice_scope"].eq("current")].copy()
     archive_rows = filtered_source_df[filtered_source_df["_notice_scope"].eq("archive")].copy()
-    favorite_rows = filtered_source_df[filtered_source_df["寃?좎뿬遺"].fillna("").astype(str).str.strip().eq(core.FAVORITE_REVIEW_STATUS)].copy()
+    favorite_rows = filtered_source_df[filtered_source_df["검토여부"].fillna("").astype(str).str.strip().eq(core.FAVORITE_REVIEW_STATUS)].copy()
 
     tab_iris, tab_mss, tab_nipa, tab_archive, tab_favorites = st.tabs(["IRIS", "MSS", "NIPA", "Archive", "Favorites"])
     with tab_iris:
@@ -359,109 +361,3 @@ def render_public_opportunity_page(
     st.markdown('<div class="queue-results-label">추천 결과</div>', unsafe_allow_html=True)
     core._render_rfp_queue_list(filtered.head(30), page_key=page_key)
 
-
-def render_public_opportunity_page(
-    df: pd.DataFrame,
-    *,
-    page_key: str | None = None,
-    title: str | None = None,
-    archive: bool = False,
-    all_df: pd.DataFrame | None = None,
-) -> None:
-    page_key = page_key or ("opportunity_archive" if archive else "opportunity")
-    title = title or ("Opportunity Archive" if archive else "RFP Queue")
-    source_df = core.ensure_opportunity_row_ids(df)
-    working_source_df = core.ensure_opportunity_row_ids(all_df) if all_df is not None and not all_df.empty else source_df
-    if archive:
-        working_source_df = core.filter_archived_opportunity_rows(working_source_df)
-
-    current_view, selected_document_id = core.get_route_state(page_key)
-    if current_view == "detail":
-        selected_row = core.get_row_by_column_value(source_df, "_row_id", selected_document_id)
-        if selected_row is None and all_df is not None and not all_df.empty:
-            selected_row = core.get_row_by_column_value(
-                core.ensure_opportunity_row_ids(all_df),
-                "_row_id",
-                selected_document_id,
-            )
-        back_col, info_col = st.columns([1, 4])
-        with back_col:
-            if st.button("紐⑸줉?쇰줈", key=f"{page_key}_back_to_table_ui", use_container_width=True):
-                core.switch_to_table(page_key)
-        with info_col:
-            st.markdown('<div class="page-note">釉뚮씪?곗? ?ㅻ줈媛湲곕줈??由ъ뒪???붾㈃?쇰줈 ?뚯븘媛????덉뒿?덈떎.</div>', unsafe_allow_html=True)
-        render_public_opportunity_detail_from_row(selected_row)
-        return
-
-    core.render_page_header(
-        title,
-        "?ъ뾽怨듦퀬 ??吏??媛?ν븳 RFP瑜?異붿쿇?⑸땲??" if not archive else "蹂닿???Opportunity ??ぉ??媛蹂띻쾶 ?먯깋?????덉뒿?덈떎.",
-        eyebrow="Opportunity",
-    )
-    st.markdown(
-        '<div class="queue-shell-note">異붿쿇 ?곹깭? 怨듦퀬 ?곹깭留?鍮좊Ⅴ寃?醫곹엳怨? 寃곌낵 ???꾩껜瑜??뚮윭 ?곸꽭 怨듦퀬? RFP ?댁슜??諛붾줈 ?뺤씤?????덇쾶 援ъ꽦?덉뒿?덈떎.</div>',
-        unsafe_allow_html=True,
-    )
-
-    working = core._build_queue_filter_frame(working_source_df)
-    if working.empty:
-        st.info("?쒖떆??RFP媛 ?놁뒿?덈떎.")
-        return
-    recommendation_options = core.build_queue_recommendation_options(working["_queue_recommendation"])
-    status_options = core.build_queue_status_options(working["_queue_status"])
-    archive_reason_options = sorted(
-        [
-            value
-            for value in working["_queue_archive_reason"].dropna().astype(str).unique().tolist()
-            if core.clean(value) and value != "-"
-        ]
-    )
-    filter_cols = st.columns(3 if archive else 2)
-    with filter_cols[0]:
-        selected_recommendation = st.multiselect(
-            "異붿쿇 ?곹깭",
-            options=recommendation_options,
-            default=[],
-            key=f"{page_key}_filter_recommendation",
-            placeholder="?꾩껜",
-        )
-    with filter_cols[1]:
-        selected_status = st.multiselect(
-            "怨듦퀬 ?곹깭",
-            options=status_options,
-            default=[],
-            key=f"{page_key}_filter_status",
-            placeholder="?꾩껜",
-        )
-    selected_archive_reason: list[str] = []
-    if archive:
-        with filter_cols[2]:
-            selected_archive_reason = st.multiselect(
-                "蹂닿? ?ъ쑀",
-                options=archive_reason_options,
-                default=[],
-                key=f"{page_key}_filter_archive_reason",
-                placeholder="?꾩껜",
-            )
-
-    filtered = core.filter_queue_working_frame(
-        working,
-        selected_recommendation=selected_recommendation,
-        selected_status=selected_status,
-        archive=archive,
-    )
-    if selected_archive_reason:
-        filtered = filtered[filtered["_queue_archive_reason"].isin(selected_archive_reason)]
-
-    if filtered.empty:
-        st.info("寃??議곌굔??留욌뒗 RFP媛 ?놁뒿?덈떎.")
-        return
-
-    filtered = filtered.sort_values(
-        by=["rfp_score", "_queue_deadline_sort", "_queue_project_sort"],
-        ascending=[False, True, True],
-        na_position="last",
-    )
-
-    st.markdown('<div class="queue-results-label">異붿쿇 寃곌낵</div>', unsafe_allow_html=True)
-    core._render_rfp_queue_list(filtered.head(30), page_key=page_key)

@@ -196,7 +196,7 @@ def render_public_viewer_body(
             datasets["opportunity_all"],
             page_key="notice_archive",
             title="Archive",
-            default_status_scope="?꾩껜",
+            default_status_scope="전체",
             current_only_default=False,
             archive=True,
         )

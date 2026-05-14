@@ -9911,18 +9911,29 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
         review_caption = "공고 검토 상태를 바꾸면 NOTICE_MASTER에 즉시 반영됩니다."
         source_label = "IRIS"
 
-    render_detail_header(
-        title=clean(row.get("공고명")),
-        kicker=detail_kicker,
-        chips=[
-            (clean(row.get("추천정도")), "accent"),
-            (f"점수 {clean(row.get('추천점수'))}" if clean(row.get("추천점수")) else "", "neutral"),
-            (clean(row.get("공고상태")), "accent"),
-            (clean(row.get("전문기관") or row.get("담당부처")), "neutral"),
-            (clean(row.get("공고일자")), "neutral"),
-            (f"검토 {clean(row.get('검토여부') or '미정')}", "neutral"),
-        ],
-    )
+    header_col, favorite_col = st.columns([4.6, 1.15], gap="medium")
+    with header_col:
+        render_detail_header(
+            title=clean(row.get("공고명")),
+            kicker=detail_kicker,
+            chips=[
+                (clean(row.get("추천정도")), "accent"),
+                (f"점수 {clean(row.get('추천점수'))}" if clean(row.get("추천점수")) else "", "neutral"),
+                (clean(row.get("공고상태")), "accent"),
+                (clean(row.get("전문기관") or row.get("담당부처")), "neutral"),
+                (clean(row.get("공고일자")), "neutral"),
+                (f"검토 {clean(row.get('검토여부') or '미정')}", "neutral"),
+            ],
+        )
+    with favorite_col:
+        st.markdown('<div style="height: 1.1rem;"></div>', unsafe_allow_html=True)
+        render_favorite_scrap_button(
+            notice_id=clean(row.get("공고ID")),
+            current_value=clean(row.get("검토여부")),
+            source_key=source_key,
+            notice_title=clean(row.get("공고명")),
+            button_key=f"favorite_notice_header_{clean(row.get('공고ID'))}",
+        )
 
     related = find_related_opportunities_for_notice(row, opportunity_df)
     top_related: dict[str, object] = {}
@@ -10088,12 +10099,6 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
         st.markdown('<div class="detail-section-title">연결된 Opportunity</div>', unsafe_allow_html=True)
 
     with sidebar_col:
-        render_favorite_scrap_button(
-            notice_id=clean(row.get("怨듦퀬ID")),
-            current_value=clean(row.get("寃?좎뿬遺")),
-            source_key=source_key,
-            button_key=f"favorite_notice_{clean(row.get('怨듦퀬ID'))}",
-        )
         render_notice_detail_sidebar_card(
             source_label=source_label,
             keyword_text=keyword_text,
@@ -10390,6 +10395,15 @@ def render_opportunity_detail_from_row(row: dict) -> None:
 
     info_col, summary_col = st.columns([1.65, 0.95], gap="large")
     with info_col:
+        _, favorite_col = st.columns([4.2, 1.1], gap="small")
+        with favorite_col:
+            render_favorite_scrap_button(
+                notice_id=clean(row.get("notice_id")),
+                current_value=clean(row.get("review_status")),
+                source_key=source_key,
+                notice_title=first_non_empty(row, "notice_title", "공고명"),
+                button_key=f"favorite_opportunity_main_{clean(row.get('notice_id'))}",
+            )
         render_notice_detail_rows_panel(
             "주요 정보",
             [
@@ -10405,13 +10419,6 @@ def render_opportunity_detail_from_row(row: dict) -> None:
             tone="blue",
         )
     with summary_col:
-        render_favorite_scrap_button(
-            notice_id=clean(row.get("notice_id")),
-            current_value=clean(row.get("review_status")),
-            source_key=source_key,
-            notice_title=first_non_empty(row, "notice_title", "공고명"),
-            button_key=f"favorite_opportunity_{clean(row.get('notice_id'))}",
-        )
         render_notice_detail_rows_panel(
             "빠른 요약",
             [
@@ -10916,12 +10923,13 @@ def render_crawled_notice_rows(rows: pd.DataFrame, *, key_prefix: str, limit: in
         review_badge = ""
         if review != "-":
             review_badge = f'<span class="notice-queue-badge review">{escape(review)}</span>'
+        href = build_route_href("notice", collection_id)
         with st.container(border=True):
-            content_col, action_col = st.columns([6.2, 1.4], gap="medium")
+            content_col, action_col = st.columns([6.4, 1.15], gap="medium")
             with content_col:
                 st.markdown(
                     (
-                        '<div class="notice-queue-card">'
+                        f'<a class="notice-queue-card" href="{escape(href, quote=True)}" target="_self">'
                         '<div class="notice-queue-card-top">'
                         f'<div class="notice-queue-kicker">{escape(kicker)}</div>'
                         '<div class="notice-queue-badges">'
@@ -10937,7 +10945,7 @@ def render_crawled_notice_rows(rows: pd.DataFrame, *, key_prefix: str, limit: in
                         f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">접수기간</div><div class="notice-queue-meta-value">{escape(period)}</div></div>'
                         f'<div class="notice-queue-meta-item"><div class="notice-queue-meta-label">전문기관</div><div class="notice-queue-meta-value">{escape(agency or "-")}</div></div>'
                         '</div>'
-                        '</div>'
+                        '</a>'
                     ),
                     unsafe_allow_html=True,
                 )
@@ -10950,12 +10958,6 @@ def render_crawled_notice_rows(rows: pd.DataFrame, *, key_prefix: str, limit: in
                         notice_title=clean(row.get("공고명") or row.get("notice_title")),
                         button_key=f"{key_prefix}_favorite_{collection_id or notice_id or index}",
                     )
-                if collection_id and st.button(
-                    "상세 보기",
-                    key=f"{key_prefix}_detail_{collection_id or notice_id or index}",
-                    use_container_width=True,
-                ):
-                    switch_to_detail("notice", collection_id)
 
 
 def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
