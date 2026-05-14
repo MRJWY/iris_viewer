@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 import gspread
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from app_config import (
     AppModeConfig,
     SourcePageConfig,
@@ -8369,6 +8370,747 @@ def render_opportunity_page_aligned(
     )
 
 
+def render_notice_queue_ui_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .notice-kpi-grid {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 1rem;
+          margin: 1.35rem 0 1rem;
+        }
+        .notice-kpi-card {
+          display: block;
+          padding: 1.15rem 1.35rem;
+          border-radius: 24px;
+          border: 1px solid rgba(203, 213, 225, 0.92);
+          background: #ffffff;
+          text-decoration: none !important;
+          box-shadow: 0 16px 36px rgba(148, 163, 184, 0.10);
+          cursor: pointer;
+          transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+        }
+        .notice-kpi-card:hover {
+          background: #f8fafc;
+          border-color: rgba(148, 163, 184, 0.95);
+          transform: translateY(-1px);
+          box-shadow: 0 20px 42px rgba(148, 163, 184, 0.14);
+        }
+        .notice-kpi-card.is-active {
+          border-color: #2563eb;
+          background: #eff6ff;
+        }
+        .notice-kpi-label {
+          color: var(--text-muted);
+          font-size: 0.88rem;
+          font-weight: 800;
+          line-height: 1.4;
+        }
+        .notice-kpi-value {
+          margin-top: 0.6rem;
+          color: var(--text-strong);
+          font-size: 2.2rem;
+          font-weight: 900;
+          line-height: 1;
+        }
+        .notice-kpi-card.is-active .notice-kpi-label,
+        .notice-kpi-card.is-active .notice-kpi-value {
+          color: #1d4ed8;
+        }
+        .notice-queue-list {
+          display: flex;
+          flex-direction: column;
+          margin-top: 0.5rem;
+          border-top: 1px solid rgba(203, 213, 225, 0.8);
+        }
+        .notice-queue-row-shell {
+          position: relative;
+          border-bottom: 1px solid rgba(203, 213, 225, 0.8);
+        }
+        .notice-queue-row {
+          display: block;
+          padding: 1.15rem 240px 1.15rem 0.25rem;
+          cursor: pointer;
+          transition: background-color 140ms ease;
+        }
+        .notice-queue-row:hover {
+          background: #f8fafc;
+        }
+        .notice-queue-row-action {
+          position: absolute;
+          top: 32px;
+          right: 44px;
+          z-index: 4;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          height: 36px;
+          padding: 0 14px;
+          background: #ffffff;
+          border: 1px solid rgba(203, 213, 225, 0.9);
+          border-radius: 8px;
+          color: var(--text-strong) !important;
+          font-size: 13px;
+          font-weight: 700;
+          line-height: 1;
+          text-decoration: none !important;
+          white-space: nowrap;
+        }
+        .notice-queue-row-action:hover {
+          background: #f8fafc;
+          color: var(--text-strong) !important;
+          text-decoration: none !important;
+        }
+        .notice-queue-breadcrumb {
+          color: var(--text-muted);
+          font-size: 0.85rem;
+          font-weight: 700;
+          line-height: 1.45;
+          margin-bottom: 0.35rem;
+        }
+        .notice-queue-title {
+          color: var(--text-strong);
+          font-size: 1.16rem;
+          font-weight: 900;
+          line-height: 1.45;
+          margin-bottom: 0.45rem;
+        }
+        .notice-queue-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.4rem 1rem;
+          align-items: center;
+        }
+        .notice-queue-meta-item {
+          color: var(--text-body);
+          font-size: 0.92rem;
+          line-height: 1.5;
+          min-width: 0;
+        }
+        .notice-queue-meta-label {
+          color: var(--text-muted);
+          font-weight: 800;
+        }
+        @media (max-width: 960px) {
+          .notice-kpi-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+          .notice-queue-row-shell {
+            padding-top: 3rem;
+          }
+          .notice-queue-row-action {
+            top: 0;
+            right: 0;
+          }
+          .notice-queue-row {
+            padding: 0.95rem 0 1rem 0;
+          }
+        }
+        @media (max-width: 640px) {
+          .notice-kpi-grid {
+            grid-template-columns: 1fr;
+          }
+          .notice-queue-title {
+            font-size: 1.05rem;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
+    filter_state_key = get_notice_queue_filter_state_key("notice")
+    search_key = "viewer_notice_queue_search_text"
+    consume_notice_queue_filter_query_action(page_key="notice", state_key=filter_state_key)
+    consume_favorite_toggle_query_action()
+    source_df = build_crawled_notice_collection(datasets, source_datasets)
+
+    current_view, selected_id = get_route_state("notice")
+    if current_view == "detail":
+        selected_row = get_row_by_column_value(source_df, "_collection_id", selected_id)
+        back_col, info_col = st.columns([1, 5])
+        with back_col:
+            if st.button("목록으로", key="notice_back_to_table", use_container_width=True):
+                switch_to_table("notice")
+        with info_col:
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 이전 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
+        render_notice_detail_from_row(selected_row, datasets["opportunity_all"])
+        return
+
+    render_page_header(
+        "Notice Queue",
+        "IRIS, MSS, NIPA에서 수집한 공고를 한 곳에서 확인합니다.",
+        eyebrow="Notices",
+    )
+    render_notice_queue_ui_styles()
+    if source_df.empty:
+        st.info("표시할 공고가 아직 없습니다.")
+        return
+
+    current_search_text = clean(st.session_state.get(search_key, ""))
+    selected_filter = normalize_notice_queue_filter(st.session_state.get(filter_state_key, "all"))
+    render_notice_queue_kpi_cards(
+        build_notice_queue_metric_items(filter_notice_queue_rows(source_df, search_text=current_search_text)),
+        page_key="notice",
+        selected_filter=selected_filter,
+    )
+
+    search_col, reset_col = st.columns([6, 1])
+    with search_col:
+        search_text = st.text_input(
+            "공고명",
+            key=search_key,
+            placeholder="공고명을 입력하세요",
+        )
+    with reset_col:
+        st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
+        st.button(
+            "초기화",
+            key="viewer_notice_queue_search_reset",
+            use_container_width=True,
+            on_click=reset_notice_queue_controls,
+            args=(search_key, filter_state_key),
+        )
+
+    search_filtered_df = filter_notice_queue_rows(source_df, search_text=search_text)
+    selected_filter = normalize_notice_queue_filter(st.session_state.get(filter_state_key, "all"))
+    filtered_source_df = apply_notice_queue_kpi_filter(search_filtered_df, selected_filter)
+
+    if clean(search_text):
+        st.caption(f"검색 결과 {len(filtered_source_df)}건")
+    elif selected_filter != "all":
+        st.caption(f"필터 결과 {len(filtered_source_df)}건")
+    else:
+        st.caption(f"전체 {len(source_df)}건")
+
+    iris_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("iris") & filtered_source_df["_notice_scope"].isin(["current", "scheduled"])
+    ].copy()
+    mss_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("tipa") & filtered_source_df["_notice_scope"].eq("current")
+    ].copy()
+    nipa_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("nipa") & filtered_source_df["_notice_scope"].eq("current")
+    ].copy()
+    archive_rows = filtered_source_df[filtered_source_df["_notice_scope"].eq("archive")].copy()
+    favorite_rows = filtered_source_df[
+        filtered_source_df["검토 여부"].fillna("").astype(str).str.strip().eq(FAVORITE_REVIEW_STATUS)
+    ].copy()
+
+    tab_iris, tab_mss, tab_nipa, tab_archive, tab_favorites = st.tabs(["IRIS", "MSS", "NIPA", "Archive", "Favorites"])
+    with tab_iris:
+        render_crawled_notice_rows(iris_rows, key_prefix="notice_iris")
+    with tab_mss:
+        render_crawled_notice_rows(mss_rows, key_prefix="notice_mss")
+    with tab_nipa:
+        render_crawled_notice_rows(nipa_rows, key_prefix="notice_nipa")
+    with tab_archive:
+        render_crawled_notice_rows(archive_rows, key_prefix="notice_archive")
+    with tab_favorites:
+        render_local_favorite_notice_rows(
+            component_key="viewer_notice_favorites_local_storage",
+            empty_message="아직 관심공고로 저장한 공고가 없습니다.",
+        )
+
+
+def render_notice_queue_ui_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .notice-kpi-grid {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 1rem;
+          margin: 1.35rem 0 1rem;
+        }
+        .notice-kpi-card {
+          display: block;
+          padding: 1.15rem 1.35rem;
+          border-radius: 24px;
+          border: 1px solid rgba(203, 213, 225, 0.92);
+          background: #ffffff;
+          text-decoration: none !important;
+          box-shadow: 0 16px 36px rgba(148, 163, 184, 0.10);
+          cursor: pointer;
+          transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+        }
+        .notice-kpi-card:hover {
+          background: #f8fafc;
+          border-color: rgba(148, 163, 184, 0.95);
+          transform: translateY(-1px);
+          box-shadow: 0 20px 42px rgba(148, 163, 184, 0.14);
+        }
+        .notice-kpi-card.is-active {
+          border-color: #2563eb;
+          background: #eff6ff;
+        }
+        .notice-kpi-label {
+          color: var(--text-muted);
+          font-size: 0.88rem;
+          font-weight: 800;
+          line-height: 1.4;
+        }
+        .notice-kpi-value {
+          margin-top: 0.6rem;
+          color: var(--text-strong);
+          font-size: 2.2rem;
+          font-weight: 900;
+          line-height: 1;
+        }
+        .notice-kpi-card.is-active .notice-kpi-label,
+        .notice-kpi-card.is-active .notice-kpi-value {
+          color: #1d4ed8;
+        }
+        .notice-queue-list {
+          display: flex;
+          flex-direction: column;
+          margin-top: 0.5rem;
+          border-top: 1px solid rgba(203, 213, 225, 0.8);
+        }
+        .notice-queue-row-shell {
+          position: relative;
+          border-bottom: 1px solid rgba(203, 213, 225, 0.8);
+        }
+        .notice-queue-row {
+          display: block;
+          padding: 1.15rem 240px 1.15rem 0.25rem;
+          cursor: pointer;
+          transition: background-color 140ms ease;
+        }
+        .notice-queue-row:hover {
+          background: #f8fafc;
+        }
+        .notice-queue-row-action {
+          position: absolute;
+          top: 32px;
+          right: 44px;
+          z-index: 4;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          height: 36px;
+          padding: 0 14px;
+          background: #ffffff;
+          border: 1px solid rgba(203, 213, 225, 0.9);
+          border-radius: 8px;
+          color: var(--text-strong) !important;
+          font-size: 13px;
+          font-weight: 700;
+          line-height: 1;
+          text-decoration: none !important;
+          white-space: nowrap;
+        }
+        .notice-queue-row-action:hover {
+          background: #f8fafc;
+          color: var(--text-strong) !important;
+          text-decoration: none !important;
+        }
+        .notice-queue-breadcrumb {
+          color: var(--text-muted);
+          font-size: 0.85rem;
+          font-weight: 700;
+          line-height: 1.45;
+          margin-bottom: 0.35rem;
+        }
+        .notice-queue-title {
+          color: var(--text-strong);
+          font-size: 1.16rem;
+          font-weight: 900;
+          line-height: 1.45;
+          margin-bottom: 0.45rem;
+        }
+        .notice-queue-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.4rem 1rem;
+          align-items: center;
+        }
+        .notice-queue-meta-item {
+          color: var(--text-body);
+          font-size: 0.92rem;
+          line-height: 1.5;
+          min-width: 0;
+        }
+        .notice-queue-meta-label {
+          color: var(--text-muted);
+          font-weight: 800;
+        }
+        @media (max-width: 960px) {
+          .notice-kpi-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+          .notice-queue-row-shell {
+            padding-top: 3rem;
+          }
+          .notice-queue-row-action {
+            top: 0;
+            right: 0;
+          }
+          .notice-queue-row {
+            padding: 0.95rem 0 1rem 0;
+          }
+        }
+        @media (max-width: 640px) {
+          .notice-kpi-grid {
+            grid-template-columns: 1fr;
+          }
+          .notice-queue-title {
+            font-size: 1.05rem;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
+    filter_state_key = get_notice_queue_filter_state_key("notice")
+    search_key = "viewer_notice_queue_search_text"
+    consume_notice_queue_filter_query_action(page_key="notice", state_key=filter_state_key)
+    consume_favorite_toggle_query_action()
+    source_df = build_crawled_notice_collection(datasets, source_datasets)
+
+    current_view, selected_id = get_route_state("notice")
+    if current_view == "detail":
+        selected_row = get_row_by_column_value(source_df, "_collection_id", selected_id)
+        back_col, info_col = st.columns([1, 5])
+        with back_col:
+            if st.button("목록으로", key="notice_back_to_table", use_container_width=True):
+                switch_to_table("notice")
+        with info_col:
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 이전 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
+        render_notice_detail_from_row(selected_row, datasets["opportunity_all"])
+        return
+
+    render_page_header(
+        "Notice Queue",
+        "IRIS, MSS, NIPA에서 수집한 공고를 한 곳에서 확인합니다.",
+        eyebrow="Notices",
+    )
+    render_notice_queue_ui_styles()
+    if source_df.empty:
+        st.info("표시할 공고가 아직 없습니다.")
+        return
+
+    current_search_text = clean(st.session_state.get(search_key, ""))
+    selected_filter = normalize_notice_queue_filter(st.session_state.get(filter_state_key, "all"))
+    render_notice_queue_kpi_cards(
+        build_notice_queue_metric_items(filter_notice_queue_rows(source_df, search_text=current_search_text)),
+        page_key="notice",
+        selected_filter=selected_filter,
+    )
+
+    search_col, reset_col = st.columns([6, 1])
+    with search_col:
+        search_text = st.text_input(
+            "공고명",
+            key=search_key,
+            placeholder="공고명을 입력하세요",
+        )
+    with reset_col:
+        st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
+        st.button(
+            "초기화",
+            key="viewer_notice_queue_search_reset",
+            use_container_width=True,
+            on_click=reset_notice_queue_controls,
+            args=(search_key, filter_state_key),
+        )
+
+    search_filtered_df = filter_notice_queue_rows(source_df, search_text=search_text)
+    selected_filter = normalize_notice_queue_filter(st.session_state.get(filter_state_key, "all"))
+    filtered_source_df = apply_notice_queue_kpi_filter(search_filtered_df, selected_filter)
+
+    if clean(search_text):
+        st.caption(f"검색 결과 {len(filtered_source_df)}건")
+    elif selected_filter != "all":
+        st.caption(f"필터 결과 {len(filtered_source_df)}건")
+    else:
+        st.caption(f"전체 {len(source_df)}건")
+
+    iris_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("iris") & filtered_source_df["_notice_scope"].isin(["current", "scheduled"])
+    ].copy()
+    mss_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("tipa") & filtered_source_df["_notice_scope"].eq("current")
+    ].copy()
+    nipa_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("nipa") & filtered_source_df["_notice_scope"].eq("current")
+    ].copy()
+    archive_rows = filtered_source_df[filtered_source_df["_notice_scope"].eq("archive")].copy()
+    favorite_rows = filtered_source_df[
+        filtered_source_df["검토 여부"].fillna("").astype(str).str.strip().eq(FAVORITE_REVIEW_STATUS)
+    ].copy()
+
+    tab_iris, tab_mss, tab_nipa, tab_archive, tab_favorites = st.tabs(["IRIS", "MSS", "NIPA", "Archive", "Favorites"])
+    with tab_iris:
+        render_crawled_notice_rows(iris_rows, key_prefix="notice_iris")
+    with tab_mss:
+        render_crawled_notice_rows(mss_rows, key_prefix="notice_mss")
+    with tab_nipa:
+        render_crawled_notice_rows(nipa_rows, key_prefix="notice_nipa")
+    with tab_archive:
+        render_crawled_notice_rows(archive_rows, key_prefix="notice_archive")
+    with tab_favorites:
+        render_crawled_notice_rows(favorite_rows, key_prefix="notice_favorites")
+
+
+def _build_notice_browser_payload(row: dict | pd.Series | None, *, detail_page_key: str) -> dict[str, str]:
+    row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
+    source_key = resolve_route_source_key_for_row(row_dict, source_key=row_dict.get("source_key")) or "iris"
+    scope = clean(first_non_empty(row_dict, "_notice_scope"))
+    status = normalize_notice_status_label(first_non_empty(row_dict, "공고상태", "status", "rcve_status"))
+    if not status:
+        status = "마감" if scope == "archive" else "예정" if scope == "scheduled" else "접수중"
+
+    notice_id = clean(first_non_empty(row_dict, "공고ID", "notice_id"))
+    collection_id = clean(first_non_empty(row_dict, "_collection_id"))
+    source_label = clean(first_non_empty(row_dict, "매체", "source_label")) or source_key.upper()
+    ministry = clean(first_non_empty(row_dict, "소관부처", "ministry"))
+    agency = clean(first_non_empty(row_dict, "전문기관", "해당부처", "agency"))
+    breadcrumb_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
+    breadcrumb = " > ".join(breadcrumb_parts) if breadcrumb_parts else source_label
+    favorite_key = f"{source_key}::{notice_id}" if notice_id else f"{source_key}::{collection_id}"
+
+    return {
+        "favorite_key": favorite_key,
+        "notice_id": notice_id,
+        "collection_id": collection_id,
+        "source_key": source_key,
+        "source_label": source_label,
+        "breadcrumb": breadcrumb,
+        "title": clean(first_non_empty(row_dict, "공고명", "notice_title")) or "-",
+        "notice_no": clean(first_non_empty(row_dict, "공고번호", "notice_no")) or "-",
+        "notice_date": clean(first_non_empty(row_dict, "공고일자", "notice_date")) or "-",
+        "status": status or "-",
+        "support_type": clean(first_non_empty(row_dict, "공모유형", "pbofr_type", "support_type")) or "-",
+        "period": clean(first_non_empty(row_dict, "접수기간", "notice_period", "period")) or "-",
+        "detail_href": build_route_href(detail_page_key, collection_id, source_key=source_key) if collection_id else "#",
+    }
+
+
+def _render_notice_browser_rows_component(
+    payloads: list[dict[str, str]],
+    *,
+    component_key: str,
+    favorites_only: bool = False,
+    local_storage_only: bool = False,
+    empty_message: str = "표시할 공고가 없습니다.",
+    max_height: int = 1400,
+) -> None:
+    payload_json = json.dumps(payloads, ensure_ascii=False).replace("</", "<\\/")
+    empty_message_json = json.dumps(clean(empty_message) or "표시할 공고가 없습니다.", ensure_ascii=False)
+    mode_json = json.dumps({"favorites_only": favorites_only, "local_storage_only": local_storage_only})
+    row_count = len(payloads) if payloads else (8 if local_storage_only else 1)
+    height = min(max(180, 126 * max(row_count, 1) + 30), max_height)
+    html = f"""
+    <div id="{escape(component_key, quote=True)}" class="notice-browser-root"></div>
+    <script>
+    (function() {{
+      const root = document.getElementById({json.dumps(component_key)});
+      if (!root) return;
+      const storageKey = "favorite_notices";
+      const initialRows = {payload_json};
+      const mode = {mode_json};
+      const emptyMessage = {empty_message_json};
+
+      const escapeHtml = (value) => String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+      const normalizeKey = (item) => String(item?.favorite_key || "");
+      const readFavorites = () => {{
+        try {{
+          const raw = window.localStorage.getItem(storageKey);
+          const parsed = raw ? JSON.parse(raw) : [];
+          return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+        }} catch (error) {{
+          return [];
+        }}
+      }};
+      const writeFavorites = (items) => {{
+        window.localStorage.setItem(storageKey, JSON.stringify(items));
+      }};
+      const upsertFavorite = (payload) => {{
+        const favorites = readFavorites();
+        const key = normalizeKey(payload);
+        const next = favorites.filter((item) => normalizeKey(item) !== key);
+        next.unshift(payload);
+        writeFavorites(next);
+      }};
+      const removeFavorite = (payload) => {{
+        const key = normalizeKey(payload);
+        writeFavorites(readFavorites().filter((item) => normalizeKey(item) !== key));
+      }};
+      const rowHtml = (item, isFavorite) => {{
+        const buttonClass = isFavorite ? "notice-browser-favorite is-active" : "notice-browser-favorite";
+        const buttonLabel = isFavorite ? "★ 관심등록됨" : "☆ 관심공고 등록";
+        const badgeHtml = isFavorite ? '<span class="notice-browser-badge">관심</span>' : "";
+        return `
+          <div class="notice-browser-row-shell" tabindex="0" role="link"
+               data-detail-href="${{escapeHtml(item.detail_href || '#')}}"
+               data-favorite-payload='${{escapeHtml(JSON.stringify(item))}}'>
+            <button type="button" class="${{buttonClass}}" data-role="favorite">${{buttonLabel}}</button>
+            <div class="notice-browser-row">
+              <div class="notice-browser-breadcrumb">${{escapeHtml(item.breadcrumb || item.source_label || '-')}}</div>
+              <div class="notice-browser-title-row">
+                <div class="notice-browser-title">${{escapeHtml(item.title || '-')}}</div>
+                ${{badgeHtml}}
+              </div>
+              <div class="notice-browser-meta">
+                <div class="notice-browser-meta-item"><span class="notice-browser-meta-label">공고번호</span> ${{escapeHtml(item.notice_no || '-')}}</div>
+                <div class="notice-browser-meta-item"><span class="notice-browser-meta-label">공고일자</span> ${{escapeHtml(item.notice_date || '-')}}</div>
+                <div class="notice-browser-meta-item"><span class="notice-browser-meta-label">공고상태</span> ${{escapeHtml(item.status || '-')}}</div>
+                <div class="notice-browser-meta-item"><span class="notice-browser-meta-label">공모유형</span> ${{escapeHtml(item.support_type || '-')}}</div>
+                <div class="notice-browser-meta-item"><span class="notice-browser-meta-label">매체</span> ${{escapeHtml(item.source_label || '-')}}</div>
+                <div class="notice-browser-meta-item"><span class="notice-browser-meta-label">접수기간</span> ${{escapeHtml(item.period || '-')}}</div>
+              </div>
+            </div>
+          </div>`;
+      }};
+      const styles = `
+        <style>
+          body {{ margin: 0; background: transparent; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+          .notice-browser-list {{ display:flex; flex-direction:column; border-top:1px solid rgba(203,213,225,.85); }}
+          .notice-browser-row-shell {{ position:relative; border-bottom:1px solid rgba(203,213,225,.85); }}
+          .notice-browser-row-shell:hover .notice-browser-row {{ background:#f8fafc; }}
+          .notice-browser-row-shell:focus-visible {{ outline: 2px solid #2563eb; outline-offset: 2px; }}
+          .notice-browser-row {{ padding: 1.15rem 230px 1.1rem .25rem; cursor:pointer; transition:background-color .14s ease; }}
+          .notice-browser-breadcrumb {{ color:#64748b; font-size:.85rem; font-weight:700; line-height:1.45; margin-bottom:.35rem; }}
+          .notice-browser-title-row {{ display:flex; align-items:center; gap:.55rem; margin-bottom:.45rem; flex-wrap:wrap; }}
+          .notice-browser-title {{ color:#0f172a; font-size:1.16rem; font-weight:900; line-height:1.45; }}
+          .notice-browser-badge {{ display:inline-flex; align-items:center; height:24px; padding:0 .6rem; border-radius:999px; background:#dbeafe; color:#1d4ed8; font-size:.78rem; font-weight:800; }}
+          .notice-browser-meta {{ display:flex; flex-wrap:wrap; gap:.4rem 1rem; align-items:center; }}
+          .notice-browser-meta-item {{ color:#334155; font-size:.92rem; line-height:1.5; }}
+          .notice-browser-meta-label {{ color:#64748b; font-weight:800; }}
+          .notice-browser-favorite {{
+            position:absolute; top:32px; right:44px; z-index:4; display:inline-flex; align-items:center; justify-content:center;
+            height:36px; padding:0 14px; border-radius:8px; border:1px solid rgba(203,213,225,.95); background:#fff;
+            color:#475569; font-size:13px; font-weight:700; cursor:pointer;
+          }}
+          .notice-browser-favorite:hover {{ background:#f8fafc; }}
+          .notice-browser-favorite.is-active {{ border-color:#2563eb; background:#eff6ff; color:#1d4ed8; }}
+          .notice-browser-empty {{ color:#64748b; font-size:.95rem; padding:1.25rem .25rem; }}
+          @media (max-width: 960px) {{
+            .notice-browser-row-shell {{ padding-top:3rem; }}
+            .notice-browser-favorite {{ top:0; right:0; }}
+            .notice-browser-row {{ padding:.95rem 0 1rem 0; }}
+          }}
+        </style>`;
+
+      const container = document.createElement("div");
+      container.innerHTML = styles + '<div class="notice-browser-list"></div><div class="notice-browser-empty" hidden></div>';
+      root.replaceChildren(container);
+      const listNode = container.querySelector(".notice-browser-list");
+      const emptyNode = container.querySelector(".notice-browser-empty");
+      const getSourceRows = () => mode.local_storage_only ? readFavorites() : initialRows;
+
+      const navigateTo = (href) => {{
+        if (!href || href === "#") return;
+        try {{
+          window.parent.location.href = href;
+        }} catch (error) {{
+          window.location.href = href;
+        }}
+      }};
+
+      const bindRowEvents = () => {{
+        listNode.querySelectorAll(".notice-browser-row-shell").forEach((rowNode) => {{
+          const favoriteButton = rowNode.querySelector('[data-role="favorite"]');
+          rowNode.addEventListener("click", (event) => {{
+            if (event.target.closest('[data-role="favorite"]')) return;
+            navigateTo(rowNode.dataset.detailHref);
+          }});
+          rowNode.addEventListener("keydown", (event) => {{
+            if (event.target.closest('[data-role="favorite"]')) return;
+            if (event.key === "Enter" || event.key === " ") {{
+              event.preventDefault();
+              navigateTo(rowNode.dataset.detailHref);
+            }}
+          }});
+          if (favoriteButton) {{
+            favoriteButton.addEventListener("click", (event) => {{
+              event.preventDefault();
+              event.stopPropagation();
+              const payload = JSON.parse(rowNode.dataset.favoritePayload || "{{}}");
+              const favoriteKeys = new Set(readFavorites().map(normalizeKey));
+              if (favoriteKeys.has(normalizeKey(payload))) {{
+                removeFavorite(payload);
+              }} else {{
+                upsertFavorite(payload);
+              }}
+              render();
+            }});
+          }}
+        }});
+      }};
+
+      function render() {{
+        const favoriteKeys = new Set(readFavorites().map(normalizeKey));
+        const rows = getSourceRows().filter(Boolean);
+        const visibleRows = mode.favorites_only
+          ? rows.filter((item) => favoriteKeys.has(normalizeKey(item)))
+          : rows;
+
+        if (!visibleRows.length) {{
+          listNode.innerHTML = "";
+          emptyNode.hidden = false;
+          emptyNode.textContent = emptyMessage;
+          return;
+        }}
+
+        emptyNode.hidden = true;
+        listNode.innerHTML = visibleRows.map((item) => rowHtml(item, favoriteKeys.has(normalizeKey(item)))).join("");
+        bindRowEvents();
+      }}
+
+      window.addEventListener("storage", render);
+      render();
+    }})();
+    </script>
+    """
+    components.html(html, height=height, scrolling=row_count > 8 or local_storage_only)
+
+
+def render_local_favorite_notice_rows(*, component_key: str, empty_message: str) -> None:
+    _render_notice_browser_rows_component(
+        [],
+        component_key=component_key,
+        favorites_only=True,
+        local_storage_only=True,
+        empty_message=empty_message,
+    )
+
+
+def render_crawled_notice_rows(
+    rows: pd.DataFrame,
+    *,
+    key_prefix: str,
+    limit: int = 30,
+    page_key: str = "notice",
+) -> None:
+    if rows is None or rows.empty:
+        st.info("표시할 공고가 없습니다.")
+        return
+    detail_page_key = "notice"
+    payloads = [
+        _build_notice_browser_payload(row, detail_page_key=detail_page_key)
+        for _, row in rows.head(limit).iterrows()
+    ]
+    _render_notice_browser_rows_component(
+        payloads,
+        component_key=f"{key_prefix}_{page_key}_notice_rows",
+        empty_message="표시할 공고가 없습니다.",
+    )
+
+
 def render_opportunity_page(
     df: pd.DataFrame,
     *,
@@ -9076,6 +9818,20 @@ def render_favorite_notice_page(
         FAVORITE_NOTICE_COLUMNS,
         page_key=page_key,
         id_column="_favorite_id",
+    )
+
+
+def render_favorite_notice_page(
+    notice_view_df: pd.DataFrame,
+    opportunity_df: pd.DataFrame,
+    source_datasets: dict[str, object],
+) -> None:
+    del notice_view_df, opportunity_df, source_datasets
+    st.subheader("관심공고")
+    st.caption("브라우저에 저장한 관심공고만 모아서 보여줍니다.")
+    render_local_favorite_notice_rows(
+        component_key="viewer_favorites_local_storage_page",
+        empty_message="아직 관심공고로 저장한 공고가 없습니다.",
     )
 
 
@@ -10911,6 +11667,111 @@ def clear_widget_value(widget_key: str) -> None:
     st.session_state[widget_key] = ""
 
 
+def normalize_notice_queue_filter(value: str) -> str:
+    normalized = clean(value).lower()
+    alias_map = {
+        "all": "all",
+        "iris": "iris",
+        "mss": "mss",
+        "tipa": "mss",
+        "nipa": "nipa",
+        "archive": "archive",
+        "closed": "archive",
+    }
+    return alias_map.get(normalized, "all")
+
+
+def get_notice_queue_filter_state_key(page_key: str) -> str:
+    return f"{page_key}_selected_queue_filter"
+
+
+def build_notice_queue_filter_href(*, page_key: str, filter_value: str) -> str:
+    params = get_query_params_dict()
+    params["page"] = normalize_route_page_key(page_key)
+    params["view"] = "table"
+    params["queue_filter_select"] = normalize_notice_queue_filter(filter_value)
+    params = with_auth_params(params)
+    return f"?{urlencode(params)}"
+
+
+def consume_notice_queue_filter_query_action(*, page_key: str, state_key: str) -> None:
+    selected_filter = get_query_param("queue_filter_select")
+    if not clean(selected_filter):
+        st.session_state.setdefault(state_key, "all")
+        return
+
+    st.session_state[state_key] = normalize_notice_queue_filter(selected_filter)
+    params = get_query_params_dict()
+    params["page"] = normalize_route_page_key(page_key)
+    params["view"] = "table"
+    params.pop("queue_filter_select", None)
+    replace_query_params(params)
+    st.rerun()
+
+
+def reset_notice_queue_controls(search_key: str, filter_state_key: str) -> None:
+    st.session_state[search_key] = ""
+    st.session_state[filter_state_key] = "all"
+
+
+def apply_notice_queue_kpi_filter(rows: pd.DataFrame, selected_filter: str) -> pd.DataFrame:
+    if rows.empty:
+        return rows.copy()
+
+    normalized_filter = normalize_notice_queue_filter(selected_filter)
+    if normalized_filter == "iris":
+        mask = rows["source_key"].eq("iris") & rows["_notice_scope"].isin(["current", "scheduled"])
+    elif normalized_filter == "mss":
+        mask = rows["source_key"].eq("tipa") & rows["_notice_scope"].eq("current")
+    elif normalized_filter == "nipa":
+        mask = rows["source_key"].eq("nipa") & rows["_notice_scope"].eq("current")
+    elif normalized_filter == "archive":
+        mask = rows["_notice_scope"].eq("archive")
+    else:
+        return rows.copy()
+    return rows[mask].copy()
+
+
+def build_notice_queue_metric_items(rows: pd.DataFrame) -> list[tuple[str, str, str]]:
+    iris_rows = rows[rows["source_key"].eq("iris") & rows["_notice_scope"].isin(["current", "scheduled"])]
+    mss_rows = rows[rows["source_key"].eq("tipa") & rows["_notice_scope"].eq("current")]
+    nipa_rows = rows[rows["source_key"].eq("nipa") & rows["_notice_scope"].eq("current")]
+    archive_rows = rows[rows["_notice_scope"].eq("archive")]
+    return [
+        ("전체 공고", str(len(rows)), "all"),
+        ("IRIS", str(len(iris_rows)), "iris"),
+        ("MSS", str(len(mss_rows)), "mss"),
+        ("NIPA", str(len(nipa_rows)), "nipa"),
+        ("마감·보관", str(len(archive_rows)), "archive"),
+    ]
+
+
+def render_notice_queue_kpi_cards(
+    items: list[tuple[str, str, str]],
+    *,
+    page_key: str,
+    selected_filter: str,
+) -> None:
+    if not items:
+        return
+
+    active_filter = normalize_notice_queue_filter(selected_filter)
+    cards: list[str] = []
+    for label, value, filter_value in items:
+        normalized_filter = normalize_notice_queue_filter(filter_value)
+        active_class = " is-active" if normalized_filter == active_filter else ""
+        href = build_notice_queue_filter_href(page_key=page_key, filter_value=normalized_filter)
+        cards.append(
+            (
+                f'<a class="notice-kpi-card{active_class}" href="{escape(href, quote=True)}">'
+                f'<div class="notice-kpi-label">{escape(clean(label))}</div>'
+                f'<div class="notice-kpi-value">{escape(clean(value))}</div>'
+                "</a>"
+            )
+        )
+    st.markdown(f'<div class="notice-kpi-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
+
+
 def render_crawled_notice_rows(rows: pd.DataFrame, *, key_prefix: str, limit: int = 30, page_key: str = "notice") -> None:
     if rows.empty:
         st.info("표시할 공고가 없습니다.")
@@ -11129,3 +11990,197 @@ def render_iris_source(
     render_iris_page(current_page_key, datasets)
 
 # END VIEWER LAYOUT OVERRIDES
+
+
+def render_notice_queue_ui_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .notice-kpi-grid {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 1rem;
+          margin: 1.35rem 0 1rem;
+        }
+        .notice-kpi-card {
+          display: block;
+          padding: 1.15rem 1.35rem;
+          border-radius: 24px;
+          border: 1px solid rgba(203, 213, 225, 0.92);
+          background: #ffffff;
+          text-decoration: none !important;
+          box-shadow: 0 16px 36px rgba(148, 163, 184, 0.10);
+          cursor: pointer;
+          transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+        }
+        .notice-kpi-card:hover {
+          background: #f8fafc;
+          border-color: rgba(148, 163, 184, 0.95);
+          transform: translateY(-1px);
+          box-shadow: 0 20px 42px rgba(148, 163, 184, 0.14);
+        }
+        .notice-kpi-card.is-active {
+          border-color: #2563eb;
+          background: #eff6ff;
+        }
+        .notice-kpi-label {
+          color: var(--text-muted);
+          font-size: 0.88rem;
+          font-weight: 800;
+          line-height: 1.4;
+        }
+        .notice-kpi-value {
+          margin-top: 0.6rem;
+          color: var(--text-strong);
+          font-size: 2.2rem;
+          font-weight: 900;
+          line-height: 1;
+        }
+        .notice-kpi-card.is-active .notice-kpi-label,
+        .notice-kpi-card.is-active .notice-kpi-value {
+          color: #1d4ed8;
+        }
+        @media (max-width: 960px) {
+          .notice-kpi-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+        @media (max-width: 640px) {
+          .notice-kpi-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_crawled_notice_rows(
+    rows: pd.DataFrame,
+    *,
+    key_prefix: str,
+    limit: int = 30,
+    page_key: str = "notice",
+) -> None:
+    if rows is None or rows.empty:
+        st.info("표시할 공고가 없습니다.")
+        return
+    payloads = [
+        _build_notice_browser_payload(row, detail_page_key="notice")
+        for _, row in rows.head(limit).iterrows()
+    ]
+    _render_notice_browser_rows_component(
+        payloads,
+        component_key=f"{key_prefix}_{page_key}_notice_rows_final",
+        empty_message="표시할 공고가 없습니다.",
+    )
+
+
+def render_favorite_notice_page(
+    notice_view_df: pd.DataFrame,
+    opportunity_df: pd.DataFrame,
+    source_datasets: dict[str, object],
+) -> None:
+    del notice_view_df, opportunity_df, source_datasets
+    current_view, _ = get_route_state("favorites")
+    if current_view == "detail":
+        switch_to_table("favorites")
+        return
+    st.subheader("관심공고")
+    st.caption("브라우저 localStorage에 저장한 공고만 보여줍니다.")
+    render_local_favorite_notice_rows(
+        component_key="viewer_favorites_local_storage_page_final",
+        empty_message="아직 관심공고로 저장한 공고가 없습니다.",
+    )
+
+
+def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
+    filter_state_key = get_notice_queue_filter_state_key("notice")
+    search_key = "viewer_notice_queue_search_text"
+    consume_notice_queue_filter_query_action(page_key="notice", state_key=filter_state_key)
+    source_df = build_crawled_notice_collection(datasets, source_datasets)
+
+    current_view, selected_id = get_route_state("notice")
+    if current_view == "detail":
+        selected_row = get_row_by_column_value(source_df, "_collection_id", selected_id)
+        back_col, info_col = st.columns([1, 5])
+        with back_col:
+            if st.button("목록으로", key="notice_back_to_table_final", use_container_width=True):
+                switch_to_table("notice")
+        with info_col:
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 이전 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
+        render_notice_detail_from_row(selected_row, datasets["opportunity_all"])
+        return
+
+    render_page_header(
+        "Notice Queue",
+        "IRIS, MSS, NIPA에서 수집한 공고를 한 곳에서 확인합니다.",
+        eyebrow="Notices",
+    )
+    render_notice_queue_ui_styles()
+    if source_df.empty:
+        st.info("표시할 공고가 아직 없습니다.")
+        return
+
+    current_search_text = clean(st.session_state.get(search_key, ""))
+    selected_filter = normalize_notice_queue_filter(st.session_state.get(filter_state_key, "all"))
+    render_notice_queue_kpi_cards(
+        build_notice_queue_metric_items(filter_notice_queue_rows(source_df, search_text=current_search_text)),
+        page_key="notice",
+        selected_filter=selected_filter,
+    )
+
+    search_col, reset_col = st.columns([6, 1])
+    with search_col:
+        search_text = st.text_input("공고명", key=search_key, placeholder="공고명을 입력하세요")
+    with reset_col:
+        st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
+        st.button(
+            "초기화",
+            key="viewer_notice_queue_search_reset_final",
+            use_container_width=True,
+            on_click=reset_notice_queue_controls,
+            args=(search_key, filter_state_key),
+        )
+
+    search_filtered_df = filter_notice_queue_rows(source_df, search_text=search_text)
+    selected_filter = normalize_notice_queue_filter(st.session_state.get(filter_state_key, "all"))
+    filtered_source_df = apply_notice_queue_kpi_filter(search_filtered_df, selected_filter)
+
+    if clean(search_text):
+        st.caption(f"검색 결과 {len(filtered_source_df)}건")
+    elif selected_filter != "all":
+        st.caption(f"필터 결과 {len(filtered_source_df)}건")
+    else:
+        st.caption(f"전체 {len(source_df)}건")
+
+    iris_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("iris") & filtered_source_df["_notice_scope"].isin(["current", "scheduled"])
+    ].copy()
+    mss_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("tipa") & filtered_source_df["_notice_scope"].eq("current")
+    ].copy()
+    nipa_rows = filtered_source_df[
+        filtered_source_df["source_key"].eq("nipa") & filtered_source_df["_notice_scope"].eq("current")
+    ].copy()
+    archive_rows = filtered_source_df[filtered_source_df["_notice_scope"].eq("archive")].copy()
+
+    tab_iris, tab_mss, tab_nipa, tab_archive, tab_favorites = st.tabs(["IRIS", "MSS", "NIPA", "Archive", "Favorites"])
+    with tab_iris:
+        render_crawled_notice_rows(iris_rows, key_prefix="notice_iris")
+    with tab_mss:
+        render_crawled_notice_rows(mss_rows, key_prefix="notice_mss")
+    with tab_nipa:
+        render_crawled_notice_rows(nipa_rows, key_prefix="notice_nipa")
+    with tab_archive:
+        render_crawled_notice_rows(archive_rows, key_prefix="notice_archive")
+    with tab_favorites:
+        render_local_favorite_notice_rows(
+            component_key="viewer_notice_favorites_local_storage_final",
+            empty_message="아직 관심공고로 저장한 공고가 없습니다.",
+        )
+
+from notice_browser_overrides import apply_notice_browser_overrides
+
+apply_notice_browser_overrides(globals(), detail_page_key="notice")

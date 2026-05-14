@@ -238,6 +238,93 @@ def render_public_notice_queue_page(datasets: dict[str, pd.DataFrame], source_da
     with tab_archive:
         core.render_crawled_notice_rows(archive_rows, key_prefix="notice_archive")
     with tab_favorites:
+        core.render_local_favorite_notice_rows(
+            component_key="public_notice_favorites_local_storage",
+            empty_message="아직 관심공고로 저장한 공고가 없습니다.",
+        )
+
+
+def render_public_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
+    filter_state_key = core.get_notice_queue_filter_state_key("notice")
+    search_key = "public_notice_queue_search_text"
+    core.consume_notice_queue_filter_query_action(page_key="notice", state_key=filter_state_key)
+    core.consume_favorite_toggle_query_action()
+    source_df = core.build_crawled_notice_collection(datasets, source_datasets)
+
+    current_view, selected_id = core.get_route_state("notice")
+    if current_view == "detail":
+        selected_row = core.get_row_by_column_value(source_df, "_collection_id", selected_id)
+        back_col, info_col = st.columns([1, 5])
+        with back_col:
+            if st.button("목록으로", key="notice_back_to_table", use_container_width=True):
+                core.switch_to_table("notice")
+        with info_col:
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 이전 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
+        core.render_notice_detail_from_row(selected_row, datasets["opportunity_all"])
+        return
+
+    core.render_page_header(
+        "Notice Queue",
+        "IRIS, MSS, NIPA에서 수집한 공고를 한 곳에서 확인합니다.",
+        eyebrow="Notices",
+    )
+    core.render_notice_queue_ui_styles()
+    if source_df.empty:
+        st.info("표시할 공고가 아직 없습니다.")
+        return
+
+    current_search_text = core.clean(st.session_state.get(search_key, ""))
+    selected_filter = core.normalize_notice_queue_filter(st.session_state.get(filter_state_key, "all"))
+    core.render_notice_queue_kpi_cards(
+        core.build_notice_queue_metric_items(core.filter_notice_queue_rows(source_df, search_text=current_search_text)),
+        page_key="notice",
+        selected_filter=selected_filter,
+    )
+
+    search_col, reset_col = st.columns([6, 1])
+    with search_col:
+        search_text = st.text_input(
+            "공고명",
+            key=search_key,
+            placeholder="공고명을 입력하세요",
+        )
+    with reset_col:
+        st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
+        st.button(
+            "초기화",
+            key="public_notice_queue_search_reset",
+            use_container_width=True,
+            on_click=core.reset_notice_queue_controls,
+            args=(search_key, filter_state_key),
+        )
+
+    search_filtered_df = core.filter_notice_queue_rows(source_df, search_text=search_text)
+    selected_filter = core.normalize_notice_queue_filter(st.session_state.get(filter_state_key, "all"))
+    filtered_source_df = core.apply_notice_queue_kpi_filter(search_filtered_df, selected_filter)
+
+    if core.clean(search_text):
+        st.caption(f"검색 결과 {len(filtered_source_df)}건")
+    elif selected_filter != "all":
+        st.caption(f"필터 결과 {len(filtered_source_df)}건")
+    else:
+        st.caption(f"전체 {len(source_df)}건")
+
+    iris_rows = filtered_source_df[filtered_source_df["source_key"].eq("iris") & filtered_source_df["_notice_scope"].isin(["current", "scheduled"])].copy()
+    mss_rows = filtered_source_df[filtered_source_df["source_key"].eq("tipa") & filtered_source_df["_notice_scope"].eq("current")].copy()
+    nipa_rows = filtered_source_df[filtered_source_df["source_key"].eq("nipa") & filtered_source_df["_notice_scope"].eq("current")].copy()
+    archive_rows = filtered_source_df[filtered_source_df["_notice_scope"].eq("archive")].copy()
+    favorite_rows = filtered_source_df[filtered_source_df["검토 여부"].fillna("").astype(str).str.strip().eq(core.FAVORITE_REVIEW_STATUS)].copy()
+
+    tab_iris, tab_mss, tab_nipa, tab_archive, tab_favorites = st.tabs(["IRIS", "MSS", "NIPA", "Archive", "Favorites"])
+    with tab_iris:
+        core.render_crawled_notice_rows(iris_rows, key_prefix="notice_iris")
+    with tab_mss:
+        core.render_crawled_notice_rows(mss_rows, key_prefix="notice_mss")
+    with tab_nipa:
+        core.render_crawled_notice_rows(nipa_rows, key_prefix="notice_nipa")
+    with tab_archive:
+        core.render_crawled_notice_rows(archive_rows, key_prefix="notice_archive")
+    with tab_favorites:
         core.render_crawled_notice_rows(favorite_rows, key_prefix="notice_favorites")
 
 
@@ -361,3 +448,84 @@ def render_public_opportunity_page(
 
     st.markdown('<div class="queue-results-label">추천 결과</div>', unsafe_allow_html=True)
     core._render_rfp_queue_list(filtered.head(30), page_key=page_key)
+
+
+def render_public_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
+    filter_state_key = core.get_notice_queue_filter_state_key("notice")
+    search_key = "public_notice_queue_search_text"
+    core.consume_notice_queue_filter_query_action(page_key="notice", state_key=filter_state_key)
+    source_df = core.build_crawled_notice_collection(datasets, source_datasets)
+
+    current_view, selected_id = core.get_route_state("notice")
+    if current_view == "detail":
+        selected_row = core.get_row_by_column_value(source_df, "_collection_id", selected_id)
+        back_col, info_col = st.columns([1, 5])
+        with back_col:
+            if st.button("목록으로", key="public_notice_back_to_table_final", use_container_width=True):
+                core.switch_to_table("notice")
+        with info_col:
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 이전 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
+        core.render_notice_detail_from_row(selected_row, datasets["opportunity_all"])
+        return
+
+    core.render_page_header(
+        "Notice Queue",
+        "IRIS, MSS, NIPA에서 수집한 공고를 한 곳에서 확인합니다.",
+        eyebrow="Notices",
+    )
+    core.render_notice_queue_ui_styles()
+    if source_df.empty:
+        st.info("표시할 공고가 아직 없습니다.")
+        return
+
+    current_search_text = core.clean(st.session_state.get(search_key, ""))
+    selected_filter = core.normalize_notice_queue_filter(st.session_state.get(filter_state_key, "all"))
+    core.render_notice_queue_kpi_cards(
+        core.build_notice_queue_metric_items(core.filter_notice_queue_rows(source_df, search_text=current_search_text)),
+        page_key="notice",
+        selected_filter=selected_filter,
+    )
+
+    search_col, reset_col = st.columns([6, 1])
+    with search_col:
+        search_text = st.text_input("공고명", key=search_key, placeholder="공고명을 입력하세요")
+    with reset_col:
+        st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
+        st.button(
+            "초기화",
+            key="public_notice_queue_search_reset_final",
+            use_container_width=True,
+            on_click=core.reset_notice_queue_controls,
+            args=(search_key, filter_state_key),
+        )
+
+    search_filtered_df = core.filter_notice_queue_rows(source_df, search_text=search_text)
+    selected_filter = core.normalize_notice_queue_filter(st.session_state.get(filter_state_key, "all"))
+    filtered_source_df = core.apply_notice_queue_kpi_filter(search_filtered_df, selected_filter)
+
+    if core.clean(search_text):
+        st.caption(f"검색 결과 {len(filtered_source_df)}건")
+    elif selected_filter != "all":
+        st.caption(f"필터 결과 {len(filtered_source_df)}건")
+    else:
+        st.caption(f"전체 {len(source_df)}건")
+
+    iris_rows = filtered_source_df[filtered_source_df["source_key"].eq("iris") & filtered_source_df["_notice_scope"].isin(["current", "scheduled"])].copy()
+    mss_rows = filtered_source_df[filtered_source_df["source_key"].eq("tipa") & filtered_source_df["_notice_scope"].eq("current")].copy()
+    nipa_rows = filtered_source_df[filtered_source_df["source_key"].eq("nipa") & filtered_source_df["_notice_scope"].eq("current")].copy()
+    archive_rows = filtered_source_df[filtered_source_df["_notice_scope"].eq("archive")].copy()
+
+    tab_iris, tab_mss, tab_nipa, tab_archive, tab_favorites = st.tabs(["IRIS", "MSS", "NIPA", "Archive", "Favorites"])
+    with tab_iris:
+        core.render_crawled_notice_rows(iris_rows, key_prefix="public_notice_iris")
+    with tab_mss:
+        core.render_crawled_notice_rows(mss_rows, key_prefix="public_notice_mss")
+    with tab_nipa:
+        core.render_crawled_notice_rows(nipa_rows, key_prefix="public_notice_nipa")
+    with tab_archive:
+        core.render_crawled_notice_rows(archive_rows, key_prefix="public_notice_archive")
+    with tab_favorites:
+        core.render_local_favorite_notice_rows(
+            component_key="public_notice_favorites_local_storage_final",
+            empty_message="아직 관심공고로 저장한 공고가 없습니다.",
+        )
