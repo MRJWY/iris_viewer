@@ -11947,13 +11947,109 @@ def render_opportunity_page(
     archive: bool = False,
     all_df: pd.DataFrame | None = None,
 ) -> None:
-    return render_opportunity_page_aligned(
-        df,
-        page_key=page_key,
-        title=title,
-        archive=archive,
-        all_df=all_df,
+    page_key = page_key or ("opportunity_archive" if archive else "opportunity")
+    title = title or ("Opportunity Archive" if archive else "RFP Queue")
+    source_df = ensure_opportunity_row_ids(df)
+    all_source_df = ensure_opportunity_row_ids(all_df) if all_df is not None and not all_df.empty else source_df
+
+    current_view, selected_document_id = get_route_state(page_key)
+    if current_view == "detail":
+        selected_row = get_row_by_column_value(source_df, "_row_id", selected_document_id)
+        if selected_row is None and not all_source_df.empty:
+            selected_row = get_row_by_column_value(all_source_df, "_row_id", selected_document_id)
+        back_col, info_col = st.columns([1, 4])
+        with back_col:
+            if st.button("목록으로", key=f"{page_key}_back_to_table_ui", use_container_width=True):
+                switch_to_table(page_key)
+        with info_col:
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 이전 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
+        render_opportunity_detail_from_row(selected_row)
+        return
+
+    render_page_header(
+        title,
+        "사업공고 중 지원 가능한 RFP를 추천합니다." if not archive else "보관된 Opportunity를 가볍게 탐색할 수 있습니다.",
+        eyebrow="Opportunity",
     )
+    st.markdown(
+        '<div class="queue-shell-note">추천 상태와 공고 상태만 빠르게 좁혀서, 결과 카드에서 상세 공고와 RFP 내용을 바로 확인할 수 있게 구성했습니다.</div>',
+        unsafe_allow_html=True,
+    )
+
+    base_rows = filter_archived_opportunity_rows(all_source_df) if archive else filter_current_opportunity_rows(source_df)
+    working = _build_queue_filter_frame(base_rows)
+    option_rows = filter_archived_opportunity_rows(all_source_df) if archive else all_source_df
+    option_working = _build_queue_filter_frame(option_rows)
+    if working.empty and option_working.empty:
+        st.info("표시할 RFP가 없습니다.")
+        return
+
+    recommendation_options = build_queue_recommendation_options(working["_queue_recommendation"]) if not working.empty else []
+    status_options = build_queue_status_options(option_working["_queue_status"]) if not option_working.empty else ["마감"]
+    archive_reason_options = sorted(
+        [
+            value
+            for value in working["_queue_archive_reason"].dropna().astype(str).unique().tolist()
+            if clean(value) and value != "-"
+        ]
+    ) if not working.empty else []
+
+    filter_cols = st.columns(3 if archive else 2)
+    with filter_cols[0]:
+        selected_recommendation = st.multiselect(
+            "추천 상태",
+            options=recommendation_options,
+            default=[],
+            key=f"{page_key}_filter_recommendation",
+            placeholder="전체",
+        )
+    with filter_cols[1]:
+        selected_status = st.multiselect(
+            "공고 상태",
+            options=status_options,
+            default=[],
+            key=f"{page_key}_filter_status",
+            placeholder="전체",
+        )
+
+    selected_archive_reason: list[str] = []
+    if archive:
+        with filter_cols[2]:
+            selected_archive_reason = st.multiselect(
+                "보관 사유",
+                options=archive_reason_options,
+                default=[],
+                key=f"{page_key}_filter_archive_reason",
+                placeholder="전체",
+            )
+
+    include_closed = archive or ("마감" in selected_status)
+    filter_source = (
+        filter_archived_opportunity_rows(all_source_df)
+        if archive
+        else (all_source_df if include_closed else filter_current_opportunity_rows(source_df))
+    )
+    filtered = filter_queue_working_frame(
+        _build_queue_filter_frame(filter_source),
+        selected_recommendation=selected_recommendation,
+        selected_status=selected_status,
+        archive=archive,
+    )
+    if selected_archive_reason:
+        filtered = filtered[filtered["_queue_archive_reason"].isin(selected_archive_reason)]
+
+    if filtered.empty:
+        st.info("검색 조건에 맞는 RFP가 없습니다.")
+        return
+
+    filtered = filtered.sort_values(
+        by=["rfp_score", "_queue_deadline_sort", "_queue_project_sort"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+
+    st.markdown('<div class="queue-results-label">추천 결과</div>', unsafe_allow_html=True)
+    _render_rfp_queue_list(filtered.head(30), page_key=page_key)
 
 
 def render_iris_source(
