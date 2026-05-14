@@ -11528,7 +11528,7 @@ def build_crawled_notice_collection(
             return
         normalized["_notice_scope"] = scope
         normalized["_collection_id"] = normalized.apply(
-            lambda row: f"{source_key}::{scope}::{clean(row.get('??ID'))}",
+            lambda row: f"{source_key}::{scope}::{clean(first_non_empty(row, '공고ID', 'notice_id'))}",
             axis=1,
         )
         frames.append(normalized)
@@ -11557,7 +11557,7 @@ def build_crawled_notice_collection(
         )
     combined = combined.drop_duplicates(subset=["_collection_id"], keep="first")
     return combined.sort_values(
-        by=["_sort_date", "source_label", "???"],
+        by=["_sort_date", "매체", "공고명"],
         ascending=[False, True, True],
         na_position="last",
     )
