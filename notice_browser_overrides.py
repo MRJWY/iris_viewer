@@ -1834,6 +1834,141 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
 
     render_crawled_notice_rows = _queue_render_card_rows_v2
 
+    def _render_notice_queue_screen_final(
+        source_df: pd.DataFrame,
+        opportunity_df: pd.DataFrame,
+        detail_opportunity_df: pd.DataFrame,
+    ) -> None:
+        del opportunity_df
+        source_df = _enrich_notice_rows(source_df, detail_opportunity_df)
+
+        detail_state = _get_notice_detail_state()
+        if detail_state["view"] == "notice_detail":
+            selected_row = _get_notice_row_by_id(source_df, detail_state["selected_notice_id"])
+            back_col, info_col = st.columns([1, 5])
+            with back_col:
+                if st.button("목록으로", key=f"{detail_page_key}_back_to_table", use_container_width=True):
+                    _close_notice_detail()
+            with info_col:
+                st.markdown('<div class="page-note">선택한 Notice 상세 화면입니다.</div>', unsafe_allow_html=True)
+            if not selected_row:
+                st.info("선택한 공고 상세를 찾을 수 없습니다.")
+                return
+            render_notice_detail_from_row(selected_row, detail_opportunity_df)
+            return
+
+        render_page_header(
+            "Notice Queue",
+            "RFP Queue와 같은 흐름으로 빠르게 훑고, 조건을 좁히고, 같은 앱 안에서 Notice 상세로 바로 진입할 수 있게 구성했습니다.",
+            eyebrow="Notices",
+        )
+        render_notice_queue_ui_styles()
+        _inject_notice_queue_dashboard_styles()
+        if source_df is None or source_df.empty:
+            st.info("표시할 공고가 없습니다.")
+            return
+
+        filters = _get_notice_filters()
+        status_widget_key = _notice_filter_widget_key("status")
+        recommendation_widget_key = _notice_filter_widget_key("recommendation")
+        search_widget_key = _notice_filter_widget_key("search")
+        st.session_state.setdefault(status_widget_key, filters["status"])
+        st.session_state.setdefault(recommendation_widget_key, filters["recommendation"])
+        st.session_state.setdefault(search_widget_key, filters["search"])
+
+        st.markdown(
+            '<div class="queue-shell-note">추천 상태와 공고 상태를 빠르게 좁히고, 결과 카드에서 Notice 상세와 연결 RFP 맥락까지 바로 확인할 수 있게 구성했습니다.</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="queue-filter-label">요건 / 필터</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="queue-filter-help">상단 탭으로 소스를 나누고, 필터와 검색은 RFP Queue와 같은 방식으로 유지합니다.</div>',
+            unsafe_allow_html=True,
+        )
+        filter_cols = st.columns(2)
+        with filter_cols[0]:
+            st.multiselect(
+                "추천 상태",
+                options=[value for value, _ in RECOMMENDATION_FILTER_OPTIONS if value != "전체"],
+                key=recommendation_widget_key,
+                placeholder="전체",
+                on_change=_sync_notice_filter,
+                args=("recommendation",),
+            )
+        with filter_cols[1]:
+            st.multiselect(
+                "공고 상태",
+                options=[value for value, _ in STATUS_FILTER_OPTIONS if value != "전체"],
+                key=status_widget_key,
+                placeholder="전체",
+                on_change=_sync_notice_filter,
+                args=("status",),
+            )
+
+        st.markdown('<div class="queue-search-label">검색</div>', unsafe_allow_html=True)
+        search_col, reset_col = st.columns([6, 1])
+        with search_col:
+            st.text_input(
+                "search-filter",
+                key=search_widget_key,
+                placeholder="공고명 / 과제명 / 기관명 검색",
+                label_visibility="collapsed",
+                on_change=_sync_notice_filter,
+                args=("search",),
+            )
+        with reset_col:
+            st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
+            if st.button("초기화", key=f"{detail_page_key}_search_reset", use_container_width=True):
+                _reset_notice_filters()
+                st.rerun()
+
+        filters = _get_notice_filters()
+        filtered_source_df = _apply_notice_filters(
+            source_df,
+            filters["status"],
+            filters["recommendation"],
+            filters["search"],
+        )
+
+        st.caption(f"결과 {len(filtered_source_df)}건")
+        tab_specs: list[tuple[str, str, pd.DataFrame]] = []
+        for label, tab_key in TOP_TAB_OPTIONS:
+            tab_rows = _filter_rows_for_tab(filtered_source_df, tab_key)
+            tab_specs.append((label, tab_key, tab_rows))
+        tabs = st.tabs([f"{label} {len(tab_rows)}건" for label, _, tab_rows in tab_specs])
+        for tab, (label, tab_key, tab_rows) in zip(tabs, tab_specs):
+            with tab:
+                render_crawled_notice_rows(
+                    tab_rows,
+                    key_prefix=f"{detail_page_key}_{tab_key}_list",
+                    page_key=detail_page_key,
+                    empty_message=f"{label} 탭에 표시할 공고가 없습니다.",
+                )
+
+    def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
+        source_df = build_crawled_notice_collection(datasets, source_datasets)
+        _render_notice_queue_screen_final(
+            source_df,
+            datasets.get("opportunity", pd.DataFrame()),
+            datasets["opportunity_all"],
+        )
+
+    def render_notices_source(
+        source_config,
+        mode_config,
+        datasets: dict[str, pd.DataFrame],
+        source_datasets: dict[str, object] | None,
+        *,
+        show_internal_tabs: bool = True,
+    ) -> None:
+        del source_config, mode_config, show_internal_tabs
+        source_df = build_crawled_notice_collection(datasets, source_datasets)
+        _render_notice_queue_screen_final(
+            source_df,
+            datasets.get("opportunity", pd.DataFrame()),
+            datasets["opportunity_all"],
+        )
+
     ns["consume_favorite_toggle_query_action"] = consume_favorite_toggle_query_action
     ns["render_favorite_scrap_button"] = render_favorite_scrap_button
     ns["favorite_button_props"] = favorite_button_props
