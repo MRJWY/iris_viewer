@@ -6431,7 +6431,7 @@ def render_rndcircle_like_sections(row: dict, *, top_related: dict | None = None
     deadline_text = deadline.strftime("%Y-%m-%d") if pd.notna(deadline) else ""
     summary = public_first_non_empty(
         merged,
-        "과제 요약",
+        "과제 분석",
         "llm_summary",
         "summary",
         "대표추천이유",
@@ -6439,6 +6439,7 @@ def render_rndcircle_like_sections(row: dict, *, top_related: dict | None = None
         "reason",
         "text_preview",
     )
+    summary = build_project_analysis_text(merged) if clean(summary) else summary
     overview = public_first_non_empty(
         merged,
         "사업 개요 및 배경",
@@ -6528,7 +6529,7 @@ def render_rndcircle_like_sections(row: dict, *, top_related: dict | None = None
         f'<div class="rnd-section"><div class="rnd-section-title">주요 정보</div><div class="rnd-info-grid">{info_grid(info_items)}</div></div>',
     ]
     if summary:
-        sections.append(f'<div class="rnd-section"><div class="rnd-section-title">과제 요약</div><div class="rnd-section-body">{escape(summary)}</div></div>')
+        sections.append(f'<div class="rnd-section"><div class="rnd-section-title">과제 분석</div><div class="rnd-section-body">{escape(summary)}</div></div>')
     sections.append(f'<div class="rnd-section"><div class="rnd-section-title">요건 충족도</div><div class="rnd-requirement-list">{requirement_html}</div></div>')
     support_requirements = [("기업부설연구소 요건", lab), ("과제 수행 이력 요건", requirement_history)]
     sections.append(f'<div class="rnd-section"><div class="rnd-section-title">지원 요건</div><div class="rnd-info-grid">{info_grid(support_requirements)}</div></div>')
@@ -6594,6 +6595,190 @@ def render_detail_card(title: str, fields: list[tuple[str, str]]) -> None:
         ),
         unsafe_allow_html=True,
     )
+
+
+def _analysis_clause(value: object, *, max_chars: int = 120) -> str:
+    text = sanitize_display_text("analysis", value)
+    text = text.replace("|", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(
+        r"^(전략적합도|전략 적합도|기술적합도|기술 관련도|기술관련도|시장정렬|시장 정렬|시장정합성|시장 정합성|긴급도|긴급성|소프트웨어적합도|소프트웨어 적합도|하드웨어의존도|하드웨어 의존도)\s*:\s*",
+        "",
+        text,
+    )
+    if not text:
+        return ""
+    if len(text) > max_chars:
+        text = text[:max_chars].rsplit(" ", 1)[0].strip() or text[:max_chars].strip()
+    return text.rstrip(". ")
+
+
+def _ensure_analysis_sentence(text: str) -> str:
+    sentence = clean(text)
+    if not sentence:
+        return ""
+    if sentence.endswith((".", "!", "?")):
+        return sentence
+    return f"{sentence}."
+
+
+def _append_analysis_paragraph(paragraphs: list[str], text: str) -> None:
+    normalized = clean(text)
+    if not normalized:
+        return
+    comparable = re.sub(r"\s+", " ", normalized)
+    if any(re.sub(r"\s+", " ", existing) == comparable for existing in paragraphs):
+        return
+    paragraphs.append(normalized)
+
+
+def build_project_analysis_text(*rows: dict | None) -> str:
+    merged: dict[str, object] = {}
+    for row in rows:
+        if isinstance(row, dict):
+            merged.update(row)
+        elif row is not None:
+            merged.update(dict(row))
+
+    objective = _analysis_clause(
+        first_non_empty(
+            merged,
+            "llm_concept_and_development",
+            "concept_and_development",
+            "llm_support_necessity",
+            "support_necessity",
+            "llm_technical_background",
+            "technical_background",
+        ),
+        max_chars=100,
+    )
+    development = _analysis_clause(
+        first_non_empty(
+            merged,
+            "llm_development_content",
+            "development_content",
+            "llm_support_plan",
+            "support_plan",
+        ),
+        max_chars=110,
+    )
+    market_fields = split_public_tags(
+        first_non_empty(
+            merged,
+            "target_market",
+            "llm_application_field",
+            "application_field",
+            "llm_score_target_markets",
+        ),
+        limit=4,
+    )
+    keywords = split_public_tags(first_non_empty(merged, "llm_keywords", "keywords", "keyword"), limit=5)
+    support_need = _analysis_clause(first_non_empty(merged, "llm_support_need", "support_need"), max_chars=90)
+    support_plan = _analysis_clause(first_non_empty(merged, "llm_support_plan", "support_plan"), max_chars=90)
+    reason_text = _analysis_clause(
+        first_non_empty(
+            merged,
+            "llm_reason",
+            "reason",
+            "llm_summary",
+            "summary",
+            "llm_candidate_reason",
+            "candidate_reason",
+        ),
+        max_chars=140,
+    )
+    total_budget = extract_budget_summary(
+        first_non_empty(merged, "llm_total_budget_text", "total_budget_text", "budget", "대표예산", "사업비")
+    )
+    period_text = _analysis_clause(
+        first_non_empty(merged, "rfp_period", "project_period", "support_period", "notice_period", "period", "접수기간"),
+        max_chars=60,
+    )
+    merged_blob = " ".join(
+        clean(part)
+        for part in [
+            objective,
+            development,
+            support_need,
+            support_plan,
+            reason_text,
+            " ".join(market_fields),
+            " ".join(keywords),
+            first_non_empty(
+                merged,
+                "llm_score_software_delivery_fit_reason",
+                "software_delivery_fit_reason",
+                "llm_score_hardware_dominance_reason",
+                "hardware_dominance_reason",
+            ),
+        ]
+        if clean(part)
+    )
+
+    software_markers = ["ai", "데이터", "platform", "플랫폼", "api", "cloud", "saas", "알고리즘", "분석", "서비스", "시뮬레이션"]
+    hardware_markers = ["센서", "부품", "장비", "디바이스", "모듈", "제조", "반도체", "배터리", "소재", "로봇", "시제품", "양산"]
+    sw_hits = sum(1 for marker in software_markers if marker in merged_blob.lower())
+    hw_hits = sum(1 for marker in hardware_markers if marker in merged_blob.lower())
+
+    paragraphs: list[str] = []
+    if objective:
+        _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(f"이 과제는 {objective}을 목표로 한다"))
+    elif reason_text:
+        _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(reason_text))
+
+    if development:
+        _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(f"핵심 개발 범위는 {development} 중심으로 구성된다"))
+    elif keywords:
+        _append_analysis_paragraph(
+            paragraphs,
+            _ensure_analysis_sentence(f"핵심 기술 요소는 {', '.join(keywords[:4])} 중심으로 해석된다"),
+        )
+
+    if market_fields:
+        _append_analysis_paragraph(
+            paragraphs,
+            _ensure_analysis_sentence(
+                f"특히 {', '.join(market_fields[:3])} 분야와의 연결성이 높아 실제 사업화와 인접 시장 확장 가능성을 함께 검토할 만하다"
+            ),
+        )
+    elif support_need:
+        _append_analysis_paragraph(
+            paragraphs,
+            _ensure_analysis_sentence(f"{support_need} 수요와 직접 연결될 가능성이 있어 사업 기회 관점에서 검토 가치가 있다"),
+        )
+
+    if sw_hits >= max(2, hw_hits + 1):
+        _append_analysis_paragraph(
+            paragraphs,
+            "데이터·AI·플랫폼 연계 비중이 높아 소프트웨어·플랫폼 중심 기업에 적합한 Opportunity로 판단된다.",
+        )
+    elif hw_hits >= max(2, sw_hits + 1):
+        _append_analysis_paragraph(
+            paragraphs,
+            "장비·부품·제조 연계 비중이 높아 하드웨어 통합과 실증 수행 역량이 중요한 과제로 판단된다.",
+        )
+    else:
+        _append_analysis_paragraph(
+            paragraphs,
+            "소프트웨어와 현장 실증 요소가 함께 요구되는 융합형 과제로, 서비스 운영 역량과 기술 구현 역량을 함께 갖춘 조직에 적합하다.",
+        )
+
+    execution_bits: list[str] = []
+    if period_text:
+        execution_bits.append(f"사업기간은 {period_text} 수준이다")
+    if total_budget:
+        execution_bits.append(f"예산 규모는 {total_budget}로 확인된다")
+    if support_plan:
+        execution_bits.append(f"{support_plan} 등을 고려하면 실증 및 운영 연계 가능성을 검토할 만하다")
+    if execution_bits:
+        _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(". ".join(execution_bits)))
+
+    if reason_text and len(paragraphs) < 5:
+        _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(reason_text))
+
+    if not paragraphs:
+        return "연결된 RFP 분석이 아직 없습니다.\n\n공고 원문과 연결 Opportunity를 함께 확인해주세요."
+    return "\n\n".join(paragraphs[:5])
 
 
 def switch_to_detail(page_key: str, identifier: str) -> None:
@@ -7377,7 +7562,7 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
     left, right = st.columns(2)
     with left:
         render_detail_card(
-            "분석 정보",
+            "과제 분석",
             [
                 ("추천 이유", first_non_empty(top_related, "llm_reason", "reason", "대표추천이유")),
                 (
@@ -7834,33 +8019,9 @@ def render_opportunity_detail_from_row(row: dict) -> None:
 
     with left:
         render_detail_card(
-            "분석 정보",
+            "과제 분석",
             [
                 ("추천 이유", first_non_empty(row, "llm_reason", "reason")),
-                ("전략적합도", first_non_empty(row, "llm_score_strategic_fit_score", "strategic_fit_score", "전략적합도")),
-                ("전략적합도 사유", first_non_empty(row, "llm_score_strategic_fit_reason", "strategic_fit_reason", "전략적합도사유")),
-                ("기술관련도", first_non_empty(row, "llm_score_tech_relevance_score", "tech_relevance_score", "기술관련도")),
-                ("기술관련도 사유", first_non_empty(row, "llm_score_tech_relevance_reason", "tech_relevance_reason", "기술관련도사유")),
-                ("긴급도", first_non_empty(row, "llm_score_urgency_score", "urgency_score", "긴급도")),
-                ("긴급도 사유", first_non_empty(row, "llm_score_urgency_reason", "urgency_reason", "긴급도사유")),
-                (
-                    "시장정합도",
-                    first_non_empty(
-                        row,
-                        "llm_score_market_alignment_score",
-                        "market_alignment_score",
-                        "시장정합도",
-                    ),
-                ),
-                (
-                    "시장정합도 사유",
-                    first_non_empty(
-                        row,
-                        "llm_score_market_alignment_reason",
-                        "market_alignment_reason",
-                        "시장정합도사유",
-                    ),
-                ),
                 (
                     "개념 및 개발 내용",
                     first_non_empty(
@@ -7973,7 +8134,7 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
     top_left, top_right = st.columns([2, 1])
     with top_left:
         render_detail_card(
-            "대표 과제 요약",
+            "대표 과제 분석",
             [
                 ("해당 과제명", row.get("해당 과제명")),
                 ("추천도 및 점수", row.get("추천도 및 점수")),
@@ -8038,7 +8199,7 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
 
     st.markdown('<div class="detail-section-title">대표 분석 요약</div>', unsafe_allow_html=True)
     render_detail_card(
-        "대표 RFP 분석",
+        "과제 분석",
         [
             ("추천 이유", first_non_empty(top_related, "llm_reason", "reason", "대표추천이유")),
             (
@@ -10717,15 +10878,7 @@ def build_analysis_story_bundle(
         support_need_text=support_need_text,
     )
 
-    if len(clean(summary_text)) < 120:
-        summary_text = _join_display_blocks(
-            summary_text,
-            background_text,
-            objective_text,
-            detail_text,
-            benefit_text,
-            max_items=4,
-        )
+    summary_text = build_project_analysis_text(notice_row, base_row)
 
     overview_steps = [
         {"title": "사업 개요 및 배경", "body": _join_display_blocks(background_text, support_need_text, max_items=3)},
@@ -10889,7 +11042,7 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
             ],
         )
 
-        render_notice_detail_text_panel("과제 요약", summary_text, tone="blue")
+        render_notice_detail_text_panel("과제 분석", build_project_analysis_text(row, top_related), tone="blue")
 
         render_notice_detail_rows_panel(
             "분석 하이라이트",
@@ -10941,10 +11094,6 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
                     {"label": "검토여부", "value": row.get("검토여부")},
                     {"label": "추천 여부", "value": first_non_empty(top_related, "llm_recommendation", "recommendation", "추천정도")},
                     {"label": "적합도 점수", "value": clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("추천점수"))},
-                    {"label": "전략 적합도", "value": first_non_empty(top_related, "llm_score_strategic_fit_score", "strategic_fit_score", "전략적합도")},
-                    {"label": "기술 관련도", "value": first_non_empty(top_related, "llm_score_tech_relevance_score", "tech_relevance_score", "기술관련도")},
-                    {"label": "긴급성", "value": first_non_empty(top_related, "llm_score_urgency_score", "urgency_score", "긴급성")},
-                    {"label": "시장 정합성", "value": first_non_empty(top_related, "llm_score_market_alignment_score", "market_alignment_score", "시장정합성")},
                 ],
             )
         with review_right:
@@ -11031,7 +11180,7 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
     top_left, top_right = st.columns([2, 1])
     with top_left:
         render_detail_card(
-            "대표 과제 요약",
+            "대표 과제 분석",
             [
                 ("해당 과제명", row.get("해당 과제명")),
                 ("추천도 및 점수", row.get("추천도 및 점수")),
@@ -11095,7 +11244,7 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
 
     st.markdown('<div class="detail-section-title">대표 분석 요약</div>', unsafe_allow_html=True)
     render_detail_card(
-        "대표 RFP 분석",
+        "과제 분석",
         [
             ("추천 이유", first_non_empty(top_related, "llm_reason", "reason", "대표추천이유")),
             (
@@ -11323,7 +11472,7 @@ def render_opportunity_detail_from_row(row: dict) -> None:
         if st.button("관련 공고 보기", key=f"oppty_notice_detail_{clean(row.get('_row_id'))}", use_container_width=True):
             navigate_to_notice_detail(source_key, clean(row.get("notice_id")))
 
-    render_notice_detail_text_panel("과제 요약", summary_text, tone="blue")
+    render_notice_detail_text_panel("과제 분석", build_project_analysis_text(row), tone="blue")
     render_notice_detail_rows_panel(
         "지원 요건",
         [
