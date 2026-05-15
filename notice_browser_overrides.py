@@ -613,6 +613,34 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         st.markdown(
             """
             <style>
+            :root {
+              --app-bg: #eef4fc;
+              --surface: #ffffff;
+              --surface-soft: #f8fbff;
+              --surface-tint: #edf4ff;
+              --border: #d8e3f2;
+              --border-strong: #c8d7ec;
+              --text-strong: #15233b;
+              --text-body: #21314d;
+              --text-muted: #6c7f9d;
+              --text-subtle: #8fa0ba;
+              --blue: #3c63f0;
+              --blue-soft: #dfe9ff;
+            }
+            .notice-queue-note,
+            .notice-queue-card-row,
+            .notice-queue-card-shell,
+            .notice-queue-card-topline,
+            .notice-queue-header-label,
+            .notice-queue-cell,
+            .notice-queue-row-shell,
+            .notice-queue-row,
+            .notice-queue-breadcrumb,
+            .notice-queue-meta,
+            .notice-queue-meta-item,
+            .notice-queue-meta-label {
+              font-family: "Segoe UI", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+            }
             .notice-queue-note {
               margin: 0.85rem 0 0.35rem;
               color: var(--text-muted);
