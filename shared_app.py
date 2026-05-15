@@ -1537,7 +1537,6 @@ def render_iris_source(
     show_internal_tabs: bool = True,
 ) -> None:
     del source_config
-    del source_datasets
     raw_page_key = normalize_route_page_key(get_query_param("page"))
     current_page_key = raw_page_key or "rfp_queue"
     current_view = get_query_param("view") or "table"
@@ -1568,6 +1567,10 @@ def render_iris_source(
             list(mode_config.iris_tabs),
             key=mode_config.iris_tab_key,
         )
+
+    if current_page_key == "notice_queue":
+        render_notice_queue_page(datasets, source_datasets)
+        return
 
     render_iris_page(current_page_key, datasets)
 
@@ -4369,6 +4372,55 @@ def filter_archived_opportunity_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df[build_opportunity_archive_mask(df)].copy()
 
 
+def _is_placeholder_opportunity_text(value: object) -> bool:
+    text = clean(value)
+    if not text:
+        return False
+    compact = re.sub(r"\s+", " ", text).strip()
+    normalized = compact.lower()
+    if normalized in {
+        "확인 후 해당 rfp에 접수",
+        "기술 분류",
+        "연구개발계획서 작성서식",
+        "r&d 자율성트랙",
+    }:
+        return True
+    if compact.startswith("><") or compact.count("><") >= 2:
+        return True
+    return any(
+        marker in compact
+        for marker in [
+            "관리번호",
+            "선정예정 과제수",
+            "당해 연구비",
+            "내역 사업명",
+            "대분류",
+            "중분류",
+            "소분류",
+            "지원기간 지원규모",
+            "작성서식",
+        ]
+    )
+
+
+def build_placeholder_opportunity_mask(df: pd.DataFrame) -> pd.Series:
+    if df.empty:
+        return pd.Series(dtype=bool)
+    project_name = series_from_candidates(df, ["llm_project_name", "project_name", "과제명"]).fillna("").astype(str).str.strip()
+    rfp_title = series_from_candidates(df, ["llm_rfp_title", "rfp_title", "RFP 제목"]).fillna("").astype(str).str.strip()
+    project_placeholder = project_name.apply(_is_placeholder_opportunity_text)
+    rfp_placeholder = rfp_title.apply(_is_placeholder_opportunity_text)
+    return project_placeholder | ((project_name == "") & rfp_placeholder)
+
+
+def filter_rankable_opportunity_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    placeholder_mask = build_placeholder_opportunity_mask(df)
+    filtered = df[~placeholder_mask].copy()
+    return filtered if not filtered.empty else df.copy()
+
+
 def enrich_summary_with_notice_meta(summary_df: pd.DataFrame, notice_df: pd.DataFrame) -> pd.DataFrame:
     if summary_df.empty:
         return summary_df
@@ -4453,10 +4505,11 @@ def build_notice_analysis_summary(opportunity_df: pd.DataFrame) -> pd.DataFrame:
         .astype(str)
         .str.strip()
     )
+    working["_placeholder_rank"] = build_placeholder_opportunity_mask(working).astype(int)
 
     working = working.sort_values(
-        by=["notice_id", "rfp_score", "_recommendation_rank", "_project_name"],
-        ascending=[True, False, False, True],
+        by=["notice_id", "_placeholder_rank", "rfp_score", "_recommendation_rank", "_project_name"],
+        ascending=[True, True, False, False, True],
         na_position="last",
     )
     best = working.drop_duplicates(subset=["notice_id"], keep="first").copy()
@@ -9344,6 +9397,7 @@ def render_opportunity_page(
 
     source_df = ensure_opportunity_row_ids(df)
     filtered = filter_archived_opportunity_rows(source_df) if archive else filter_current_opportunity_rows(source_df)
+    filtered = filter_rankable_opportunity_rows(filtered)
     filter_prefix = "oppty_archive" if archive else "oppty"
     search_text, current_only, status_scope = render_notice_filter_sidebar(
         filter_prefix,
@@ -9450,6 +9504,7 @@ def render_opportunity_page_aligned(
 
     source_df = ensure_opportunity_row_ids(df)
     filtered = filter_archived_opportunity_rows(source_df) if archive else filter_current_opportunity_rows(source_df)
+    filtered = filter_rankable_opportunity_rows(filtered)
     if filtered.empty:
         st.info("표시할 RFP가 없습니다.")
         return
@@ -9554,6 +9609,7 @@ def render_opportunity_page(
     title = title or ("Opportunity Archive" if archive else "RFP Queue")
     source_df = ensure_opportunity_row_ids(df)
     filtered = filter_archived_opportunity_rows(source_df) if archive else filter_current_opportunity_rows(source_df)
+    filtered = filter_rankable_opportunity_rows(filtered)
 
     current_view, selected_document_id = get_route_state(page_key)
     if current_view == "detail":
@@ -9788,7 +9844,7 @@ def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
 def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
     del df
 
-    working = ensure_opportunity_row_ids(filter_current_opportunity_rows(opportunity_df.copy()))
+    working = ensure_opportunity_row_ids(filter_rankable_opportunity_rows(filter_current_opportunity_rows(opportunity_df.copy())))
     if working.empty:
         st.info("?쒖떆??遺꾩꽍 ??곸씠 ?놁뒿?덈떎.")
         return
@@ -11510,6 +11566,7 @@ def render_opportunity_page(
     title = title or ("Opportunity Archive" if archive else "RFP Queue")
     source_df = ensure_opportunity_row_ids(df)
     filtered = filter_archived_opportunity_rows(source_df) if archive else filter_current_opportunity_rows(source_df)
+    filtered = filter_rankable_opportunity_rows(filtered)
 
     current_view, selected_document_id = get_route_state(page_key)
     if current_view == "detail":
@@ -11616,7 +11673,7 @@ def render_opportunity_page(
 def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
     del df
 
-    working = ensure_opportunity_row_ids(filter_current_opportunity_rows(opportunity_df.copy()))
+    working = ensure_opportunity_row_ids(filter_rankable_opportunity_rows(filter_current_opportunity_rows(opportunity_df.copy())))
     if working.empty:
         st.info("표시할 분석 대상이 없습니다.")
         return
@@ -12180,6 +12237,7 @@ def render_opportunity_page(
     )
 
     base_rows = filter_archived_opportunity_rows(all_source_df) if archive else filter_current_opportunity_rows(source_df)
+    base_rows = filter_rankable_opportunity_rows(base_rows)
     working = _build_queue_filter_frame(base_rows)
     option_rows = filter_archived_opportunity_rows(all_source_df) if archive else all_source_df
     option_working = _build_queue_filter_frame(option_rows)
@@ -12232,6 +12290,7 @@ def render_opportunity_page(
         if archive
         else (all_source_df if include_closed else filter_current_opportunity_rows(source_df))
     )
+    filter_source = filter_rankable_opportunity_rows(filter_source)
     filtered = filter_queue_working_frame(
         _build_queue_filter_frame(filter_source),
         selected_recommendation=selected_recommendation,

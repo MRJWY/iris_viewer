@@ -328,6 +328,12 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
     def _selected_notice_state_key() -> str:
         return f"{detail_page_key}_selected_notice_id"
 
+    def _notice_detail_state_key() -> str:
+        return f"{detail_page_key}_notice_detail_state"
+
+    def _css_safe_key(value: str) -> str:
+        return re.sub(r"[^0-9A-Za-z_-]", "-", clean(value))
+
     def _resolve_notice_id(row: dict | pd.Series | None) -> str:
         if row is None:
             return ""
@@ -341,6 +347,78 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         if selected_row:
             return selected_row
         return get_row_by_column_value(rows, "notice_id", selected_notice_id)
+
+    def _default_notice_detail_state() -> dict[str, str]:
+        return {
+            "view": "table",
+            "selected_notice_id": "",
+            "source": "",
+        }
+
+    def _get_notice_detail_state() -> dict[str, str]:
+        current_value = st.session_state.get(_notice_detail_state_key(), {})
+        state = _default_notice_detail_state()
+        if isinstance(current_value, dict):
+            state.update(
+                {
+                    "view": clean(current_value.get("view", state["view"])) or "table",
+                    "selected_notice_id": clean(current_value.get("selected_notice_id", "")),
+                    "source": clean(current_value.get("source", "")),
+                }
+            )
+
+        route_page = clean(get_query_param("page"))
+        route_view = clean(get_query_param("view"))
+        route_notice_id = clean(get_query_param("id"))
+        route_source = clean(get_query_param("source"))
+        if route_page == detail_page_key and route_view == "detail" and route_notice_id:
+            state.update(
+                {
+                    "view": "notice_detail",
+                    "selected_notice_id": route_notice_id,
+                    "source": route_source,
+                }
+            )
+        elif route_page == detail_page_key and route_view == "table":
+            state = _default_notice_detail_state()
+
+        st.session_state[_notice_detail_state_key()] = state
+        return state
+
+    def _set_notice_detail_state(view: str, notice_id: str = "", source: str = "") -> dict[str, str]:
+        next_state = {
+            "view": clean(view) or "table",
+            "selected_notice_id": clean(notice_id),
+            "source": clean(source),
+        }
+        st.session_state[_notice_detail_state_key()] = next_state
+        st.session_state["selected_notice_id"] = next_state["selected_notice_id"]
+        st.session_state[_selected_notice_state_key()] = next_state["selected_notice_id"]
+
+        params = get_query_params_dict()
+        params["page"] = detail_page_key
+        if next_state["source"]:
+            params["source"] = next_state["source"]
+        if next_state["view"] == "notice_detail" and next_state["selected_notice_id"]:
+            params["view"] = "detail"
+            params["id"] = next_state["selected_notice_id"]
+        else:
+            params["view"] = "table"
+            params.pop("id", None)
+        _replace_params(_auth_params(params))
+        return next_state
+
+    def _open_notice_detail(row: pd.Series) -> None:
+        notice_id = _resolve_notice_id(row)
+        if not notice_id:
+            return
+        source_value = clean(first_non_empty(row, "source_site", "source_key", "_source_key"))
+        _set_notice_detail_state("notice_detail", notice_id, source_value)
+        st.rerun()
+
+    def _close_notice_detail() -> None:
+        _set_notice_detail_state("table", "", "")
+        st.rerun()
 
     def _consume_notice_filter_query_actions() -> None:
         st.session_state.setdefault(_status_filter_state_key(), "all")
@@ -649,10 +727,10 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             }
             .notice-queue-card-row {
               display: grid;
-              grid-template-columns: minmax(0, 1fr) 62px;
-              gap: 0.85rem;
+              grid-template-columns: minmax(0, 1fr) 44px;
+              gap: 0.5rem;
               align-items: flex-start;
-              margin: 0.8rem 0;
+              margin: 0.45rem 0;
             }
             .notice-queue-card-shell {
               display: block;
@@ -662,12 +740,13 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               display: flex;
               flex-wrap: wrap;
               gap: 0.42rem;
-              margin-bottom: 0.72rem;
+              margin-bottom: 0.42rem;
             }
             .notice-queue-favorite-wrap {
-              padding-top: 0.42rem;
+              padding-top: 0;
               display: flex;
-              justify-content: center;
+              justify-content: flex-end;
+              align-items: flex-start;
             }
             .notice-queue-favorite-wrap div[data-testid="stButton"] {
               width: 100%;
@@ -679,16 +758,16 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               border-radius: 999px;
               border: 1px solid rgba(148, 163, 184, 0.26);
               background: #ffffff;
-              color: #64748b;
-              box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+              color: #111827;
+              box-shadow: none;
               padding: 0;
               transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
             }
             .notice-queue-favorite-wrap div[data-testid="stButton"] > button:hover {
-              border-color: rgba(59, 130, 246, 0.22);
-              background: #f8fbff;
-              color: #1d4ed8;
-              transform: translateY(-1px);
+              border-color: rgba(17, 24, 39, 0.22);
+              background: #f8fafc;
+              color: #111827;
+              transform: none;
             }
             .notice-queue-header-label {
               color: #64748b;
@@ -707,65 +786,84 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
               display: inline-flex;
               align-items: center;
               justify-content: center;
-              min-height: 26px;
-              padding: 0 10px;
+              min-height: 22px;
+              padding: 0 8px;
               border-radius: 999px;
               border: 1px solid transparent;
-              font-size: 0.77rem;
+              font-size: 0.72rem;
               font-weight: 700;
               line-height: 1;
               white-space: nowrap;
             }
             .notice-chip-status {
-              background: #eff6ff;
-              border-color: rgba(59, 130, 246, 0.16);
-              color: #1d4ed8;
+              background: #ffffff;
+              border-color: rgba(17, 24, 39, 0.12);
+              color: #111827;
             }
             .notice-chip-status.is-archive {
-              background: #fff1f2;
-              border-color: rgba(225, 29, 72, 0.12);
-              color: #be123c;
+              background: #ffffff;
+              border-color: rgba(17, 24, 39, 0.12);
+              color: #111827;
             }
             .notice-chip-status.is-scheduled {
-              background: #fff7ed;
-              border-color: rgba(234, 88, 12, 0.12);
-              color: #c2410c;
+              background: #ffffff;
+              border-color: rgba(17, 24, 39, 0.12);
+              color: #111827;
             }
             .notice-chip-recommend {
-              background: #ecfdf5;
-              border-color: rgba(5, 150, 105, 0.12);
-              color: #047857;
+              background: #ffffff;
+              border-color: rgba(17, 24, 39, 0.12);
+              color: #111827;
             }
             .notice-chip-neutral {
-              background: #f8fafc;
-              border-color: rgba(148, 163, 184, 0.18);
-              color: #475569;
+              background: #ffffff;
+              border-color: rgba(17, 24, 39, 0.12);
+              color: #111827;
             }
             .notice-queue-title {
-              color: var(--text-strong);
-              font-size: 1rem;
+              color: #111827;
+              font-size: 0.95rem;
               font-weight: 800;
-              line-height: 1.45;
+              line-height: 1.35;
             }
             .notice-queue-title-meta {
               margin-top: 0.18rem;
-              color: #64748b;
-              font-size: 0.82rem;
-              line-height: 1.45;
+              color: #111827;
+              font-size: 0.78rem;
+              line-height: 1.35;
             }
             .notice-queue-cell {
-              padding: 0.8rem 0.15rem 0.8rem 0;
+              padding: 0.45rem 0.1rem 0.45rem 0;
               min-width: 0;
             }
             .notice-queue-cell-text {
-              color: var(--text-body);
+              color: #111827;
               font-size: 0.9rem;
-              line-height: 1.5;
+              line-height: 1.4;
             }
             .notice-queue-cell-muted {
-              color: #64748b;
-              font-size: 0.84rem;
-              line-height: 1.45;
+              color: #4b5563;
+              font-size: 0.78rem;
+              line-height: 1.35;
+            }
+            .notice-queue-right-rail {
+              width: 100%;
+              max-width: 320px;
+              margin-left: auto;
+            }
+            .notice-queue-summary-text {
+              color: #4b5563;
+              font-size: 0.78rem;
+              line-height: 1.35;
+              display: -webkit-box;
+              -webkit-line-clamp: 2;
+              -webkit-box-orient: vertical;
+              overflow: hidden;
+              text-align: left;
+              word-break: keep-all;
+            }
+            .notice-queue-summary-text.is-empty {
+              color: #6b7280;
             }
             .notice-queue-status-cell,
             .notice-queue-recommend-cell,
@@ -809,6 +907,34 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             class_name = "notice-chip notice-chip-neutral"
         return f'<span class="{class_name}">{escape(normalized)}</span>'
 
+    def _ensure_collection_for_favorites(
+        notice_view_df: pd.DataFrame,
+        source_datasets: dict[str, object] | None,
+    ) -> pd.DataFrame:
+        if notice_view_df is not None and not notice_view_df.empty and "_collection_id" in notice_view_df.columns:
+            return notice_view_df.copy()
+        datasets = {
+            "notice_current": notice_view_df if isinstance(notice_view_df, pd.DataFrame) else pd.DataFrame(),
+            "pending": pd.DataFrame(),
+            "notice_archive": pd.DataFrame(),
+        }
+        return build_crawled_notice_collection(datasets, source_datasets)
+
+    def _filter_rows_for_tab(rows: pd.DataFrame, tab_key: str) -> pd.DataFrame:
+        if rows is None or rows.empty:
+            return pd.DataFrame()
+        if tab_key == "iris":
+            return rows[rows["source_key"].fillna("").astype(str).str.strip().eq("iris")].copy()
+        if tab_key == "tipa":
+            return rows[rows["source_key"].fillna("").astype(str).str.strip().eq("tipa")].copy()
+        if tab_key == "nipa":
+            return rows[rows["source_key"].fillna("").astype(str).str.strip().eq("nipa")].copy()
+        if tab_key == "favorite":
+            return rows[_review_series(rows).eq(FAVORITE_REVIEW_STATUS)].copy()
+        if tab_key == "archive":
+            return rows[rows["_notice_scope"].fillna("").astype(str).str.strip().eq("archive")].copy()
+        return rows.copy()
+
     def _queue_click_href(row: pd.Series, collection_id: str, source_key: str) -> str:
         if clean(collection_id):
             return build_route_href(detail_page_key, collection_id, source_key=source_key)
@@ -829,288 +955,7 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         key_prefix: str,
         limit: int = 30,
         page_key: str = detail_page_key,
-        empty_message: str = "표시할 공고가 없습니다.",
-    ) -> None:
-        del key_prefix
-        if rows is None or rows.empty:
-            st.info(empty_message)
-            return
-
-        row_html: list[str] = []
-        for _, row in rows.head(limit).iterrows():
-            collection_id = clean(row.get("_collection_id"))
-            notice_id = clean(first_non_empty(row, "공고ID", "notice_id"))
-            source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
-            title = clean(first_non_empty(row, "공고명", "notice_title")) or "-"
-            ministry = clean(first_non_empty(row, "소관부처", "주관부처", "ministry")) or "-"
-            agency = clean(first_non_empty(row, "전문기관", "agency", "수행기관")) or "-"
-            period = clean(first_non_empty(row, "접수기간", "notice_period", "period", "신청기간")) or "-"
-            budget = clean(row.get("_queue_budget")) or "미기재"
-            recommendation = clean(row.get("_queue_recommendation"))
-            analysis_text = clean(row.get("_queue_analysis")) or "연결된 RFP 분석이 아직 없습니다."
-            review_value = _review_value(row)
-            source_label = clean(first_non_empty(row, "매체", "source_label")) or (source_key or "IRIS").upper()
-            is_favorite = _is_favorite(review_value)
-            scope = clean(first_non_empty(row, "_notice_scope"))
-            status = normalize_notice_status_label(first_non_empty(row, "공고상태", "status", "rcve_status"))
-            if not status:
-                if scope == "archive":
-                    status = "마감"
-                elif scope == "scheduled":
-                    status = "예정"
-                else:
-                    status = "진행중"
-            action_href = (
-                _build_favorite_href(
-                    page_key=page_key,
-                    notice_id=notice_id,
-                    current_value=review_value,
-                    source_key=source_key or "iris",
-                    notice_title=title,
-                )
-                if notice_id
-                else ""
-            )
-            click_href = _queue_click_href(row, collection_id, source_key)
-            cta_label = "Notice Detail"
-            cta_label = "상세 보기" if clean(collection_id) else "원문 보기"
-
-            cta_label = "Notice Detail"
-            title_badges = [f'<span class="notice-chip notice-chip-source">{escape(source_label)}</span>']
-            if is_favorite:
-                title_badges.append(_favorite_badge_html())
-
-            analysis_class = "notice-queue-analysis" if clean(row.get("_queue_analysis")) else "notice-queue-analysis is-empty"
-            right_badges = [
-                f'<span class="{_status_badge_class(status)}">{escape(status)}</span>',
-                _recommendation_badge_html(recommendation),
-            ]
-
-            link_html = ""
-            if clean(click_href):
-                safe_href = escape(click_href, quote=True)
-                link_html = f'<a class="notice-queue-row-link" href="{safe_href}" aria-label="{escape(title, quote=True)}"></a>'
-
-            row_html.append(
-                '<div class="notice-queue-row-shell">'
-                f"{link_html}"
-                '<div class="notice-queue-row">'
-                '<div class="notice-queue-row-main">'
-                '<div class="notice-queue-row-left">'
-                f'<div class="notice-queue-topline">{"".join(title_badges)}</div>'
-                f'<div class="notice-queue-title">{escape(title)}</div>'
-                '<div class="notice-queue-analysis-label">과제 분석</div>'
-                f'<div class="{analysis_class}">{escape(analysis_text)}</div>'
-                '<div class="notice-queue-meta">'
-                f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">기관</span>{escape(ministry)} / {escape(agency)}</div>'
-                f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">기간</span>{escape(period)}</div>'
-                f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">예산</span>{escape(budget)}</div>'
-                "</div>"
-                "</div>"
-                '<div class="notice-queue-row-right">'
-                f'{"".join(right_badges)}'
-                f'<div class="notice-queue-cta">{escape(cta_label)}</div>'
-                f'{_favorite_button_html(action_href, review_value) if action_href else ""}'
-                "</div>"
-                "</div>"
-                "</div>"
-                "</div>"
-            )
-
-        st.markdown(f'<div class="notice-queue-list">{"".join(row_html)}</div>', unsafe_allow_html=True)
-
-    def _ensure_collection_for_favorites(
-        notice_view_df: pd.DataFrame,
-        source_datasets: dict[str, object] | None,
-    ) -> pd.DataFrame:
-        if notice_view_df is not None and not notice_view_df.empty and "_collection_id" in notice_view_df.columns:
-            return notice_view_df.copy()
-        datasets = {
-            "notice_current": notice_view_df if isinstance(notice_view_df, pd.DataFrame) else pd.DataFrame(),
-            "pending": pd.DataFrame(),
-            "notice_archive": pd.DataFrame(),
-        }
-        return build_crawled_notice_collection(datasets, source_datasets)
-
-    def _render_notice_title_button(title: str, *, button_key: str, row: pd.Series) -> None:
-        safe_key = _css_safe_key(button_key)
-        st.markdown(
-            f"""
-            <style>
-            .st-key-{safe_key} {{
-              width: 100%;
-            }}
-            .st-key-{safe_key} [data-testid="stButton"] {{
-              width: 100%;
-            }}
-            .st-key-{safe_key} [data-testid="stButton"] > button,
-            .st-key-{safe_key} button {{
-              display: block;
-              width: 100%;
-              padding: 0.02rem 0;
-              margin: 0;
-              border: 0 !important;
-              border-radius: 0 !important;
-              background: transparent !important;
-              box-shadow: none !important;
-              color: var(--text-strong) !important;
-              font-size: 1rem !important;
-              font-weight: 800 !important;
-              line-height: 1.45 !important;
-              text-align: left !important;
-              justify-content: flex-start !important;
-              white-space: normal !important;
-              min-height: 0 !important;
-              cursor: pointer !important;
-            }}
-            .st-key-{safe_key} [data-testid="stButton"] > button:hover,
-            .st-key-{safe_key} [data-testid="stButton"] > button:active,
-            .st-key-{safe_key} [data-testid="stButton"] > button:focus,
-            .st-key-{safe_key} button:hover,
-            .st-key-{safe_key} button:active,
-            .st-key-{safe_key} button:focus {{
-              border: 0 !important;
-              background: transparent !important;
-              box-shadow: none !important;
-              color: var(--text-strong) !important;
-            }}
-            .st-key-{safe_key} [data-testid="stButton"] > button p,
-            .st-key-{safe_key} button p {{
-              font-size: 1rem !important;
-              font-weight: 800 !important;
-              line-height: 1.45 !important;
-              margin: 0 !important;
-              text-align: left !important;
-            }}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button(title, key=button_key, use_container_width=True):
-            _open_notice_detail(row)
-
-    def _queue_display_date_text(row: pd.Series) -> str:
-        date_value = clean(first_non_empty(row, "registered_at", "공고일자", "ancm_de"))
-        if date_value:
-            return date_value
-        period_value = clean(first_non_empty(row, "notice_period", "period", "접수기간", "신청기간"))
-        return period_value or "-"
-
-    def _queue_card_badge_html(text: object, *, kind: str = "recommendation") -> str:
-        value = clean(text)
-        if not value:
-            return ""
-        if callable(pill_html):
-            try:
-                return pill_html(value, kind=kind)
-            except Exception:
-                pass
-        if kind == "recommendation":
-            return _recommendation_badge_html(value)
-        if kind == "status":
-            return f'<span class="{_status_badge_class(value)}">{escape(value)}</span>'
-        return f'<span class="notice-chip notice-chip-neutral">{escape(value)}</span>'
-
-    def render_crawled_notice_rows(
-        rows: pd.DataFrame,
-        *,
-        key_prefix: str,
-        limit: int = 30,
-        page_key: str = detail_page_key,
-        empty_message: str = "?쒖떆??怨듦퀬媛 ?놁뒿?덈떎.",
-    ) -> None:
-        del page_key
-        if rows is None or rows.empty:
-            st.info(empty_message)
-            return
-
-        header_columns = st.columns([1.15, 5.6, 2.2, 1.5, 1.25, 0.8], gap="small")
-        for col, label in zip(header_columns, ["상태", "공고명", "기관", "등록일", "추천", "관심"]):
-            with col:
-                st.markdown(f'<div class="notice-queue-header-label">{escape(label)}</div>', unsafe_allow_html=True)
-        st.markdown('<div class="notice-queue-divider"></div>', unsafe_allow_html=True)
-
-        for position, (_, row) in enumerate(rows.head(limit).iterrows()):
-            notice_id = _resolve_notice_id(row)
-            source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
-            title = clean(first_non_empty(row, "notice_title", "공고명")) or notice_id or "-"
-            ministry = clean(first_non_empty(row, "ministry", "소관부처", "주관부처")) or "-"
-            agency = clean(first_non_empty(row, "agency", "전문기관", "수행기관")) or "-"
-            notice_no = clean(first_non_empty(row, "notice_no", "공고번호", "ancm_no")) or "-"
-            notice_date = _queue_display_date_text(row)
-            recommendation = clean(row.get("_queue_recommendation"))
-            recommendation_text = _normalize_recommendation_value(recommendation) or "보통"
-            review_value = _review_value(row)
-            source_label = clean(first_non_empty(row, "source_label", "source_site", "매체")) or (source_key or "IRIS").upper()
-            scope = clean(first_non_empty(row, "_notice_scope"))
-            status = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태"))
-            if not status:
-                if scope == "archive":
-                    status = "마감"
-                elif scope == "scheduled":
-                    status = "예정"
-                else:
-                    status = "진행중"
-
-            agency_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
-            agency_text = " / ".join(agency_parts) if agency_parts else source_label
-            title_meta_parts = [source_label]
-            if notice_no and notice_no != "-":
-                title_meta_parts.append(f"공고번호 {notice_no}")
-            title_meta = " · ".join(title_meta_parts)
-
-            row_columns = st.columns([1.15, 5.6, 2.2, 1.5, 1.25, 0.8], gap="small")
-            with row_columns[0]:
-                st.markdown('<div class="notice-queue-cell notice-queue-status-cell">', unsafe_allow_html=True)
-                st.markdown(f'<span class="{_status_badge_class(status)}">{escape(status)}</span>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-            with row_columns[1]:
-                st.markdown('<div class="notice-queue-cell">', unsafe_allow_html=True)
-                if notice_id:
-                    _render_notice_title_button(
-                        title,
-                        button_key=f"{key_prefix}_open_notice_{notice_id}_{position}",
-                        row=row,
-                    )
-                else:
-                    st.markdown(f'<div class="notice-queue-title">{escape(title)}</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="notice-queue-title-meta">{escape(title_meta)}</div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-            with row_columns[2]:
-                agency_class = "notice-queue-cell-text" if agency_text != "-" else "notice-queue-cell-muted"
-                st.markdown(f'<div class="notice-queue-cell {agency_class}">{escape(agency_text)}</div>', unsafe_allow_html=True)
-            with row_columns[3]:
-                date_class = "notice-queue-cell-text" if notice_date != "-" else "notice-queue-cell-muted"
-                st.markdown(f'<div class="notice-queue-cell {date_class}">{escape(notice_date)}</div>', unsafe_allow_html=True)
-            with row_columns[4]:
-                st.markdown('<div class="notice-queue-cell notice-queue-recommend-cell">', unsafe_allow_html=True)
-                st.markdown(_recommendation_badge_html(recommendation_text), unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-            with row_columns[5]:
-                st.markdown('<div class="notice-queue-cell notice-queue-favorite-cell">', unsafe_allow_html=True)
-                if notice_id:
-                    render_favorite_scrap_button(
-                        notice_id=notice_id,
-                        current_value=review_value,
-                        source_key=source_key or "iris",
-                        notice_title=title,
-                        button_key=f"{key_prefix}_favorite_{notice_id}_{position}",
-                        compact=True,
-                        icon_only=True,
-                        use_container_width=False,
-                    )
-                else:
-                    st.markdown('<div class="notice-queue-empty">-</div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('<div class="notice-queue-divider"></div>', unsafe_allow_html=True)
-
-    def _queue_render_inbox_rows(
-        rows: pd.DataFrame,
-        *,
-        key_prefix: str,
-        limit: int = 30,
-        page_key: str = detail_page_key,
-        empty_message: str = "?쒖떆??怨듦퀬媛 ?놁뒿?덈떎.",
+        empty_message: str = "??? ??? ????.",
     ) -> None:
         del page_key
         if rows is None or rows.empty:
@@ -1120,40 +965,40 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         for position, (_, row) in enumerate(rows.head(limit).iterrows()):
             notice_id = _resolve_notice_id(row)
             source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
-            title = clean(first_non_empty(row, "notice_title", "공고명")) or notice_id or "-"
-            ministry = clean(first_non_empty(row, "ministry", "소관부처", "주관부처")) or "-"
-            agency = clean(first_non_empty(row, "agency", "전문기관", "수행기관")) or "-"
-            notice_no = clean(first_non_empty(row, "notice_no", "공고번호", "ancm_no")) or "-"
+            title = clean(first_non_empty(row, "notice_title", "???")) or notice_id or "-"
+            ministry = clean(first_non_empty(row, "ministry", "????", "????")) or "-"
+            agency = clean(first_non_empty(row, "agency", "????", "????")) or "-"
+            notice_no = clean(first_non_empty(row, "notice_no", "????", "ancm_no")) or "-"
             notice_date = _queue_display_date_text(row)
-            period_text = clean(first_non_empty(row, "notice_period", "접수기간", "period", "_queue_notice_period", "신청기간")) or "-"
-            budget_text = clean(first_non_empty(row, "_queue_budget", "budget", "total_budget_text", "사업비")) or "미기재"
+            period_text = clean(first_non_empty(row, "notice_period", "????", "period", "_queue_notice_period", "????")) or "-"
+            budget_text = clean(first_non_empty(row, "_queue_budget", "budget", "total_budget_text", "???")) or "???"
             recommendation = clean(row.get("_queue_recommendation"))
-            recommendation_text = _normalize_recommendation_value(recommendation) or "보통"
+            recommendation_text = _normalize_recommendation_value(recommendation) or "??"
             review_value = _review_value(row)
-            source_label = clean(first_non_empty(row, "source_label", "source_site", "매체")) or (source_key or "IRIS").upper()
+            source_label = clean(first_non_empty(row, "source_label", "source_site", "??")) or (source_key or "IRIS").upper()
             scope = clean(first_non_empty(row, "_notice_scope"))
-            status = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태"))
+            status = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "????"))
             if not status:
                 if scope == "archive":
-                    status = "마감"
+                    status = "??"
                 elif scope == "scheduled":
-                    status = "예정"
+                    status = "??"
                 else:
-                    status = "진행중"
+                    status = "???"
 
             agency_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
             agency_text = " / ".join(agency_parts) if agency_parts else source_label
             analysis_text = clean(first_non_empty(row, "_queue_analysis", "_queue_reason", "_queue_project_name"))
             subtitle_parts = [source_label]
             if notice_no and notice_no != "-":
-                subtitle_parts.append(f"공고번호 {notice_no}")
-            subtitle_text = " · ".join(subtitle_parts)
+                subtitle_parts.append(f"???? {notice_no}")
+            subtitle_text = " ? ".join(subtitle_parts)
             meta_html = (
                 '<div class="queue-list-card-meta">'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">기관</div><div class="queue-list-card-meta-value">{escape(agency_text)}</div></div>'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">등록일</div><div class="queue-list-card-meta-value">{escape(notice_date)}</div></div>'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">접수기간</div><div class="queue-list-card-meta-value">{escape(period_text)}</div></div>'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">예산</div><div class="queue-list-card-meta-value">{escape(budget_text)}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">??</div><div class="queue-list-card-meta-value">{escape(agency_text)}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">???</div><div class="queue-list-card-meta-value">{escape(notice_date)}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">????</div><div class="queue-list-card-meta-value">{escape(period_text)}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">??</div><div class="queue-list-card-meta-value">{escape(budget_text)}</div></div>'
                 '</div>'
             )
             badges = "".join(
@@ -1163,393 +1008,39 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
                     _queue_card_badge_html(source_label, kind="neutral"),
                 ]
             )
+            summary_html = (
+                f'<div class="notice-queue-summary-text">{escape(_truncate_queue_text(analysis_text, max_chars=120))}</div>'
+                if analysis_text
+                else '<div class="notice-queue-summary-text is-empty">연결된 RFP 분석이 아직 없습니다.</div>'
+            )
+            detail_href = build_route_href(detail_page_key, notice_id, source_key=source_key) if notice_id else ""
+            card_html = (
+                f'<a class="queue-list-link notice-queue-card-shell" href="{escape(detail_href, quote=True)}" target="_self">'
+                '<div class="queue-card queue-list-card">'
+                f'<div class="notice-queue-card-topline">{badges}</div>'
+                f'<div class="queue-list-card-title">{escape(_truncate_queue_text(title, max_chars=110))}</div>'
+                f'<div class="queue-list-card-subtitle">{escape(subtitle_text)}</div>'
+                f'{meta_html}'
+                '</div></a>'
+            ) if detail_href else (
+                '<div class="queue-card queue-list-card">'
+                f'<div class="notice-queue-card-topline">{badges}</div>'
+                f'<div class="queue-list-card-title">{escape(_truncate_queue_text(title, max_chars=110))}</div>'
+                f'<div class="queue-list-card-subtitle">{escape(subtitle_text)}</div>'
+                f'{meta_html}'
+                '</div>'
+            )
 
-            card_left, card_right = st.columns([16, 1], gap="medium")
+            card_left, card_right = st.columns([13, 5], gap="medium")
             with card_left:
-                st.markdown('<div class="notice-queue-card-topline">' + badges + '</div>', unsafe_allow_html=True)
-                if notice_id:
-                    _render_notice_title_button(
-                        title,
-                        button_key=f"{key_prefix}_open_notice_{notice_id}_{position}",
-                        row=row,
-                    )
-                else:
-                    st.markdown(f'<div class="queue-list-card-title">{escape(title)}</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="queue-list-card-subtitle">{escape(subtitle_text)}</div>', unsafe_allow_html=True)
-                st.markdown(meta_html, unsafe_allow_html=True)
-                if analysis_text:
-                    st.markdown(
-                        f'<div class="queue-list-card-reason">{escape(_truncate_queue_text(analysis_text, max_chars=200))}</div>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(
-                        '<div class="queue-list-card-reason muted">연결된 RFP 분석이 아직 없습니다. 공고 상세에서 원문과 첨부파일을 확인할 수 있습니다.</div>',
-                        unsafe_allow_html=True,
-                    )
+                st.markdown(card_html, unsafe_allow_html=True)
             with card_right:
-                st.markdown('<div class="notice-queue-favorite-wrap">', unsafe_allow_html=True)
-                if notice_id:
-                    render_favorite_scrap_button(
-                        notice_id=notice_id,
-                        current_value=review_value,
-                        source_key=source_key or "iris",
-                        notice_title=title,
-                        button_key=f"{key_prefix}_favorite_{notice_id}_{position}",
-                        compact=True,
-                        icon_only=True,
-                        use_container_width=False,
-                    )
-                else:
-                    st.markdown('<div class="notice-queue-empty">-</div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-
-    render_crawled_notice_rows = _queue_render_inbox_rows
-
-    def _render_notice_queue_screen(
-        source_df: pd.DataFrame,
-        opportunity_df: pd.DataFrame,
-        detail_opportunity_df: pd.DataFrame,
-    ) -> None:
-        status_filter_key = _status_filter_state_key()
-        recommendation_filter_key = _recommendation_filter_state_key()
-        search_key = _search_state_key()
-
-        _consume_notice_filter_query_actions()
-        consume_favorite_toggle_query_action()
-
-        source_df = _enrich_notice_rows(source_df, detail_opportunity_df)
-
-        current_view, selected_id = get_route_state(detail_page_key)
-        if current_view == "detail":
-            selected_notice_id = clean(selected_id) or clean(st.session_state.get(_selected_notice_state_key(), ""))
-            if clean(selected_id):
-                st.session_state[_selected_notice_state_key()] = clean(selected_id)
-            selected_row = _get_notice_row_by_id(source_df, selected_notice_id)
-            back_col, info_col = st.columns([1, 5])
-            with back_col:
-                if st.button("목록으로", key=f"{detail_page_key}_back_to_table", use_container_width=True):
-                    switch_to_table(detail_page_key)
-            with info_col:
-                st.markdown('<div class="page-note">공고 탐색 Queue에서 선택한 상세 화면입니다.</div>', unsafe_allow_html=True)
-            if not selected_row:
-                st.info("?좏깮???怨듦퀬 ?곸꽭瑜?李얠쓣 ???놁뒿?덈떎.")
-                return
-            render_notice_detail_from_row(selected_row, detail_opportunity_df)
-            return
-
-        render_page_header(
-            "Notice Queue",
-            "빠르게 훑고, 바로 판단하고, 곧바로 상세로 들어갈 수 있게 공고 탐색 Queue 중심으로 정리했습니다.",
-            eyebrow="Notices",
-        )
-        render_notice_queue_ui_styles()
-        _inject_notice_queue_dashboard_styles()
-        if source_df is None or source_df.empty:
-            st.info("표시할 공고가 없습니다.")
-            return
-
-        st.session_state.setdefault(status_filter_key, "all")
-        st.session_state.setdefault(recommendation_filter_key, "all")
-        st.session_state.setdefault(search_key, "")
-
-        st.markdown(
-            '<div class="notice-queue-note">공고 상태와 추천 상태만 빠르게 좁히고, 카드 전체를 눌러 상세 화면으로 바로 이동할 수 있습니다.</div>',
-            unsafe_allow_html=True,
-        )
-        selected_status = _normalize_status_filter(
-            _render_filter_control("공고상태 필터", STATUS_FILTER_OPTIONS, status_filter_key)
-        )
-        st.session_state[status_filter_key] = selected_status
-        selected_recommendation = _normalize_recommendation_filter(
-            _render_filter_control("추천여부 필터", RECOMMENDATION_FILTER_OPTIONS, recommendation_filter_key)
-        )
-        st.session_state[recommendation_filter_key] = selected_recommendation
-
-        search_col, reset_col = st.columns([6, 1])
-        with search_col:
-            search_text = st.text_input(
-                "검색",
-                key=search_key,
-                placeholder="공고명 / 과제명 / 기관명 검색",
-            )
-        with reset_col:
-            st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
-            if st.button("초기화", key=f"{detail_page_key}_search_reset", use_container_width=True):
-                st.session_state[search_key] = ""
-                st.session_state[status_filter_key] = "all"
-                st.session_state[recommendation_filter_key] = "all"
-                st.rerun()
-
-        filtered_source_df = _apply_notice_filters(
-            source_df,
-            selected_status,
-            selected_recommendation,
-            search_text,
-        )
-
-        st.caption(f"결과 {len(filtered_source_df)}건")
-        render_crawled_notice_rows(
-            filtered_source_df,
-            key_prefix=f"{detail_page_key}_list",
-            page_key=detail_page_key,
-        )
-
-    def _notice_filters_state_key() -> str:
-        return "notice_filters"
-
-    def _notice_filter_widget_key(field_name: str) -> str:
-        return f"{detail_page_key}_notice_filter_widget_{field_name}"
-
-    def _default_notice_filters() -> dict[str, object]:
-        return {
-            "status": [],
-            "recommendation": [],
-            "search": "",
-        }
-
-    def _get_notice_filters() -> dict[str, object]:
-        defaults = _default_notice_filters()
-        current_value = st.session_state.get(_notice_filters_state_key(), {})
-        filters = defaults.copy()
-        if isinstance(current_value, dict):
-            filters.update(
-                {
-                    "status": _normalize_status_filter_values(current_value.get("status", defaults["status"])),
-                    "recommendation": _normalize_recommendation_filter_values(
-                        current_value.get("recommendation", defaults["recommendation"])
-                    ),
-                    "search": clean(current_value.get("search", defaults["search"])),
-                }
-            )
-        st.session_state[_notice_filters_state_key()] = filters
-        return filters
-
-    def _set_notice_filters(filters: dict[str, object]) -> dict[str, object]:
-        next_filters = {
-            "status": _normalize_status_filter_values(filters.get("status", [])),
-            "recommendation": _normalize_recommendation_filter_values(filters.get("recommendation", [])),
-            "search": clean(filters.get("search", "")),
-        }
-        st.session_state[_notice_filters_state_key()] = next_filters
-        return next_filters
-
-    def _sync_notice_filter(field_name: str) -> None:
-        filters = _get_notice_filters()
-        widget_key = _notice_filter_widget_key(field_name)
-        widget_value = st.session_state.get(widget_key, filters.get(field_name, ""))
-        if field_name == "status":
-            filters["status"] = _normalize_status_filter_values(widget_value)
-        elif field_name == "recommendation":
-            filters["recommendation"] = _normalize_recommendation_filter_values(widget_value)
-        else:
-            filters["search"] = clean(widget_value)
-        _set_notice_filters(filters)
-
-    def _reset_notice_filters() -> None:
-        filters = _set_notice_filters(_default_notice_filters())
-        st.session_state[_notice_filter_widget_key("status")] = filters["status"]
-        st.session_state[_notice_filter_widget_key("recommendation")] = filters["recommendation"]
-        st.session_state[_notice_filter_widget_key("search")] = filters["search"]
-
-    def _notice_detail_state_key() -> str:
-        return f"{detail_page_key}_notice_detail_state"
-
-    def _css_safe_key(value: str) -> str:
-        return re.sub(r"[^0-9A-Za-z_-]", "-", clean(value))
-
-    def _render_notice_title_button(title: str, *, button_key: str, row: pd.Series) -> None:
-        safe_key = _css_safe_key(button_key)
-        st.markdown(
-            f"""
-            <style>
-            .st-key-{safe_key} {{
-              width: 100%;
-            }}
-            .st-key-{safe_key} [data-testid="stButton"] {{
-              width: 100%;
-            }}
-            .st-key-{safe_key} [data-testid="stButton"] > button,
-            .st-key-{safe_key} button {{
-              display: block;
-              width: 100%;
-              padding: 0;
-              margin: 0;
-              border: 0 !important;
-              border-radius: 0 !important;
-              background: transparent !important;
-              box-shadow: none !important;
-              color: var(--text-strong) !important;
-              font-size: 1.05rem !important;
-              font-weight: 900 !important;
-              line-height: 1.5 !important;
-              text-align: left !important;
-              justify-content: flex-start !important;
-              white-space: normal !important;
-              min-height: 0 !important;
-              cursor: pointer !important;
-            }}
-            .st-key-{safe_key} [data-testid="stButton"] > button:hover,
-            .st-key-{safe_key} [data-testid="stButton"] > button:active,
-            .st-key-{safe_key} [data-testid="stButton"] > button:focus,
-            .st-key-{safe_key} button:hover,
-            .st-key-{safe_key} button:active,
-            .st-key-{safe_key} button:focus {{
-              border: 0 !important;
-              background: transparent !important;
-              box-shadow: none !important;
-              color: var(--text-strong) !important;
-            }}
-            .st-key-{safe_key} [data-testid="stButton"] > button p,
-            .st-key-{safe_key} button p {{
-              font-size: 1.05rem !important;
-              font-weight: 900 !important;
-              line-height: 1.5 !important;
-              margin: 0 !important;
-              text-align: left !important;
-            }}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button(title, key=button_key, use_container_width=True):
-            _open_notice_detail(row)
-
-    def _filter_rows_for_tab(rows: pd.DataFrame, tab_key: str) -> pd.DataFrame:
-        if rows is None or rows.empty:
-            return pd.DataFrame()
-        if tab_key == "iris":
-            return rows[rows["source_key"].fillna("").astype(str).str.strip().eq("iris")].copy()
-        if tab_key == "tipa":
-            return rows[rows["source_key"].fillna("").astype(str).str.strip().eq("tipa")].copy()
-        if tab_key == "nipa":
-            return rows[rows["source_key"].fillna("").astype(str).str.strip().eq("nipa")].copy()
-        if tab_key == "favorite":
-            return rows[_review_series(rows).eq(FAVORITE_REVIEW_STATUS)].copy()
-        if tab_key == "archive":
-            return rows[rows["_notice_scope"].fillna("").astype(str).str.strip().eq("archive")].copy()
-        return rows.copy()
-
-    def _default_notice_detail_state() -> dict[str, str]:
-        return {
-            "view": "table",
-            "selected_notice_id": "",
-            "source": "",
-        }
-
-    def _get_notice_detail_state() -> dict[str, str]:
-        current_value = st.session_state.get(_notice_detail_state_key(), {})
-        state = _default_notice_detail_state()
-        if isinstance(current_value, dict):
-            state.update(
-                {
-                    "view": clean(current_value.get("view", state["view"])) or "table",
-                    "selected_notice_id": clean(current_value.get("selected_notice_id", "")),
-                    "source": clean(current_value.get("source", "")),
-                }
-            )
-        st.session_state[_notice_detail_state_key()] = state
-        return state
-
-    def _set_notice_detail_state(view: str, notice_id: str = "", source: str = "") -> dict[str, str]:
-        next_state = {
-            "view": clean(view) or "table",
-            "selected_notice_id": clean(notice_id),
-            "source": clean(source),
-        }
-        st.session_state[_notice_detail_state_key()] = next_state
-        st.session_state["selected_notice_id"] = next_state["selected_notice_id"]
-        st.session_state[_selected_notice_state_key()] = next_state["selected_notice_id"]
-        return next_state
-
-    def _open_notice_detail(row: pd.Series) -> None:
-        notice_id = _resolve_notice_id(row)
-        if not notice_id:
-            return
-        source_value = clean(first_non_empty(row, "source_site", "source_key", "_source_key"))
-        _set_notice_detail_state("notice_detail", notice_id, source_value)
-        st.rerun()
-
-    def _close_notice_detail() -> None:
-        _set_notice_detail_state("table", "", "")
-        st.rerun()
-
-    def render_crawled_notice_rows(
-        rows: pd.DataFrame,
-        *,
-        key_prefix: str,
-        limit: int = 30,
-        page_key: str = detail_page_key,
-        empty_message: str = "표시할 공고가 없습니다.",
-    ) -> None:
-        del page_key
-        if rows is None or rows.empty:
-            st.info(empty_message)
-            return
-
-        for position, (_, row) in enumerate(rows.head(limit).iterrows()):
-            notice_id = _resolve_notice_id(row)
-            source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
-            title = clean(first_non_empty(row, "notice_title", "공고명")) or notice_id or "-"
-            ministry = clean(first_non_empty(row, "ministry", "소관부처")) or "-"
-            agency = clean(first_non_empty(row, "agency", "전문기관", "담당부서")) or "-"
-            period = clean(first_non_empty(row, "notice_period", "period", "접수기간", "요청기간")) or "-"
-            notice_no = clean(first_non_empty(row, "notice_no", "공고번호", "ancm_no")) or "-"
-            notice_date = clean(first_non_empty(row, "registered_at", "공고일자", "ancm_de")) or "-"
-            support_type = clean(first_non_empty(row, "pbofr_type", "공모유형")) or "-"
-            budget = clean(row.get("_queue_budget")) or "-"
-            recommendation = clean(row.get("_queue_recommendation"))
-            analysis_text = clean(row.get("_queue_analysis")) or "연결된 RFP 분석이 아직 없습니다."
-            review_value = _review_value(row)
-            source_label = clean(first_non_empty(row, "source_label", "매체")) or (source_key or "IRIS").upper()
-            is_favorite = _is_favorite(review_value)
-            scope = clean(first_non_empty(row, "_notice_scope"))
-            status = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태"))
-            if not status:
-                if scope == "archive":
-                    status = "마감"
-                elif scope == "scheduled":
-                    status = "예정"
-                else:
-                    status = "진행중"
-
-            breadcrumb_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
-            breadcrumb = " > ".join(breadcrumb_parts) if breadcrumb_parts else source_label
-            summary_class = "notice-queue-summary" if clean(row.get("_queue_analysis")) else "notice-queue-summary is-empty"
-
-            st.markdown('<div class="notice-queue-divider"></div>', unsafe_allow_html=True)
-            with st.container():
-                left_col, right_col = st.columns([9.4, 1.1], gap="medium")
-                with left_col:
-                    st.markdown(f'<div class="notice-queue-breadcrumb">{escape(breadcrumb)}</div>', unsafe_allow_html=True)
-                    _render_notice_title_button(
-                        title,
-                        button_key=f"{key_prefix}_open_notice_{notice_id}_{position}",
-                        row=row,
-                    )
-                    st.markdown(f'<div class="{summary_class}">{escape(analysis_text)}</div>', unsafe_allow_html=True)
-                    st.markdown(
-                        (
-                            '<div class="notice-queue-meta-grid">'
-                            f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">공고번호</span>{escape(notice_no)}</div>'
-                            f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">공고일자</span>{escape(notice_date)}</div>'
-                            f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">기관</span>{escape(ministry)} / {escape(agency)}</div>'
-                            f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">공모유형</span>{escape(support_type)}</div>'
-                            f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">접수기간</span>{escape(period)}</div>'
-                            f'<div class="notice-queue-meta-item"><span class="notice-queue-meta-label">예산</span>{escape(budget)}</div>'
-                            "</div>"
-                        ),
-                        unsafe_allow_html=True,
-                    )
-                with right_col:
-                    st.markdown('<div class="notice-queue-side">', unsafe_allow_html=True)
-                    st.markdown(
-                        (
-                            f'<div class="{_status_badge_class(status)}">{escape(status)}</div>'
-                            f'{_recommendation_badge_html(recommendation)}'
-                        ),
-                        unsafe_allow_html=True,
-                    )
+                st.markdown('<div class="notice-queue-right-rail">', unsafe_allow_html=True)
+                summary_col, favorite_col = st.columns([5, 1], gap="small")
+                with summary_col:
+                    st.markdown(summary_html, unsafe_allow_html=True)
+                with favorite_col:
+                    st.markdown('<div class="notice-queue-favorite-wrap">', unsafe_allow_html=True)
                     if notice_id:
                         render_favorite_scrap_button(
                             notice_id=notice_id,
@@ -1561,7 +1052,10 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
                             icon_only=True,
                             use_container_width=False,
                         )
+                    else:
+                        st.markdown('<div class="notice-queue-empty">-</div>', unsafe_allow_html=True)
                     st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
 
     def _render_notice_queue_screen(
         source_df: pd.DataFrame,
@@ -1576,25 +1070,25 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             selected_row = _get_notice_row_by_id(source_df, detail_state["selected_notice_id"])
             back_col, info_col = st.columns([1, 5])
             with back_col:
-                if st.button("목록으로", key=f"{detail_page_key}_back_to_table", use_container_width=True):
+                if st.button("????", key=f"{detail_page_key}_back_to_table", use_container_width=True):
                     _close_notice_detail()
             with info_col:
-                st.markdown('<div class="page-note">선택한 Notice 상세 화면입니다.</div>', unsafe_allow_html=True)
+                st.markdown('<div class="page-note">??? Notice ?? ?????.</div>', unsafe_allow_html=True)
             if not selected_row:
-                st.info("선택한 공고 상세를 찾을 수 없습니다.")
+                st.info("??? ?? ??? ?? ? ????.")
                 return
             render_notice_detail_from_row(selected_row, detail_opportunity_df)
             return
 
         render_page_header(
             "Notice Queue",
-            "빠르게 훑고, 바로 판단하고, 같은 앱 안에서 Notice 상세로 진입하는 공고 탐색 Queue입니다.",
+            "RFP Queue? ?? ???? ??? ??, ??? ???, ?? ? ??? Notice ??? ?? ??? ? ?? ??????.",
             eyebrow="Notices",
         )
         render_notice_queue_ui_styles()
         _inject_notice_queue_dashboard_styles()
         if source_df is None or source_df.empty:
-            st.info("표시할 공고가 없습니다.")
+            st.info("??? ??? ????.")
             return
 
         filters = _get_notice_filters()
@@ -1605,47 +1099,51 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         st.session_state.setdefault(recommendation_widget_key, filters["recommendation"])
         st.session_state.setdefault(search_widget_key, filters["search"])
 
-        st.markdown('<div class="queue-search-label">검색</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="queue-shell-note">?? ??? ?? ??? ??? ???, ?? ???? Notice ??? ?? RFP ???? ?? ??? ? ?? ??????.</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="queue-filter-label">?? / ??</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="queue-filter-help">?? ??? ??? ???, ??? ??? RFP Queue? ?? ???? ?????.</div>',
+            unsafe_allow_html=True,
+        )
+        filter_cols = st.columns(2)
+        with filter_cols[0]:
+            st.multiselect(
+                "?? ??",
+                options=[value for value, _ in RECOMMENDATION_FILTER_OPTIONS if value != "??"],
+                key=recommendation_widget_key,
+                placeholder="??",
+                on_change=_sync_notice_filter,
+                args=("recommendation",),
+            )
+        with filter_cols[1]:
+            st.multiselect(
+                "?? ??",
+                options=[value for value, _ in STATUS_FILTER_OPTIONS if value != "??"],
+                key=status_widget_key,
+                placeholder="??",
+                on_change=_sync_notice_filter,
+                args=("status",),
+            )
+
+        st.markdown('<div class="queue-search-label">??</div>', unsafe_allow_html=True)
         search_col, reset_col = st.columns([6, 1])
         with search_col:
             st.text_input(
                 "search-filter",
                 key=search_widget_key,
-                placeholder="공고명 / 과제명 / 기관명 검색",
+                placeholder="??? / ??? / ??? ??",
                 label_visibility="collapsed",
                 on_change=_sync_notice_filter,
                 args=("search",),
             )
         with reset_col:
             st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
-            if st.button("초기화", key=f"{detail_page_key}_search_reset", use_container_width=True):
+            if st.button("???", key=f"{detail_page_key}_search_reset", use_container_width=True):
                 _reset_notice_filters()
                 st.rerun()
-
-        st.markdown('<div class="queue-filter-label">요건 / 필터</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="queue-filter-help">추천 상태와 공고 상태만 빠르게 좁혀서 지금 볼 공고를 추려볼 수 있습니다.</div>',
-            unsafe_allow_html=True,
-        )
-        filter_cols = st.columns(2)
-        with filter_cols[0]:
-            st.multiselect(
-                "추천 상태",
-                options=[value for value, _ in RECOMMENDATION_FILTER_OPTIONS if value != "전체"],
-                key=recommendation_widget_key,
-                placeholder="전체",
-                on_change=_sync_notice_filter,
-                args=("recommendation",),
-            )
-        with filter_cols[1]:
-            st.multiselect(
-                "공고 상태",
-                options=[value for value, _ in STATUS_FILTER_OPTIONS if value != "전체"],
-                key=status_widget_key,
-                placeholder="전체",
-                on_change=_sync_notice_filter,
-                args=("status",),
-            )
 
         filters = _get_notice_filters()
         filtered_source_df = _apply_notice_filters(
@@ -1655,20 +1153,21 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             filters["search"],
         )
 
-        st.caption(f"결과 {len(filtered_source_df)}건")
+        st.caption(f"?? {len(filtered_source_df)}?")
         tab_specs: list[tuple[str, str, pd.DataFrame]] = []
         for label, tab_key in TOP_TAB_OPTIONS:
             tab_rows = _filter_rows_for_tab(filtered_source_df, tab_key)
             tab_specs.append((label, tab_key, tab_rows))
-        tabs = st.tabs([f"{label} {len(tab_rows)}건" for label, _, tab_rows in tab_specs])
+        tabs = st.tabs([f"{label} {len(tab_rows)}?" for label, _, tab_rows in tab_specs])
         for tab, (label, tab_key, tab_rows) in zip(tabs, tab_specs):
             with tab:
                 render_crawled_notice_rows(
                     tab_rows,
                     key_prefix=f"{detail_page_key}_{tab_key}_list",
                     page_key=detail_page_key,
-                    empty_message=f"{label} 탭에 표시할 공고가 없습니다.",
+                    empty_message=f"{label} ?? ??? ??? ????.",
                 )
+
     def render_favorite_notice_page(
         notice_view_df: pd.DataFrame,
         opportunity_df: pd.DataFrame,
@@ -1681,27 +1180,27 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
             selected_row = get_row_by_column_value(source_df, "_collection_id", selected_id)
             back_col, info_col = st.columns([1, 5])
             with back_col:
-                if st.button("목록으로", key="favorites_back_to_table", use_container_width=True):
+                if st.button("????", key="favorites_back_to_table", use_container_width=True):
                     switch_to_table("favorites")
             with info_col:
-                st.markdown('<div class="page-note">관심공고 목록에서 선택한 상세 화면입니다.</div>', unsafe_allow_html=True)
+                st.markdown('<div class="page-note">???? ???? ??? ?? ?????.</div>', unsafe_allow_html=True)
             render_notice_detail_from_row(selected_row, opportunity_df)
             return
 
-        st.subheader("관심공고")
-        st.caption("검토 여부가 관심공고인 공고만 모아 봅니다.")
+        st.subheader("????")
+        st.caption("?? ??? ????? ??? ?? ???.")
         if source_df is None or source_df.empty:
-            st.info("아직 관심공고로 지정한 공고가 없습니다.")
+            st.info("?? ????? ??? ??? ????.")
             return
         favorite_rows = source_df[_review_series(source_df).eq(FAVORITE_REVIEW_STATUS)].copy()
         if favorite_rows.empty:
-            st.info("아직 관심공고로 지정한 공고가 없습니다.")
+            st.info("?? ????? ??? ??? ????.")
             return
         render_crawled_notice_rows(
             favorite_rows,
             key_prefix=f"{detail_page_key}_favorite_page",
             page_key="favorites",
-            empty_message="아직 관심공고로 지정한 공고가 없습니다.",
+            empty_message="?? ????? ??? ??? ????.",
         )
 
     def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
@@ -1723,247 +1222,6 @@ def apply_notice_browser_overrides(ns: dict, *, detail_page_key: str) -> None:
         del source_config, mode_config, show_internal_tabs
         source_df = build_crawled_notice_collection(datasets, source_datasets)
         _render_notice_queue_screen(
-            source_df,
-            datasets.get("opportunity", pd.DataFrame()),
-            datasets["opportunity_all"],
-        )
-
-    def _queue_render_card_rows_v2(
-        rows: pd.DataFrame,
-        *,
-        key_prefix: str,
-        limit: int = 30,
-        page_key: str = detail_page_key,
-        empty_message: str = "표시할 공고가 없습니다.",
-    ) -> None:
-        del page_key
-        if rows is None or rows.empty:
-            st.info(empty_message)
-            return
-
-        for position, (_, row) in enumerate(rows.head(limit).iterrows()):
-            notice_id = _resolve_notice_id(row)
-            source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
-            title = clean(first_non_empty(row, "notice_title", "공고명")) or notice_id or "-"
-            ministry = clean(first_non_empty(row, "ministry", "소관부처", "주관부처")) or "-"
-            agency = clean(first_non_empty(row, "agency", "전문기관", "수행기관")) or "-"
-            notice_no = clean(first_non_empty(row, "notice_no", "공고번호", "ancm_no")) or "-"
-            notice_date = _queue_display_date_text(row)
-            period_text = clean(first_non_empty(row, "notice_period", "접수기간", "period", "_queue_notice_period", "신청기간")) or "-"
-            budget_text = clean(first_non_empty(row, "_queue_budget", "budget", "total_budget_text", "사업비")) or "미기재"
-            recommendation = clean(row.get("_queue_recommendation"))
-            recommendation_text = _normalize_recommendation_value(recommendation) or "보통"
-            review_value = _review_value(row)
-            source_label = clean(first_non_empty(row, "source_label", "source_site", "매체")) or (source_key or "IRIS").upper()
-            scope = clean(first_non_empty(row, "_notice_scope"))
-            status = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태"))
-            if not status:
-                if scope == "archive":
-                    status = "마감"
-                elif scope == "scheduled":
-                    status = "예정"
-                else:
-                    status = "진행중"
-
-            agency_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
-            agency_text = " / ".join(agency_parts) if agency_parts else source_label
-            analysis_text = clean(first_non_empty(row, "_queue_analysis", "_queue_reason", "_queue_project_name"))
-            subtitle_parts = [source_label]
-            if notice_no and notice_no != "-":
-                subtitle_parts.append(f"공고번호 {notice_no}")
-            subtitle_text = " · ".join(subtitle_parts)
-            meta_html = (
-                '<div class="queue-list-card-meta">'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">기관</div><div class="queue-list-card-meta-value">{escape(agency_text)}</div></div>'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">등록일</div><div class="queue-list-card-meta-value">{escape(notice_date)}</div></div>'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">접수기간</div><div class="queue-list-card-meta-value">{escape(period_text)}</div></div>'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">예산</div><div class="queue-list-card-meta-value">{escape(budget_text)}</div></div>'
-                '</div>'
-            )
-            badges = "".join(
-                [
-                    _queue_card_badge_html(status, kind="status"),
-                    _queue_card_badge_html(recommendation_text, kind="recommendation"),
-                    _queue_card_badge_html(source_label, kind="neutral"),
-                ]
-            )
-            reason_html = (
-                f'<div class="queue-list-card-reason">{escape(_truncate_queue_text(analysis_text, max_chars=200))}</div>'
-                if analysis_text
-                else '<div class="queue-list-card-reason muted">연결된 RFP 분석이 아직 없습니다. 공고 상세에서 원문과 첨부파일을 확인할 수 있습니다.</div>'
-            )
-            detail_href = build_route_href(detail_page_key, notice_id, source_key=source_key) if notice_id else ""
-            card_html = (
-                f'<a class="queue-list-link notice-queue-card-shell" href="{escape(detail_href, quote=True)}" target="_self">'
-                '<div class="queue-card queue-list-card">'
-                f'<div class="notice-queue-card-topline">{badges}</div>'
-                f'<div class="queue-list-card-title">{escape(_truncate_queue_text(title, max_chars=110))}</div>'
-                f'<div class="queue-list-card-subtitle">{escape(subtitle_text)}</div>'
-                f'{meta_html}'
-                f'{reason_html}'
-                '</div></a>'
-            ) if detail_href else (
-                '<div class="queue-card queue-list-card">'
-                f'<div class="notice-queue-card-topline">{badges}</div>'
-                f'<div class="queue-list-card-title">{escape(_truncate_queue_text(title, max_chars=110))}</div>'
-                f'<div class="queue-list-card-subtitle">{escape(subtitle_text)}</div>'
-                f'{meta_html}'
-                f'{reason_html}'
-                '</div>'
-            )
-
-            card_left, card_right = st.columns([16, 1], gap="medium")
-            with card_left:
-                st.markdown(card_html, unsafe_allow_html=True)
-            with card_right:
-                st.markdown('<div class="notice-queue-favorite-wrap">', unsafe_allow_html=True)
-                if notice_id:
-                    render_favorite_scrap_button(
-                        notice_id=notice_id,
-                        current_value=review_value,
-                        source_key=source_key or "iris",
-                        notice_title=title,
-                        button_key=f"{key_prefix}_favorite_{notice_id}_{position}",
-                        compact=True,
-                        icon_only=True,
-                        use_container_width=False,
-                    )
-                else:
-                    st.markdown('<div class="notice-queue-empty">-</div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-
-    render_crawled_notice_rows = _queue_render_card_rows_v2
-
-    def _render_notice_queue_screen_final(
-        source_df: pd.DataFrame,
-        opportunity_df: pd.DataFrame,
-        detail_opportunity_df: pd.DataFrame,
-    ) -> None:
-        del opportunity_df
-        source_df = _enrich_notice_rows(source_df, detail_opportunity_df)
-
-        detail_state = _get_notice_detail_state()
-        if detail_state["view"] == "notice_detail":
-            selected_row = _get_notice_row_by_id(source_df, detail_state["selected_notice_id"])
-            back_col, info_col = st.columns([1, 5])
-            with back_col:
-                if st.button("목록으로", key=f"{detail_page_key}_back_to_table", use_container_width=True):
-                    _close_notice_detail()
-            with info_col:
-                st.markdown('<div class="page-note">선택한 Notice 상세 화면입니다.</div>', unsafe_allow_html=True)
-            if not selected_row:
-                st.info("선택한 공고 상세를 찾을 수 없습니다.")
-                return
-            render_notice_detail_from_row(selected_row, detail_opportunity_df)
-            return
-
-        render_page_header(
-            "Notice Queue",
-            "RFP Queue와 같은 흐름으로 빠르게 훑고, 조건을 좁히고, 같은 앱 안에서 Notice 상세로 바로 진입할 수 있게 구성했습니다.",
-            eyebrow="Notices",
-        )
-        render_notice_queue_ui_styles()
-        _inject_notice_queue_dashboard_styles()
-        if source_df is None or source_df.empty:
-            st.info("표시할 공고가 없습니다.")
-            return
-
-        filters = _get_notice_filters()
-        status_widget_key = _notice_filter_widget_key("status")
-        recommendation_widget_key = _notice_filter_widget_key("recommendation")
-        search_widget_key = _notice_filter_widget_key("search")
-        st.session_state.setdefault(status_widget_key, filters["status"])
-        st.session_state.setdefault(recommendation_widget_key, filters["recommendation"])
-        st.session_state.setdefault(search_widget_key, filters["search"])
-
-        st.markdown(
-            '<div class="queue-shell-note">추천 상태와 공고 상태를 빠르게 좁히고, 결과 카드에서 Notice 상세와 연결 RFP 맥락까지 바로 확인할 수 있게 구성했습니다.</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown('<div class="queue-filter-label">요건 / 필터</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="queue-filter-help">상단 탭으로 소스를 나누고, 필터와 검색은 RFP Queue와 같은 방식으로 유지합니다.</div>',
-            unsafe_allow_html=True,
-        )
-        filter_cols = st.columns(2)
-        with filter_cols[0]:
-            st.multiselect(
-                "추천 상태",
-                options=[value for value, _ in RECOMMENDATION_FILTER_OPTIONS if value != "전체"],
-                key=recommendation_widget_key,
-                placeholder="전체",
-                on_change=_sync_notice_filter,
-                args=("recommendation",),
-            )
-        with filter_cols[1]:
-            st.multiselect(
-                "공고 상태",
-                options=[value for value, _ in STATUS_FILTER_OPTIONS if value != "전체"],
-                key=status_widget_key,
-                placeholder="전체",
-                on_change=_sync_notice_filter,
-                args=("status",),
-            )
-
-        st.markdown('<div class="queue-search-label">검색</div>', unsafe_allow_html=True)
-        search_col, reset_col = st.columns([6, 1])
-        with search_col:
-            st.text_input(
-                "search-filter",
-                key=search_widget_key,
-                placeholder="공고명 / 과제명 / 기관명 검색",
-                label_visibility="collapsed",
-                on_change=_sync_notice_filter,
-                args=("search",),
-            )
-        with reset_col:
-            st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
-            if st.button("초기화", key=f"{detail_page_key}_search_reset", use_container_width=True):
-                _reset_notice_filters()
-                st.rerun()
-
-        filters = _get_notice_filters()
-        filtered_source_df = _apply_notice_filters(
-            source_df,
-            filters["status"],
-            filters["recommendation"],
-            filters["search"],
-        )
-
-        st.caption(f"결과 {len(filtered_source_df)}건")
-        tab_specs: list[tuple[str, str, pd.DataFrame]] = []
-        for label, tab_key in TOP_TAB_OPTIONS:
-            tab_rows = _filter_rows_for_tab(filtered_source_df, tab_key)
-            tab_specs.append((label, tab_key, tab_rows))
-        tabs = st.tabs([f"{label} {len(tab_rows)}건" for label, _, tab_rows in tab_specs])
-        for tab, (label, tab_key, tab_rows) in zip(tabs, tab_specs):
-            with tab:
-                render_crawled_notice_rows(
-                    tab_rows,
-                    key_prefix=f"{detail_page_key}_{tab_key}_list",
-                    page_key=detail_page_key,
-                    empty_message=f"{label} 탭에 표시할 공고가 없습니다.",
-                )
-
-    def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
-        source_df = build_crawled_notice_collection(datasets, source_datasets)
-        _render_notice_queue_screen_final(
-            source_df,
-            datasets.get("opportunity", pd.DataFrame()),
-            datasets["opportunity_all"],
-        )
-
-    def render_notices_source(
-        source_config,
-        mode_config,
-        datasets: dict[str, pd.DataFrame],
-        source_datasets: dict[str, object] | None,
-        *,
-        show_internal_tabs: bool = True,
-    ) -> None:
-        del source_config, mode_config, show_internal_tabs
-        source_df = build_crawled_notice_collection(datasets, source_datasets)
-        _render_notice_queue_screen_final(
             source_df,
             datasets.get("opportunity", pd.DataFrame()),
             datasets["opportunity_all"],
