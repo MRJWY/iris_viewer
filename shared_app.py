@@ -7764,7 +7764,7 @@ def _pill_html(text: object, *, kind: str = "recommendation", base_class: str = 
 def _queue_row_context(row: dict[str, object] | pd.Series) -> dict[str, str]:
     row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
     recommendation = first_non_empty(row_dict, "recommendation", "llm_recommendation", "Recommendation") or "검토"
-    score = _score_value(first_non_empty(row_dict, "rfp_score", "llm_fit_score", "Score"))
+    score = _score_value(first_non_empty(row_dict, "llm_fit_score", "rfp_score", "점수", "Score"))
     period = first_non_empty(row_dict, "notice_period", "period", "Period", "접수기간", "요청기간")
     deadline = format_dashboard_deadline_badge(period, first_non_empty(row_dict, "status", "Status"))
     budget = extract_budget_summary(first_non_empty(row_dict, "budget", "Budget", "llm_total_budget_text", "total_budget_text")) or "-"
@@ -7873,6 +7873,9 @@ def _build_queue_filter_frame(rows: pd.DataFrame) -> pd.DataFrame:
 
     working["_queue_recommendation"] = [clean(ctx["recommendation"]) or "-" for ctx in contexts]
     working["_queue_score"] = [clean(ctx["score"]) or "-" for ctx in contexts]
+    working["_queue_sort_score"] = to_numeric_column(
+        series_from_candidates(working, ["llm_fit_score", "rfp_score", "점수", "Score"])
+    )
     working["_queue_deadline"] = [clean(ctx["deadline"]) or "-" for ctx in contexts]
     working["_queue_budget"] = [clean(ctx["budget"]) or "-" for ctx in contexts]
     working["_queue_agency"] = [clean(ctx["agency"]) or "-" for ctx in contexts]
@@ -8538,7 +8541,7 @@ def render_opportunity_page_aligned(
         return
 
     filtered = filtered.sort_values(
-        by=["rfp_score", "_queue_deadline_sort", "_queue_project_sort"],
+        by=["_queue_sort_score", "_queue_deadline_sort", "_queue_project_sort"],
         ascending=[False, True, True],
         na_position="last",
     )
@@ -9495,7 +9498,7 @@ def render_opportunity_page_aligned(
         filtered = filtered[filtered["_queue_status"].isin(selected_status)]
 
     filtered = filtered.sort_values(
-        by=["rfp_score", "_queue_deadline_sort", "_queue_project_sort"],
+        by=["_queue_sort_score", "_queue_deadline_sort", "_queue_project_sort"],
         ascending=[False, True, True],
         na_position="last",
     )
@@ -9621,7 +9624,7 @@ def render_opportunity_page(
         return
 
     filtered = filtered.sort_values(
-        by=["rfp_score", "_queue_deadline_sort", "project_name"],
+        by=["_queue_sort_score", "_queue_deadline_sort", "project_name"],
         ascending=[False, True, True],
         na_position="last",
     )
@@ -11602,7 +11605,7 @@ def render_opportunity_page(
         return
 
     filtered = filtered.sort_values(
-        by=["rfp_score", "_queue_deadline_sort", "project_name"],
+        by=["_queue_sort_score", "_queue_deadline_sort", "project_name"],
         ascending=[False, True, True],
         na_position="last",
     )
@@ -12243,7 +12246,7 @@ def render_opportunity_page(
         return
 
     filtered = filtered.sort_values(
-        by=["rfp_score", "_queue_deadline_sort", "_queue_project_sort"],
+        by=["_queue_sort_score", "_queue_deadline_sort", "_queue_project_sort"],
         ascending=[False, True, True],
         na_position="last",
     )
