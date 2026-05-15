@@ -120,20 +120,31 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
 
     viewer_nav_groups = (
         NavGroupConfig(
-            "workspace",
-            "Workspace",
+            "dashboard",
+            "Dashboard",
             (
-                NavItemConfig("rfp_queue", "RFP Queue", "iris", "rfp_queue"),
-                NavItemConfig("notice_queue", "Notice Queue", "iris", "notice_queue"),
+                NavItemConfig("dashboard", "Dashboard", "dashboard", "dashboard"),
             ),
         ),
         NavGroupConfig(
-            "archive",
-            "Archive",
+            "rfp_queue",
+            "RFP Queue",
             (
-                NavItemConfig("iris_archive", "IRIS Archive", "iris", "notice_archive"),
-                NavItemConfig("tipa_archive", "중기부 Archive", "tipa", "tipa_archive"),
-                NavItemConfig("nipa_archive", "NIPA Archive", "nipa", "nipa_archive"),
+                NavItemConfig("rfp_queue", "RFP Queue", "iris", "rfp_queue"),
+            ),
+        ),
+        NavGroupConfig(
+            "notice_queue",
+            "Notice Queue",
+            (
+                NavItemConfig("notice_queue", "Notice Queue", "notices", "notice_queue"),
+            ),
+        ),
+        NavGroupConfig(
+            "favorites",
+            "Favorites",
+            (
+                NavItemConfig("favorites", "Favorites", "favorites", "favorites"),
             ),
         ),
     )
@@ -146,7 +157,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             supports_summary=False,
             nav_groups=viewer_nav_groups,
             sources=sources,
-            default_source="iris",
+            default_source="dashboard",
             default_iris_page="rfp_queue",
             iris_tabs=(
                 ("rfp_queue", "RFP Queue"),
@@ -166,7 +177,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
         supports_summary=False,
         nav_groups=viewer_nav_groups,
         sources=sources,
-        default_source="iris",
+        default_source="dashboard",
         default_iris_page="rfp_queue",
         iris_tabs=(
             ("rfp_queue", "RFP Queue"),

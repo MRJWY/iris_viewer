@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from core import routing as route_core
 import shared_app as core
 import viewer_body
 
@@ -188,7 +189,8 @@ def render_public_viewer_body(
     source_datasets: dict[str, object],
 ) -> None:
     del mode_config
-    current_page = core.normalize_route_page_key(core.get_query_param("page")) or "rfp_queue"
+    current_route = route_core.get_current_route(route_core.build_rfp_queue_route())
+    current_page = core.normalize_route_page_key(current_route.get("page")) or "rfp_queue"
     if current_page == "opportunity_archive":
         current_page = "notice_archive"
     if current_page not in PUBLIC_VIEWER_ROUTE_MAP:
@@ -227,7 +229,8 @@ def render_public_viewer_body(
 
 
 def main() -> None:
-    current_page = core.normalize_route_page_key(core.get_query_param("page")) or "rfp_queue"
+    current_route = core.initialize_route_state(route_core.build_rfp_queue_route())
+    current_page = core.normalize_route_page_key(current_route.get("page")) or "rfp_queue"
     if current_page == "opportunity_archive":
         current_page = "notice_archive"
     if core.get_query_param("favorite_toggle") == "1":
