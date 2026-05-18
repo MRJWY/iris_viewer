@@ -228,7 +228,7 @@ def render_public_viewer_body(
     )
 
 
-def main() -> None:
+def _legacy_public_viewer_main() -> None:
     current_route = core.initialize_route_state(route_core.build_rfp_queue_route())
     current_page = core.normalize_route_page_key(current_route.get("page")) or "rfp_queue"
     if current_page == "opportunity_archive":
@@ -246,6 +246,10 @@ def main() -> None:
         st.stop()
 
     render_public_viewer_body(mode_config, datasets, source_datasets)
+
+
+def main() -> None:
+    core.main(app_mode="viewer")
 
 
 if __name__ == "__main__":

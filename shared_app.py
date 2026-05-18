@@ -13763,6 +13763,372 @@ def render_notice_queue_ui_styles() -> None:
     )
 
 
+def _build_public_workspace_route_href(source_key: str, page_key: str) -> str:
+    current_route = route_core.get_current_route()
+    next_source = clean(source_key)
+    next_page = normalize_route_page_key(page_key)
+    if not next_source:
+        next_source = "dashboard"
+    if not next_page:
+        next_page = "dashboard"
+
+    if next_page == "dashboard":
+        next_route = route_core.build_dashboard_route(
+            view="list",
+            filters=dict(current_route.get("filters") or {}),
+        )
+    elif next_page == "notice_queue":
+        next_route = route_core.build_notice_queue_route(
+            filters=dict(current_route.get("filters") or {}),
+            page_no=1,
+            page_size=20,
+            view="list",
+            item_id="",
+            source_key=clean(current_route.get("source_key")) or "iris",
+        )
+    elif next_page == "favorites":
+        next_route = route_core.build_favorites_route(
+            filters=dict(current_route.get("filters") or {}),
+            page_no=1,
+            page_size=20,
+            view="list",
+            item_id="",
+            source_key="favorites",
+        )
+    else:
+        next_route = route_core.build_rfp_queue_route(
+            filters=dict(current_route.get("filters") or {}),
+            page_no=1,
+            page_size=20,
+            view="list",
+            item_id="",
+            source_key=clean(current_route.get("source_key")) or "iris",
+        )
+    params = with_auth_params(route_core.serialize_route(next_route))
+    return f"?{urlencode(params)}"
+
+
+def _inject_public_workspace_shell_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .app-shell {
+          min-height: 68px;
+          display: grid;
+          grid-template-columns: minmax(220px, 260px) minmax(320px, 1fr) minmax(320px, auto);
+          align-items: center;
+          gap: 1.1rem;
+          margin: -0.45rem 0 1.25rem;
+          padding: 0.1rem 0.4rem 0.2rem;
+          background: rgba(255, 255, 255, 0.98);
+          border-bottom: 1px solid #dbe4f0;
+        }
+        .app-brand {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          color: #0f172a;
+          font-size: 1rem;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+        .app-brand-mark {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
+          color: #ffffff;
+          background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+          font-size: 1rem;
+          font-weight: 800;
+          border-radius: 10px;
+          box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
+        }
+        .app-brand-copy {
+          display: flex;
+          align-items: baseline;
+          gap: 0.42rem;
+        }
+        .app-brand-title {
+          color: #0f172a;
+          font-size: 0.98rem;
+          font-weight: 850;
+        }
+        .app-brand-subtitle {
+          color: #475569;
+          font-size: 0.76rem;
+          font-weight: 650;
+        }
+        .app-nav {
+          display: flex;
+          align-items: stretch;
+          height: 100%;
+          gap: 1.45rem;
+          min-width: 0;
+        }
+        .app-nav-item {
+          display: inline-flex;
+          align-items: center;
+          height: 100%;
+          color: #475569;
+          border-bottom: 2px solid transparent;
+          font-size: 0.94rem;
+          font-weight: 650;
+          text-decoration: none !important;
+          white-space: nowrap;
+        }
+        .app-nav-item:hover {
+          color: #1d4ed8;
+        }
+        .app-nav-item-active {
+          color: #2563eb;
+          border-bottom-color: #2563eb;
+        }
+        .app-actions {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 0.7rem;
+          min-width: 0;
+        }
+        .app-search {
+          min-width: min(290px, 34vw);
+          height: 38px;
+          display: flex;
+          align-items: center;
+          gap: 0.55rem;
+          padding: 0 0.95rem;
+          color: #94a3b8;
+          background: #ffffff;
+          border: 1px solid #dbe3ef;
+          border-radius: 10px;
+          font-size: 0.86rem;
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+        }
+        .app-search-icon {
+          color: #475569;
+          font-size: 0.84rem;
+        }
+        .app-icon-button,
+        .app-user-menu {
+          min-height: 38px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0 0.9rem;
+          color: #475569;
+          background: #ffffff;
+          border: 1px solid #dbe3ef;
+          border-radius: 10px;
+          font-size: 0.84rem;
+          font-weight: 650;
+          white-space: nowrap;
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+        }
+        .app-icon-button {
+          position: relative;
+          width: 38px;
+          padding: 0;
+        }
+        .app-notice-badge {
+          position: absolute;
+          top: -4px;
+          right: -3px;
+          min-width: 18px;
+          height: 18px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0 0.2rem;
+          color: #ffffff;
+          background: #ef4444;
+          border: 2px solid #ffffff;
+          border-radius: 999px;
+          font-size: 0.66rem;
+          font-weight: 800;
+          line-height: 1;
+        }
+        .app-user-menu {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 0.1rem;
+          min-width: 92px;
+        }
+        .app-user-name {
+          color: #0f172a;
+          font-size: 0.84rem;
+          font-weight: 850;
+          line-height: 1.1;
+        }
+        .app-user-role {
+          color: #64748b;
+          font-size: 0.7rem;
+          font-weight: 700;
+          line-height: 1.1;
+        }
+        @media (max-width: 1200px) {
+          .app-shell {
+            grid-template-columns: 1fr;
+            gap: 0.7rem;
+            padding-bottom: 0.8rem;
+          }
+          .app-actions {
+            justify-content: flex-start;
+            flex-wrap: wrap;
+          }
+          .app-search {
+            min-width: 0;
+            width: 100%;
+          }
+        }
+        @media (max-width: 780px) {
+          .app-nav {
+            overflow-x: auto;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_public_workspace_navigation(mode_config: AppModeConfig, current_source: str, current_page: str) -> None:
+    _inject_public_workspace_shell_styles()
+    nav_items = [
+        ("Dashboard", "dashboard", "dashboard"),
+        ("RFP Queue", "iris", "rfp_queue"),
+        ("Notice Queue", "notices", "notice_queue"),
+        ("Favorites", "favorites", "favorites"),
+    ]
+    nav_links: list[str] = []
+    for label, source_key, page_key in nav_items:
+        active_class = " app-nav-item-active" if current_source == source_key and current_page == page_key else ""
+        href = _build_public_workspace_route_href(source_key, page_key)
+        nav_links.append(
+            f'<a class="app-nav-item{active_class}" href="{escape(href, quote=True)}" target="_self">{escape(label)}</a>'
+        )
+
+    user_label = escape(get_current_user_label() or get_current_user_id() or "User")
+    st.markdown(
+        (
+            '<div class="app-shell">'
+            '<div class="app-brand">'
+            '<span class="app-brand-mark">X</span>'
+            '<span class="app-brand-copy">'
+            '<span class="app-brand-title">R&amp;D Opportunity</span>'
+            '<span class="app-brand-subtitle">Public Viewer</span>'
+            '</span>'
+            '</div>'
+            f'<nav class="app-nav">{"".join(nav_links)}</nav>'
+            '<div class="app-actions">'
+            '<div class="app-search"><span class="app-search-icon">&#128269;</span><span>공고명 / 과제명 / 키워드 검색</span></div>'
+            '<div class="app-icon-button" aria-label="Notifications">&#128276;<span class="app-notice-badge">3</span></div>'
+            f'<div class="app-user-menu"><span class="app-user-name">{user_label}</span><span class="app-user-role">Researcher</span></div>'
+            '</div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def main(app_mode: str = "viewer"):
+    load_dotenv()
+
+    mode_config = build_app_mode_config(
+        app_mode,
+        nipa_view_columns=tuple(NIPA_VIEW_COLUMNS),
+    )
+
+    st.set_page_config(
+        page_title=mode_config.page_title,
+        layout="wide",
+    )
+    inject_page_styles()
+    inject_opportunity_detail_alignment_styles()
+    inject_viewer_layout_styles()
+    require_login(mode_config)
+    consume_favorite_toggle_query_action()
+
+    sheet_names = {
+        "notice_master": resolve_canonical_notice_master_sheet(get_env),
+        "notice_current": resolve_notice_current_view_sheet(get_env),
+        "pending": resolve_notice_pending_view_sheet(get_env),
+        "notice_archive": resolve_notice_archive_view_sheet(get_env),
+        "opportunity": resolve_iris_opportunity_current_sheet(get_env),
+        "opportunity_archive": resolve_iris_opportunity_archive_sheet(get_env),
+        "summary": get_env("SUMMARY_SHEET", "SUMMARY"),
+        "errors": get_env("ERROR_SHEET", "OPPORTUNITY_ERRORS"),
+    }
+
+    try:
+        datasets = load_app_datasets(
+            sheet_names["notice_master"],
+            sheet_names["notice_current"],
+            sheet_names["pending"],
+            sheet_names["notice_archive"],
+            sheet_names["opportunity"],
+            sheet_names["opportunity_archive"],
+            sheet_names["summary"],
+            sheet_names["errors"],
+        )
+    except Exception as exc:
+        st.error(f"시트 로딩 실패: {exc}")
+        st.stop()
+
+    default_route = route_core.normalize_route(
+        {
+            "source": mode_config.default_source,
+            "page": get_default_page_for_source(mode_config, mode_config.default_source),
+            "view": "list",
+            "source_key": mode_config.default_source,
+        }
+    )
+    current_route = initialize_route_state(default_route)
+    normalized_route = _normalize_workspace_shell_route(current_route)
+    if not route_core.route_equals(current_route, normalized_route):
+        route_core.set_current_route(normalized_route)
+        replace_query_params(with_auth_params(route_core.serialize_route(normalized_route)))
+        current_route = normalized_route
+
+    current_source = clean(current_route.get("source")) or mode_config.default_source
+    current_page = normalize_route_page_key(current_route.get("page")) or get_default_page_for_source(mode_config, mode_config.default_source)
+    if current_page == "notice_queue":
+        current_source = "notices"
+    elif current_page == "favorites":
+        current_source = "favorites"
+    elif current_page == "dashboard":
+        current_source = "dashboard"
+    else:
+        current_source = "iris"
+
+    render_public_workspace_navigation(mode_config, current_source, current_page)
+
+    source_config_map = get_source_config_map(mode_config)
+    selected_source_config = source_config_map.get(current_source)
+    source_datasets = None
+    if current_source in {"dashboard", "notices", "favorites"}:
+        source_datasets = build_source_datasets()
+    elif selected_source_config and selected_source_config.requires_source_datasets:
+        source_datasets = build_source_datasets()
+
+    if is_user_scoped_operations_enabled():
+        datasets, source_datasets = apply_user_review_statuses(
+            datasets,
+            source_datasets,
+            get_current_operation_scope_key(),
+        )
+
+    render_selected_source(
+        current_source,
+        source_config=selected_source_config,
+        mode_config=mode_config,
+        datasets=datasets,
+        source_datasets=source_datasets,
+        show_internal_tabs=False,
+    )
+
+
 
 
 
