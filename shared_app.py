@@ -9020,7 +9020,7 @@ def _inject_notice_queue_dashboard_styles() -> None:
         .notice-table-head,
         .notice-table-row {
           display: grid;
-          grid-template-columns: 84px 106px minmax(420px, 1fr) 180px 220px 92px 74px 94px;
+          grid-template-columns: 106px minmax(420px, 1fr) 180px 220px 92px 74px 94px;
           gap: 1rem;
           align-items: center;
           padding: 1rem 1.2rem;
@@ -9050,19 +9050,6 @@ def _inject_notice_queue_dashboard_styles() -> None:
         }
         .notice-table-cell.is-center {
           text-align: center;
-        }
-        .notice-table-kind {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          min-height: 34px;
-          padding: 0 0.9rem;
-          border-radius: 999px;
-          background: #f3f4f6;
-          color: #111827;
-          font-size: 0.84rem;
-          font-weight: 850;
-          white-space: nowrap;
         }
         .notice-table-title {
           color: #111827 !important;
@@ -9410,7 +9397,6 @@ def render_crawled_notice_rows(
         rfp_count = clean(first_non_empty(row, "rfp_count", "RFP Count", "_queue_rfp_count"))
         if not rfp_count:
             rfp_count = "1" if analysis_text else "0"
-        kind_label = "RFP" if clean(rfp_count) not in {"", "0", "-"} else "Notice"
         favorite_href = build_favorite_toggle_href(
             page_key=page_key,
             notice_id=notice_id,
@@ -9425,7 +9411,6 @@ def render_crawled_notice_rows(
             "".join(
                 [
                     f'<div class="notice-table-row{selected_class}">',
-                    f'<div class="notice-table-cell is-center"><span class="notice-table-kind">{escape(kind_label)}</span></div>',
                     f'<div class="notice-table-cell"><span class="{_status_badge_class(status)}">{escape(status)}</span></div>',
                     '<div class="notice-table-cell">',
                     f'<a class="notice-table-title" href="{escape(_summary_href(notice_id, source_key or "iris"), quote=True)}" target="_self">{escape(_truncate_queue_text(title, max_chars=110))}</a>',
@@ -9446,7 +9431,7 @@ def render_crawled_notice_rows(
         (
             '<div class="notice-table-scroll"><div class="notice-table-shell">'
             '<div class="notice-table-head">'
-            '<div>구분</div><div>상태</div><div>공고 / 과제명</div><div>기관</div><div>기간</div><div>D-day</div><div>RFP 수</div><div>관심</div>'
+            '<div>상태</div><div>공고명</div><div>기관</div><div>기간</div><div>D-day</div><div>RFP 수</div><div>관심</div>'
             '</div>'
             + "".join(row_html)
             + '</div></div>'
@@ -9515,54 +9500,51 @@ def _render_notice_queue_screen(
 
     display_col, summary_col = st.columns([5.4, 2.15], gap="large")
     with display_col:
-        st.markdown('<div class="notice-filter-shell">', unsafe_allow_html=True)
-        filter_top_cols = st.columns([1.15, 3.9, 1.1], gap="large")
-        with filter_top_cols[0]:
-            st.multiselect(
-                "공고상태",
-                options=[value for value, _ in STATUS_FILTER_OPTIONS if value != "??"],
-                key=status_widget_key,
-                placeholder="All",
-                label_visibility="collapsed",
-            )
-        with filter_top_cols[1]:
-            st.text_input(
-                "search-filter",
-                key=search_widget_key,
-                placeholder="제목, 기관",
-                label_visibility="collapsed",
-            )
-        with filter_top_cols[2]:
-            if st.button("초기화", key=f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_search_reset", use_container_width=True):
-                _reset_notice_filters()
-                st.rerun()
-
-        filter_bottom_cols = st.columns([1.15, 1.15, 1.15, 2.75], gap="large")
-        with filter_bottom_cols[0]:
+        filter_cols = st.columns(3)
+        with filter_cols[0]:
             st.multiselect(
                 "추천여부",
                 options=[value for value, _ in RECOMMENDATION_FILTER_OPTIONS if value != "??"],
                 key=recommendation_widget_key,
-                placeholder="추천",
+                placeholder="전체",
+            )
+        with filter_cols[1]:
+            st.multiselect(
+                "공고상태",
+                options=[value for value, _ in STATUS_FILTER_OPTIONS if value != "??"],
+                key=status_widget_key,
+                placeholder="전체",
+            )
+        with filter_cols[2]:
+            source_options = [label for label, _ in TOP_TAB_OPTIONS if label not in {"관심공고", "보관/마감"}]
+            st.multiselect(
+                "출처",
+                options=source_options,
+                key=source_widget_key,
+                placeholder="전체",
+            )
+
+        st.markdown('<div class="queue-search-label">검색</div>', unsafe_allow_html=True)
+        search_col, page_size_col, reset_col = st.columns([5, 1, 1])
+        with search_col:
+            st.text_input(
+                "search-filter",
+                key=search_widget_key,
+                placeholder="공고명 / 과제명 / 기관명 검색",
                 label_visibility="collapsed",
             )
-        with filter_bottom_cols[1]:
+        with page_size_col:
             st.selectbox(
                 "Page size",
                 options=[20, 50, 100],
                 key=page_size_widget_key,
                 label_visibility="collapsed",
             )
-        with filter_bottom_cols[2]:
-            source_options = [label for label, _ in TOP_TAB_OPTIONS if label not in {"관심공고", "보관/마감"}]
-            st.multiselect(
-                "출처",
-                options=source_options,
-                key=source_widget_key,
-                placeholder="출처",
-                label_visibility="collapsed",
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
+        with reset_col:
+            st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
+            if st.button("초기화", key=f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_search_reset", use_container_width=True):
+                _reset_notice_filters()
+                st.rerun()
 
         filters = {
             "status": st.session_state.get(status_widget_key, []),
