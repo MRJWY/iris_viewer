@@ -14022,7 +14022,6 @@ def render_public_workspace_navigation(mode_config: AppModeConfig, current_sourc
             '</div>'
             f'<nav class="app-nav">{"".join(nav_links)}</nav>'
             '<div class="app-actions">'
-            '<div class="app-search"><span class="app-search-icon">&#128269;</span><span>공고명 / 과제명 / 키워드 검색</span></div>'
             '<div class="app-icon-button" aria-label="Notifications">&#128276;<span class="app-notice-badge">3</span></div>'
             f'<div class="app-user-menu"><span class="app-user-name">{user_label}</span><span class="app-user-role">Researcher</span></div>'
             '</div>'
@@ -14030,6 +14029,248 @@ def render_public_workspace_navigation(mode_config: AppModeConfig, current_sourc
         ),
         unsafe_allow_html=True,
     )
+
+
+def _inject_compact_public_dashboard_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .main .block-container {
+          max-width: min(1920px, calc(100vw - 0.75rem));
+          padding-left: 0.7rem;
+          padding-right: 0.7rem;
+          padding-top: 0.85rem;
+        }
+        .app-shell {
+          gap: 0.9rem;
+          margin-bottom: 0.8rem;
+          grid-template-columns: minmax(220px, 250px) minmax(320px, 1fr) auto;
+        }
+        .dashboard-shell {
+          padding: 0;
+          gap: 0.85rem;
+        }
+        .dashboard-section,
+        .queue-table-card,
+        .summary-panel {
+          border-radius: 14px;
+          padding: 0.95rem 1rem;
+        }
+        .dashboard-kpi-grid {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 0.8rem;
+          margin: 0.45rem 0 0.95rem;
+        }
+        .rfp-card {
+          min-height: 208px;
+          padding: 0.9rem;
+        }
+        .rfp-card-title {
+          font-size: 0.92rem;
+        }
+        .rfp-card-notice,
+        .rfp-card-analysis,
+        .rfp-card-meta,
+        .notice-row-meta,
+        .notice-row-summary {
+          font-size: 0.78rem;
+        }
+        .dashboard-search-meta {
+          color: #64748b;
+          font-size: 0.8rem;
+          font-weight: 700;
+          display: flex;
+          align-items: center;
+          min-height: 2.4rem;
+        }
+        .notice-row-head,
+        .notice-row-body {
+          grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr) minmax(0, 3fr) minmax(0, 1.55fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1.15fr) minmax(0, 2.2fr) minmax(0, 0.85fr);
+        }
+        @media (max-width: 980px) {
+          .dashboard-kpi-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _filter_public_dashboard_frames(
+    opportunity_rows: pd.DataFrame,
+    notice_rows: pd.DataFrame,
+    query: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    search_text = clean(query)
+    if not search_text:
+        return opportunity_rows, notice_rows
+
+    filtered_opportunities = opportunity_rows
+    if not filtered_opportunities.empty:
+        filtered_opportunities = filtered_opportunities[
+            build_contains_mask(
+                filtered_opportunities,
+                ["Project", "Notice Title", "Agency", "Ministry", "Keywords", "Reason", "Budget"],
+                search_text,
+            )
+        ].copy()
+
+    filtered_notices = notice_rows
+    if not filtered_notices.empty:
+        filtered_notices = filtered_notices[
+            build_contains_mask(
+                filtered_notices,
+                ["공고명", "notice_title", "agency", "전문기관", "소관부처", "_queue_analysis", "_queue_project_name", "budget"],
+                search_text,
+            )
+        ].copy()
+
+    return filtered_opportunities, filtered_notices
+
+
+def _render_dashboard_kpi_cards(recommended_rows: pd.DataFrame, notice_rows: pd.DataFrame) -> None:
+    recommended_count = len(recommended_rows) if recommended_rows is not None and not recommended_rows.empty else 0
+    favorite_count = 0
+    if notice_rows is not None and not notice_rows.empty:
+        favorite_series = notice_rows.apply(_dashboard_review_value, axis=1)
+        favorite_count = int(favorite_series.eq(FAVORITE_REVIEW_STATUS).sum())
+    urgent_count = _count_dashboard_urgent_notices(notice_rows)
+
+    cards = [
+        ("recommended_rfp", "추천 RFP", str(recommended_count), "추천 RFP Queue로 이동", "RFP"),
+        ("urgent_notice", "마감 임박", str(urgent_count), "30일 이내 공고 보기", "D-30"),
+        ("favorite_notice", "관심공고", str(favorite_count), "즐겨찾기 모아보기", "SAVE"),
+    ]
+    cols = st.columns(3, gap="medium")
+    for column, (card_key, label, value, copy, icon) in zip(cols, cards):
+        safe_key = _css_safe_key(f"dashboard_kpi_{card_key}")
+        st.markdown(
+            f"""
+            <style>
+            .st-key-{safe_key} button {{
+              min-height: 88px !important;
+              width: 100% !important;
+              padding: 0.85rem 0.95rem !important;
+              border-radius: 14px !important;
+              border: 1px solid #e2e8f0 !important;
+              background: #ffffff !important;
+              color: #15233b !important;
+              box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04) !important;
+              text-align: left !important;
+              white-space: pre-line !important;
+              line-height: 1.3 !important;
+              font-size: 0.82rem !important;
+              font-weight: 700 !important;
+            }}
+            .st-key-{safe_key} button:hover {{
+              border-color: #93c5fd !important;
+              background: #f8fbff !important;
+              color: #1d4ed8 !important;
+              box-shadow: 0 14px 28px rgba(37, 99, 235, 0.10) !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        with column:
+            if st.button(
+                f"{label}  {icon}\n{value}\n{copy}\n바로가기 >",
+                key=f"dashboard_kpi_{card_key}",
+                use_container_width=True,
+                type="secondary",
+            ):
+                _navigate_from_dashboard_kpi(card_key)
+
+
+def _render_dashboard_workspace(
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+) -> None:
+    _inject_compact_public_dashboard_styles()
+    opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
+    if not opportunity_index.empty:
+        opportunity_index = opportunity_index.sort_values(
+            by=["Score", "_sort_date", "Project"],
+            ascending=[False, False, True],
+            na_position="last",
+        )
+    recommended_rows = (
+        opportunity_index[build_positive_recommendation_mask(opportunity_index)].copy()
+        if not opportunity_index.empty
+        else pd.DataFrame()
+    )
+    notice_rows = _build_dashboard_notice_inbox_rows(datasets, source_datasets)
+    favorite_count = len(build_favorite_notice_df(datasets["notice_view"], source_datasets or {}))
+    urgent_count = int(
+        len(build_dashboard_deadline_table(build_dashboard_notice_index(datasets, source_datasets, archived=False), limit=30))
+    )
+
+    search_cols = st.columns([5.3, 1.1, 2.1], gap="small")
+    with search_cols[0]:
+        dashboard_search = clean(
+            st.text_input(
+                "Dashboard Search",
+                key="public_dashboard_compact_search_text",
+                placeholder="공고명, 과제명, 키워드, 기관 검색",
+                label_visibility="collapsed",
+            )
+        )
+    with search_cols[1]:
+        if st.button("초기화", key="public_dashboard_compact_search_reset", use_container_width=True):
+            st.session_state["public_dashboard_compact_search_text"] = ""
+            st.rerun()
+    with search_cols[2]:
+        updated_at = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M")
+        st.markdown(
+            f'<div class="dashboard-search-meta">업데이트 {escape(updated_at)}</div>',
+            unsafe_allow_html=True,
+        )
+
+    filtered_opportunity_rows, filtered_notice_rows = _filter_public_dashboard_frames(
+        opportunity_index,
+        notice_rows,
+        dashboard_search,
+    )
+    recommended_filtered = (
+        filtered_opportunity_rows[build_positive_recommendation_mask(filtered_opportunity_rows)].copy()
+        if not filtered_opportunity_rows.empty
+        else pd.DataFrame()
+    )
+    preview_rows = filtered_notice_rows.head(10).copy() if not filtered_notice_rows.empty else pd.DataFrame()
+
+    if dashboard_search:
+        st.caption(f"검색 결과: 추천 RFP {len(recommended_filtered.head(5))}건, 최근 공고 {len(preview_rows)}건")
+
+    _render_dashboard_kpi_cards(
+        recommended_rows.head(len(recommended_rows)),
+        build_dashboard_notice_index(datasets, source_datasets, archived=False),
+    )
+
+    top_left, top_right = st.columns([6, 1.8], gap="medium")
+    with top_left:
+        st.markdown(
+            '<div class="oppty-section-header"><div><div class="oppty-section-title">추천 RFP Top 5</div><div class="oppty-section-subtitle">핵심 정보만 빠르게 훑고 상세 검토가 필요한 공고만 선별합니다.</div></div></div>',
+            unsafe_allow_html=True,
+        )
+    with top_right:
+        st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
+        if st.button("전체 RFP Queue 보기", key="public_dashboard_to_rfp_queue", use_container_width=True):
+            navigate_to_route_state(route_core.build_rfp_queue_route(), push=True)
+    _render_dashboard_top_rfp_cards(recommended_filtered, selected_item_id="", on_select=None, visible_count=5)
+
+    notice_left, notice_right = st.columns([6, 2.0], gap="medium")
+    with notice_left:
+        st.markdown(
+            '<div class="oppty-section-header"><div><div class="oppty-section-title">최근 공고 (Notice Inbox)</div><div class="oppty-section-subtitle">최신 공고 10건만 compact inbox로 보여줍니다.</div></div></div>',
+            unsafe_allow_html=True,
+        )
+    with notice_right:
+        st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
+        if st.button("전체 Notice Queue 보기", key="public_dashboard_to_notice_queue", use_container_width=True):
+            navigate_to_route_state(route_core.build_notice_queue_route(), push=True)
+    _render_dashboard_recent_notice_inbox(preview_rows, limit=10)
 
 
 def main(app_mode: str = "viewer"):
