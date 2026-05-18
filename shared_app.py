@@ -3508,9 +3508,17 @@ def with_auth_params(params: dict[str, str]) -> dict[str, str]:
 
 
 def initialize_route_state(default_route: dict[str, object]) -> dict[str, object]:
+    query_params = get_query_params_dict()
+    if not clean(query_params.get("source")) and not clean(query_params.get("page")):
+        route_core.set_current_route(default_route)
+        route_core.clear_route_stack()
+        route = route_core.get_current_route(default_route)
+        replace_query_params(with_auth_params(route_core.serialize_route(route)))
+        return route
+
     route = route_core.init_route(
         default_route=default_route,
-        query_params=get_query_params_dict(),
+        query_params=query_params,
     )
     replace_query_params(with_auth_params(route_core.serialize_route(route)))
     return route
@@ -8264,7 +8272,7 @@ def _is_favorite(row_or_value: dict | pd.Series | str | None) -> bool:
 
 def _favorite_button_label(current_value: str) -> tuple[bool, str]:
     is_favorite = _is_favorite(current_value)
-    return is_favorite, "★ 관심공고 저장됨" if is_favorite else "☆ 관심공고 저장"
+    return is_favorite, "해제" if is_favorite else "등록"
 
 def _favorite_badge_html() -> str:
     return '<span class="notice-chip notice-chip-favorite">관심</span>'
@@ -9125,12 +9133,10 @@ def render_crawled_notice_rows(
         notice_id = _resolve_notice_id(row)
         source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
         title = clean(first_non_empty(row, "notice_title", "???")) or notice_id or "-"
-        ministry = clean(first_non_empty(row, "ministry", "????", "????")) or "-"
         agency = clean(first_non_empty(row, "agency", "????", "????")) or "-"
         notice_no = clean(first_non_empty(row, "notice_no", "????", "ancm_no")) or "-"
         notice_date = _queue_display_date_text(row)
         period_text = clean(first_non_empty(row, "notice_period", "????", "period", "_queue_notice_period", "????")) or "-"
-        budget_text = clean(first_non_empty(row, "_queue_budget", "budget", "total_budget_text", "???")) or "???"
         recommendation = clean(row.get("_queue_recommendation"))
         recommendation_text = _normalize_recommendation_value(recommendation) or "??"
         review_value = _review_value(row)
@@ -9145,8 +9151,7 @@ def render_crawled_notice_rows(
             else:
                 status = "???"
 
-        agency_parts = [part for part in [ministry, agency] if clean(part) and part != "-"]
-        agency_text = " / ".join(agency_parts) if agency_parts else source_label
+        agency_text = agency if agency and agency != "-" else source_label
         analysis_text = clean(first_non_empty(row, "_queue_analysis", "_queue_reason", "_queue_project_name"))
         subtitle_parts = [source_label]
         if notice_no and notice_no != "-":
@@ -9157,7 +9162,6 @@ def render_crawled_notice_rows(
             f'<div class="notice-row-meta-item"><div class="notice-row-meta-label">??</div><div class="notice-row-meta-value">{escape(agency_text)}</div></div>'
             f'<div class="notice-row-meta-item"><div class="notice-row-meta-label">???</div><div class="notice-row-meta-value">{escape(notice_date)}</div></div>'
             f'<div class="notice-row-meta-item"><div class="notice-row-meta-label">????</div><div class="notice-row-meta-value">{escape(period_text)}</div></div>'
-            f'<div class="notice-row-meta-item"><div class="notice-row-meta-label">??</div><div class="notice-row-meta-value">{escape(budget_text)}</div></div>'
             '</div>'
         )
         badges = "".join(
@@ -9210,7 +9214,7 @@ def render_crawled_notice_rows(
                         notice_title=title,
                         button_key=f"{key_prefix}_favorite_{notice_id}_{position}",
                         compact=True,
-                        icon_only=True,
+                        icon_only=False,
                         use_container_width=False,
                     )
                 else:
@@ -14368,9 +14372,6 @@ def main(app_mode: str = "viewer"):
         source_datasets=source_datasets,
         show_internal_tabs=False,
     )
-
-
-
 
 
 
