@@ -8834,6 +8834,94 @@ def _apply_notice_filters(
     search_mask = _matches_search(filtered, search_text)
     return filtered[search_mask].copy()
 
+
+def _notice_queue_pagination_window(current_page: int, total_pages: int, *, window: int = 5) -> list[int]:
+    if total_pages <= window + 1:
+        return list(range(1, total_pages + 1))
+    if current_page <= window:
+        return list(range(1, window + 1))
+    half_window = window // 2
+    start_page = max(1, current_page - half_window)
+    end_page = min(total_pages - 1, start_page + window - 1)
+    start_page = max(1, end_page - window + 1)
+    return list(range(start_page, end_page + 1))
+
+
+def _render_workspace_pagination(
+    *,
+    route: dict[str, object],
+    current_page: int,
+    total_pages: int,
+    total_rows: int,
+) -> None:
+    total_pages = max(1, int(total_pages or 1))
+    current_page = max(1, min(int(current_page or 1), total_pages))
+
+    def _page_href(page_number: int) -> str:
+        next_route = route_core.normalize_route(route)
+        next_route["view"] = "list"
+        next_route["item_id"] = ""
+        next_route["page_no"] = max(1, min(int(page_number), total_pages))
+        params = with_auth_params(route_core.serialize_route(next_route))
+        return f"?{urlencode(params)}"
+
+    prev_href = _page_href(current_page - 1) if current_page > 1 else "#"
+    next_href = _page_href(current_page + 1) if current_page < total_pages else "#"
+    prev_class = "notice-queue-page-nav" + (" is-disabled" if current_page <= 1 else "")
+    next_class = "notice-queue-page-nav" + (" is-disabled" if current_page >= total_pages else "")
+    nav_html = (
+        '<div class="notice-queue-pagination notice-queue-pagination-nav">'
+        f'<a class="{prev_class}" href="{escape(prev_href, quote=True)}" target="_self">‹ 이전</a>'
+        f'<a class="{next_class}" href="{escape(next_href, quote=True)}" target="_self">다음 ›</a>'
+        "</div>"
+    )
+
+    page_links: list[str] = []
+    page_numbers = _notice_queue_pagination_window(current_page, total_pages)
+    for page_number in page_numbers:
+        active_class = " is-active" if page_number == current_page else ""
+        page_links.append(
+            f'<a class="notice-queue-page-link{active_class}" href="{escape(_page_href(page_number), quote=True)}" target="_self">{page_number}</a>'
+        )
+    if total_pages > page_numbers[-1]:
+        if total_pages - page_numbers[-1] > 1:
+            page_links.append('<span class="notice-queue-page-ellipsis">…</span>')
+        active_class = " is-active" if total_pages == current_page else ""
+        page_links.append(
+            f'<a class="notice-queue-page-link{active_class}" href="{escape(_page_href(total_pages), quote=True)}" target="_self">{total_pages}</a>'
+        )
+    number_html = f'<div class="notice-queue-pagination">{"".join(page_links)}</div>'
+
+    form_route = route_core.normalize_route(route)
+    form_route["view"] = "list"
+    form_route["item_id"] = ""
+    params = with_auth_params(route_core.serialize_route(form_route))
+    params.pop("page_no", None)
+    hidden_inputs = "".join(
+        f'<input type="hidden" name="{escape(key, quote=True)}" value="{escape(value, quote=True)}">'
+        for key, value in params.items()
+        if clean(key) and clean(value)
+    )
+    jump_html = (
+        '<form class="notice-queue-page-jump" method="get">'
+        f"{hidden_inputs}"
+        f'<input type="number" name="page_no" min="1" max="{total_pages}" value="{current_page}" aria-label="page number">'
+        f'<span class="notice-queue-page-jump-total">/{total_pages}</span>'
+        '<button type="submit">이동</button>'
+        "</form>"
+    )
+
+    st.markdown(
+        (
+            '<div class="notice-queue-footer">'
+            f'<div class="notice-queue-footer-meta">총 {total_rows:,}건 · 페이지 {current_page} / {total_pages}</div>'
+            f'<nav class="notice-queue-pagination-wrap" aria-label="pagination">{nav_html}{number_html}{jump_html}</nav>'
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def _render_filter_control(title: str, options: list[tuple[str, str]], state_key: str) -> str:
     option_values = [value for value, _ in options]
     option_labels = {value: label for value, label in options}
@@ -9361,23 +9449,10 @@ def _render_notice_queue_screen(
         page_size = int(filters["page_size"] or 20)
         total_rows = len(filtered_source_df)
         total_pages = max(1, math.ceil(total_rows / page_size)) if page_size else 1
-        current_page = int(st.session_state.get(page_index_state_key, current_route.get("page_no", 1)) or 1)
+        current_page = int(current_route.get("page_no") or st.session_state.get(page_index_state_key, 1) or 1)
         current_page = max(1, min(current_page, total_pages))
         st.session_state[page_index_state_key] = current_page
         selected_notice_id = clean(current_route.get("item_id")) if clean(current_route.get("view")) == "summary" else ""
-
-        st.caption(f"결과 {total_rows}건 · {current_page}/{total_pages} page")
-        pager_left, pager_mid, pager_right = st.columns([1, 4, 1])
-        with pager_left:
-            if st.button("이전", key=f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_page_prev", use_container_width=True, disabled=current_page <= 1):
-                st.session_state[page_index_state_key] = current_page - 1
-                st.rerun()
-        with pager_mid:
-            st.markdown("", unsafe_allow_html=True)
-        with pager_right:
-            if st.button("다음", key=f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_page_next", use_container_width=True, disabled=current_page >= total_pages):
-                st.session_state[page_index_state_key] = current_page + 1
-                st.rerun()
 
         start_idx = (current_page - 1) * page_size
         page_rows = filtered_source_df.iloc[start_idx:start_idx + page_size].copy()
@@ -9403,6 +9478,20 @@ def _render_notice_queue_screen(
             empty_message="표시할 공고가 없습니다.",
             selected_notice_id=selected_notice_id,
             on_select=_select_notice_preview,
+        )
+        pagination_route = route_core.build_notice_queue_route(
+            filters=filters,
+            page_no=current_page,
+            page_size=page_size,
+            view="list",
+            item_id="",
+            source_key=clean(current_route.get("source_key")) or "iris",
+        )
+        _render_workspace_pagination(
+            route=pagination_route,
+            current_page=current_page,
+            total_pages=total_pages,
+            total_rows=total_rows,
         )
 
     with summary_col:
@@ -9547,23 +9636,10 @@ def render_favorite_notice_page(
         page_size = int(filters["page_size"] or 20)
         total_rows = len(filtered_rows)
         total_pages = max(1, math.ceil(total_rows / page_size)) if page_size else 1
-        current_page = int(st.session_state.get(page_index_key, 1) or 1)
+        current_page = int(current_route.get("page_no") or st.session_state.get(page_index_key, 1) or 1)
         current_page = max(1, min(current_page, total_pages))
         st.session_state[page_index_key] = current_page
         selected_notice_id = clean(current_route.get("item_id")) if clean(current_route.get("view")) == "summary" else ""
-
-        st.caption(f"결과 {total_rows}건 · {current_page}/{total_pages} page")
-        pager_left, pager_mid, pager_right = st.columns([1, 4, 1])
-        with pager_left:
-            if st.button("이전", key="favorites_page_prev", use_container_width=True, disabled=current_page <= 1):
-                st.session_state[page_index_key] = current_page - 1
-                st.rerun()
-        with pager_mid:
-            st.markdown("", unsafe_allow_html=True)
-        with pager_right:
-            if st.button("다음", key="favorites_page_next", use_container_width=True, disabled=current_page >= total_pages):
-                st.session_state[page_index_key] = current_page + 1
-                st.rerun()
 
         def _select_favorite_preview(row: pd.Series) -> None:
             route = route_core.build_favorites_route(
@@ -9586,6 +9662,20 @@ def render_favorite_notice_page(
             empty_message="표시할 관심 공고가 없습니다.",
             selected_notice_id=selected_notice_id,
             on_select=_select_favorite_preview,
+        )
+        pagination_route = route_core.build_favorites_route(
+            filters=filters,
+            page_no=current_page,
+            page_size=page_size,
+            view="list",
+            item_id="",
+            source_key="favorites",
+        )
+        _render_workspace_pagination(
+            route=pagination_route,
+            current_page=current_page,
+            total_pages=total_pages,
+            total_rows=total_rows,
         )
 
     with summary_col:
@@ -13707,6 +13797,117 @@ def render_notice_queue_ui_styles() -> None:
     st.markdown(
         """
         <style>
+        .notice-queue-footer {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 0.75rem;
+          margin-top: 1.15rem;
+          padding: 0.2rem 0 0.4rem;
+        }
+        .notice-queue-footer-meta {
+          color: #6b7280;
+          font-size: 0.82rem;
+          font-weight: 700;
+          line-height: 2.15rem;
+          white-space: nowrap;
+        }
+        .notice-queue-page-slot {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
+        }
+        .notice-queue-pagination-wrap {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.8rem;
+        }
+        .notice-queue-pagination {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.7rem;
+        }
+        .notice-queue-page-nav {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: #4b5563 !important;
+          font-size: 1rem;
+          font-weight: 800;
+          text-decoration: none !important;
+        }
+        .notice-queue-page-nav.is-disabled {
+          color: #cbd5e1 !important;
+          pointer-events: none;
+        }
+        .notice-queue-page-link {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 38px;
+          height: 38px;
+          padding: 0 0.62rem;
+          border: 1px solid transparent;
+          border-radius: 9px;
+          background: transparent;
+          color: #4b5563 !important;
+          font-size: 1rem;
+          font-weight: 800;
+          line-height: 1;
+          text-decoration: none !important;
+        }
+        .notice-queue-page-link.is-active {
+          border-color: #2563eb;
+          background: #2563eb;
+          color: #ffffff !important;
+        }
+        .notice-queue-page-ellipsis {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 34px;
+          height: 38px;
+          color: #4b5563;
+          font-size: 1.05rem;
+          font-weight: 900;
+        }
+        .notice-queue-page-jump {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.55rem;
+        }
+        .notice-queue-page-jump input {
+          width: 64px;
+          height: 38px;
+          border: 1px solid #6b7280;
+          border-radius: 8px;
+          color: #4b5563;
+          font-size: 0.98rem;
+          font-weight: 800;
+          text-align: center;
+          background: #ffffff;
+        }
+        .notice-queue-page-jump-total {
+          color: #4b5563;
+          font-size: 0.98rem;
+          font-weight: 800;
+        }
+        .notice-queue-page-jump button {
+          height: 38px;
+          padding: 0 1rem;
+          border: 1px solid #3b82f6;
+          border-radius: 8px;
+          background: #eff6ff;
+          color: #2563eb;
+          font-size: 0.96rem;
+          font-weight: 900;
+          cursor: pointer;
+        }
         .notice-kpi-grid {
           display: grid;
           grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -14372,8 +14573,5 @@ def main(app_mode: str = "viewer"):
         source_datasets=source_datasets,
         show_internal_tabs=False,
     )
-
-
-
 
 

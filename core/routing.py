@@ -138,6 +138,12 @@ def serialize_route(route: Mapping[str, Any] | None = None) -> dict[str, str]:
     item_id = _clean(current.get("item_id"))
     if item_id:
         params["id"] = item_id
+    page_no = int(current.get("page_no") or 1)
+    page_size = int(current.get("page_size") or 20)
+    if page_no > 1:
+        params["page_no"] = str(page_no)
+    if page_size != 20:
+        params["page_size"] = str(page_size)
     return params
 
 
@@ -152,6 +158,14 @@ def deserialize_route(
     route["page"] = normalize_page_key(params.get("page")) or route["page"]
     route["view"] = _clean(params.get("view")) or route["view"]
     route["item_id"] = _clean(params.get("id"))
+    try:
+        route["page_no"] = max(1, int(params.get("page_no") or route["page_no"]))
+    except Exception:
+        pass
+    try:
+        route["page_size"] = max(1, int(params.get("page_size") or route["page_size"]))
+    except Exception:
+        pass
     route["source_key"] = route["source"]
     if route["page"] == "dashboard":
         route["source"] = "dashboard"
