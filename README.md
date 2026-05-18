@@ -1,3 +1,5 @@
+This repository is PUBLIC_VIEWER_REPO.
+
 # IRIS Viewer
 
 Streamlit viewer for IRIS R&D notices and selected external crawler sources.
