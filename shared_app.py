@@ -10325,7 +10325,8 @@ def _render_favorites_table(rows: pd.DataFrame, *, key_prefix: str) -> None:
         )
         if not keyword_chips:
             keyword_chips = '<span class="queue-grid-chip is-empty">키워드 없음</span>'
-        keywords_html = f'<div class="queue-grid-keywords">{keyword_chips}</div>'
+        keyword_class = "queue-grid-keywords is-single" if len(keyword_values) <= 1 else "queue-grid-keywords"
+        keywords_html = f'<div class="{keyword_class}">{keyword_chips}</div>'
         row_html.append(
             "".join(
                 [
@@ -15575,6 +15576,9 @@ def render_notice_queue_ui_styles() -> None:
           max-width: 100%;
           overflow: hidden;
           justify-content: flex-start;
+        }
+        .queue-grid-keywords.is-single {
+          justify-content: center;
         }
         .queue-grid-chip {
           flex: 0 0 auto;
