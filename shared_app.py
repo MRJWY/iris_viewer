@@ -10326,7 +10326,7 @@ def _render_favorites_table(rows: pd.DataFrame, *, key_prefix: str) -> None:
                     f'<div class="favorites-grid-row{row_class}">',
                     f'<div class="queue-grid-cell"><span class="favorites-grid-kind">{escape(type_badge)}</span></div>',
                     f'<div class="queue-grid-cell"><span class="notice-mailbox-status {_status_class(status_label)}">{escape(status_label)}</span></div>',
-                    '<div class="queue-grid-cell">',
+                    '<div class="queue-grid-cell is-title">',
                     f'<a class="queue-grid-title" href="{escape(_selection_href(row), quote=True)}" target="_self">{escape(truncate_text(row.get("Title"), max_chars=108))}</a>',
                     f'<div class="queue-grid-subtitle">{escape(truncate_text(clean(row.get("Source")) or "-", max_chars=18))} / {escape(truncate_text(clean(row.get("Subtitle")) or "-", max_chars=58))}</div>',
                     '</div>',
@@ -15432,11 +15432,6 @@ def render_notice_queue_ui_styles() -> None:
           align-items: center;
           justify-content: center;
           text-align: center;
-        }
-        .favorites-grid-head > div:nth-child(3),
-        .favorites-grid-head > div:nth-child(4) {
-          justify-content: flex-start;
-          text-align: left;
         }
         .favorites-grid-row {
           border-top: 1px solid #eef2f7;
