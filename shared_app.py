@@ -362,6 +362,14 @@ def clean(value) -> str:
     return str(value).strip()
 
 
+def normalize_row_dict(row: dict[str, object] | pd.Series | None) -> dict[str, object]:
+    if row is None:
+        return {}
+    if isinstance(row, pd.Series):
+        return row.to_dict()
+    return dict(row)
+
+
 def normalize_opportunity_source_key(source_key: object) -> str:
     return SOURCE_KEY_ALIAS_MAP.get(clean(source_key).lower(), clean(source_key).lower())
 
@@ -1882,7 +1890,7 @@ def _extract_dashboard_keywords(row: dict[str, object] | pd.Series, *, limit: in
 
 
 def _dashboard_review_value(row: dict[str, object] | pd.Series | None) -> str:
-    return clean(first_non_empty(row or {}, "Review", "review_status", "검토 여부", "검토여부"))
+    return clean(first_non_empty(normalize_row_dict(row), "Review", "review_status", "검토 여부", "검토여부"))
 
 
 def _count_dashboard_urgent_notices(rows: pd.DataFrame, *, max_days: int = 30) -> int:
@@ -4846,7 +4854,7 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
 def resolve_notice_source_key(row: dict | pd.Series | None) -> str:
     candidate_values: list[str] = []
     if row is not None:
-        row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row)
+        row_dict = normalize_row_dict(row)
         candidate_values.extend(
             [
                 clean(row_dict.get("source_key")),
@@ -5426,7 +5434,7 @@ def is_archived_review_status_value(value: object) -> bool:
 
 
 def derive_archive_reason_for_app(row: dict[str, object] | pd.Series) -> str:
-    row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
+    row_dict = normalize_row_dict(row)
     manual_archive = clean(first_non_empty(row_dict, "manual_archive")).upper() == "Y"
     review_status = first_non_empty(row_dict, "review_status", "검토여부", "검토 여부")
     current_value = first_non_empty(row_dict, "notice_is_current", "is_current")
@@ -5448,7 +5456,7 @@ def derive_archive_reason_for_app(row: dict[str, object] | pd.Series) -> str:
 
 
 def derive_archive_reason_label_for_app(row: dict[str, object] | pd.Series) -> str:
-    row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
+    row_dict = normalize_row_dict(row)
     existing = first_non_empty(row_dict, "archive_reason_label")
     if existing:
         return existing
@@ -7609,7 +7617,7 @@ def public_first_non_empty(row: dict, *keys: str) -> str:
 
 def render_public_notice_card(row: dict, *, top_related: dict | None = None, kind: str = "notice") -> None:
     top_related = top_related or {}
-    merged = {**top_related, **(row or {})}
+    merged = {**top_related, **normalize_row_dict(row)}
     period = public_first_non_empty(merged, "접수기간", "notice_period", "period", "신청기간")
     budget = extract_budget_summary(
         public_first_non_empty(
@@ -7740,7 +7748,7 @@ def render_public_notice_card(row: dict, *, top_related: dict | None = None, kin
 
 def render_rndcircle_like_sections(row: dict, *, top_related: dict | None = None, kind: str = "notice") -> None:
     top_related = top_related or {}
-    merged = {**top_related, **(row or {})}
+    merged = {**top_related, **normalize_row_dict(row)}
     period = public_first_non_empty(merged, "접수기간", "notice_period", "period", "신청기간")
     d_day = build_public_d_day(period)
     support_type = public_first_non_empty(merged, "지원 유형", "공모유형", "pbofr_type", "project_type") or "연구개발"
@@ -8334,7 +8342,7 @@ def _truncate_queue_text(value: object, max_chars: int = 170) -> str:
     return (trimmed or text[:max_chars].strip()).rstrip("., ") + "..."
 
 def _compose_queue_analysis(row: dict | pd.Series | None) -> str:
-    row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
+    row_dict = normalize_row_dict(row)
     title_text = _normalize_key_text(first_non_empty(row_dict, "notice_title", "공고명"))
     project_text = clean(first_non_empty(row_dict, "_queue_project_name"))
     reason_text = clean(first_non_empty(row_dict, "_queue_reason"))
@@ -8373,7 +8381,7 @@ def _compose_queue_analysis(row: dict | pd.Series | None) -> str:
     return ""
 
 def _review_value(row: dict | pd.Series | None) -> str:
-    row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
+    row_dict = normalize_row_dict(row)
     return clean(first_non_empty(row_dict, "review_status", "검토 여부", "검토여부"))
 
 def _review_series(rows: pd.DataFrame) -> pd.Series:
@@ -8613,7 +8621,7 @@ def _get_notice_row_by_id(rows: pd.DataFrame, notice_id: str) -> dict | pd.Serie
         return None
     for column in NOTICE_ID_CANDIDATES:
         selected_row = get_row_by_column_value(rows, column, selected_notice_id)
-        if selected_row:
+        if selected_row is not None:
             return selected_row
     return None
 
@@ -9587,7 +9595,7 @@ def _render_notice_queue_screen(
                 st.rerun()
         with info_col:
             st.markdown('<div class="page-note">Notice Queue / Notice Detail</div>', unsafe_allow_html=True)
-        if not selected_row:
+        if selected_row is None:
             st.info("표시할 공고가 없습니다.")
             return
         render_notice_detail_from_row(selected_row, detail_opportunity_df)
@@ -9998,7 +10006,7 @@ def render_notices_source(
 def resolve_route_source_key_for_row(row: dict | pd.Series | None, source_key: str | None = None) -> str:
     candidate_values = [source_key]
     if row is not None:
-        row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row)
+        row_dict = normalize_row_dict(row)
         candidate_values.extend(
             [
                 row_dict.get("source_key"),
@@ -10223,12 +10231,13 @@ def format_dashboard_deadline_badge(period_text: object, fallback: object = "") 
     return clean(fallback) or "-"
 
 
-def resolve_local_file_path(row: dict) -> Path | None:
-    if not row:
+def resolve_local_file_path(row: dict | pd.Series | None) -> Path | None:
+    row_dict = normalize_row_dict(row)
+    if not row_dict:
         return None
 
     for key in ["file_path", "파일경로"]:
-        candidate = clean(row.get(key))
+        candidate = clean(row_dict.get(key))
         if not candidate:
             continue
         path = Path(candidate)
@@ -10240,7 +10249,7 @@ def resolve_local_file_path(row: dict) -> Path | None:
 
 
 def ensure_notice_analysis_fallback(row: dict, top_related: dict) -> dict:
-    merged = dict(row or {})
+    merged = normalize_row_dict(row)
     if not top_related:
         return merged
 
@@ -10773,6 +10782,7 @@ def render_notice_comments(
 
 
 def _legacy_render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
+    row = normalize_row_dict(row)
     if not row:
         st.info("표시할 공고가 없습니다.")
         return
@@ -10969,6 +10979,7 @@ def _legacy_render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFram
 
 
 def render_pending_detail_from_row(row: dict) -> None:
+    row = normalize_row_dict(row)
     if not row:
         st.info("표시할 접수예정 공고가 없습니다.")
         return
@@ -11061,7 +11072,7 @@ def _pill_html(text: object, *, kind: str = "recommendation", base_class: str = 
 
 
 def _queue_row_context(row: dict[str, object] | pd.Series) -> dict[str, str]:
-    row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
+    row_dict = normalize_row_dict(row)
     recommendation = first_non_empty(row_dict, "recommendation", "llm_recommendation", "Recommendation") or "검토"
     score = _score_value(first_non_empty(row_dict, "llm_fit_score", "rfp_score", "점수", "Score"))
     period = first_non_empty(row_dict, "notice_period", "period", "Period", "접수기간", "요청기간")
@@ -11240,6 +11251,7 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
 
 
 def _legacy_render_opportunity_detail_from_row(row: dict) -> None:
+    row = normalize_row_dict(row)
     if not row:
         st.info("표시할 Opportunity가 없습니다.")
         return
@@ -11411,6 +11423,7 @@ def _legacy_render_opportunity_detail_from_row(row: dict) -> None:
 
 
 def _legacy_render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
+    row = normalize_row_dict(row)
     if not row:
         st.info("표시할 요약 공고가 없습니다.")
         return
@@ -13151,8 +13164,8 @@ def build_analysis_story_bundle(
     notice_row: dict | None = None,
     period_text: object = "",
 ) -> dict[str, object]:
-    base_row = row or {}
-    notice_row = notice_row or {}
+    base_row = normalize_row_dict(row)
+    notice_row = normalize_row_dict(notice_row)
 
     summary_text = first_non_empty(base_row, "llm_reason", "reason", "summary", "analysis_summary")
     background_text = first_non_empty(
@@ -13230,6 +13243,7 @@ def build_analysis_story_bundle(
     }
 
 def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
+    row = normalize_row_dict(row)
     if not row:
         st.info("표시할 공고가 없습니다.")
         return
@@ -13490,6 +13504,7 @@ def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> No
     )
 
 def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
+    row = normalize_row_dict(row)
     if not row:
         st.info("표시할 요약 공고가 없습니다.")
         return
@@ -13702,6 +13717,7 @@ def render_notice_page_with_scope(
     )
 
 def render_opportunity_detail_from_row(row: dict) -> None:
+    row = normalize_row_dict(row)
     if not row:
         st.info("표시할 Opportunity가 없습니다.")
         return
