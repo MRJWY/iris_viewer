@@ -2149,6 +2149,147 @@ def _resolve_dashboard_selected_row(
     return "", None
 
 
+def _workspace_row_id(row: dict[str, object] | pd.Series) -> str:
+    return clean(first_non_empty(row, "Row ID", "_row_id"))
+
+
+def _workspace_notice_id(row: dict[str, object] | pd.Series) -> str:
+    return clean(first_non_empty(row, "Notice ID", "공고ID", "notice_id"))
+
+
+def _workspace_source_key(row: dict[str, object] | pd.Series) -> str:
+    return resolve_route_source_key_for_row(row, source_key=first_non_empty(row, "source_key", "_source_key")) or "iris"
+
+
+def _build_notice_summary_lookup(opportunity_rows: pd.DataFrame) -> pd.DataFrame:
+    if opportunity_rows.empty:
+        return pd.DataFrame(
+            columns=[
+                "source_key",
+                "Notice ID",
+                "Recommendation",
+                "Score",
+                "Budget",
+                "Summary",
+                "Keywords",
+                "Project",
+            ]
+        )
+
+    working = opportunity_rows.copy()
+    working["Notice ID"] = series_from_candidates(working, ["Notice ID", "notice_id"])
+    working["source_key"] = series_from_candidates(working, ["source_key", "_source_key"])
+    working["Recommendation"] = series_from_candidates(working, ["Recommendation", "recommendation", "추천여부"])
+    working["Score"] = to_numeric_column(series_from_candidates(working, ["Score", "rfp_score", "점수"]))
+    working["Budget"] = series_from_candidates(working, ["Budget", "budget", "예산"])
+    working["Summary"] = series_from_candidates(working, ["Reason", "reason", "llm_reason"])
+    working["Keywords"] = series_from_candidates(working, ["Keywords", "keywords", "llm_keywords"])
+    working["Project"] = series_from_candidates(working, ["Project", "project_name", "llm_project_name", "해당 과제명"])
+    working = working.sort_values(
+        by=["Score", "_sort_date", "Project"],
+        ascending=[False, False, True],
+        na_position="last",
+    )
+    best = working.drop_duplicates(subset=["source_key", "Notice ID"], keep="first").copy()
+    return best[
+        ["source_key", "Notice ID", "Recommendation", "Score", "Budget", "Summary", "Keywords", "Project"]
+    ]
+
+
+def _normalize_workspace_notice_rows(
+    source_df: pd.DataFrame,
+    opportunity_rows: pd.DataFrame,
+) -> pd.DataFrame:
+    if source_df is None or source_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "Row ID",
+                "source_key",
+                "Source",
+                "Notice ID",
+                "Title",
+                "Notice No",
+                "Status",
+                "Period",
+                "Review",
+                "Agency",
+                "Ministry",
+                "Date",
+                "Detail Link",
+                "Scope",
+                "Recommendation",
+                "Score",
+                "Budget",
+                "Summary",
+                "Keywords",
+                "Project",
+                "D-Day",
+                "_sort_date",
+            ]
+        )
+
+    working = source_df.copy()
+    normalized = pd.DataFrame(index=working.index.copy())
+    normalized["Row ID"] = series_from_candidates(working, ["_collection_id", "_favorite_id", "Row ID"])
+    normalized["source_key"] = series_from_candidates(working, ["source_key", "_source_key"])
+    normalized["Source"] = series_from_candidates(working, ["매체", "source_label", "Source"])
+    normalized["Notice ID"] = series_from_candidates(working, ["공고ID", "notice_id", "Notice ID"])
+    normalized["Title"] = series_from_candidates(working, ["공고명", "notice_title", "Title"])
+    normalized["Notice No"] = series_from_candidates(working, ["공고번호", "notice_no", "ancm_no", "Notice No"])
+    normalized["Status"] = series_from_candidates(working, ["공고상태", "status", "rcve_status", "Status"])
+    normalized["Period"] = series_from_candidates(working, ["접수기간", "신청기간", "period", "Period"])
+    normalized["Review"] = series_from_candidates(working, ["검토 여부", "검토여부", "review_status", "Review"])
+    normalized["Agency"] = series_from_candidates(working, ["전문기관", "담당부서", "agency", "Agency"])
+    normalized["Ministry"] = series_from_candidates(working, ["소관부처", "주관부처", "ministry", "Ministry"])
+    normalized["Date"] = series_from_candidates(working, ["공고일자", "registered_at", "ancm_de", "등록일", "Date"])
+    normalized["Scope"] = series_from_candidates(working, ["_notice_scope", "Scope"])
+    normalized["Detail Link"] = working.apply(
+        lambda row: resolve_external_detail_link(row, source_key=clean(first_non_empty(row, "source_key", "_source_key"))),
+        axis=1,
+    )
+    normalized["Recommendation"] = series_from_candidates(working, ["대표추천도", "_queue_recommendation", "Recommendation"])
+    normalized["Score"] = to_numeric_column(series_from_candidates(working, ["대표점수", "_queue_score", "Score"]))
+    normalized["Budget"] = series_from_candidates(working, ["대표예산", "예산", "_queue_budget", "Budget"])
+    normalized["Summary"] = series_from_candidates(working, ["대표추천이유", "_queue_analysis", "_queue_reason", "Summary"])
+    normalized["Keywords"] = series_from_candidates(working, ["대표키워드", "_queue_keywords", "Keywords"])
+    normalized["Project"] = series_from_candidates(working, ["대표과제명", "_queue_project_name", "Project"])
+    normalized["_sort_date"] = parse_date_column(normalized["Date"])
+
+    summary_lookup = _build_notice_summary_lookup(opportunity_rows)
+    if not summary_lookup.empty:
+        merged = normalized.merge(summary_lookup, on=["source_key", "Notice ID"], how="left", suffixes=("", "_joined"))
+        for column in ["Recommendation", "Budget", "Summary", "Keywords", "Project"]:
+            merged[column] = series_from_candidates(merged, [column, f"{column}_joined"])
+        merged["Score"] = to_numeric_column(series_from_candidates(merged, ["Score", "Score_joined"]))
+        normalized = merged
+
+    source_defaults = {"iris": "IRIS", "tipa": "MSS", "nipa": "NIPA"}
+    normalized["Source"] = normalized.apply(
+        lambda row: clean(row.get("Source")) or source_defaults.get(clean(row.get("source_key")), "-"),
+        axis=1,
+    )
+    normalized["D-Day"] = normalized.apply(
+        lambda row: format_dashboard_deadline_badge(row.get("Period"), row.get("Status")),
+        axis=1,
+    )
+    return normalized.sort_values(
+        by=["_sort_date", "Source", "Title"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+
+
+def _build_workspace_notice_rows(
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+    opportunity_rows: pd.DataFrame,
+) -> pd.DataFrame:
+    return _normalize_workspace_notice_rows(
+        build_crawled_notice_collection(datasets, source_datasets),
+        opportunity_rows,
+    )
+
+
 def _render_same_tab_link_button(label: str, href: str, *, kind: str = "secondary", key: str = "") -> None:
     if not clean(href):
         st.button(label, key=key or f"disabled_{label}_{kind}", disabled=True, use_container_width=True)
@@ -14622,178 +14763,124 @@ def _inject_public_workspace_shell_styles() -> None:
         """
         <style>
         .app-shell {
-          min-height: 68px;
+          min-height: 96px;
           display: grid;
-          grid-template-columns: minmax(220px, 260px) minmax(320px, 1fr) minmax(320px, auto);
+          grid-template-columns: auto minmax(320px, 1fr) auto;
           align-items: center;
-          gap: 1.1rem;
-          margin: -0.45rem 0 1.25rem;
-          padding: 0.1rem 0.4rem 0.2rem;
-          background: rgba(255, 255, 255, 0.98);
-          border-bottom: 1px solid #dbe4f0;
+          gap: 1.6rem;
+          margin: -0.15rem 0 0.9rem;
+          padding: 0;
+          background: #ffffff;
+          border-bottom: 1px solid #e5e7eb;
         }
         .app-brand {
           display: flex;
           align-items: center;
-          gap: 0.75rem;
-          color: #0f172a;
-          font-size: 1rem;
-          font-weight: 800;
+          gap: 0;
+          color: #111827;
+          font-size: 1.28rem;
+          font-weight: 700;
           white-space: nowrap;
         }
-        .app-brand-mark {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 32px;
-          height: 32px;
-          color: #ffffff;
-          background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
-          font-size: 1rem;
-          font-weight: 800;
-          border-radius: 10px;
-          box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
-        }
         .app-brand-copy {
-          display: flex;
-          align-items: baseline;
-          gap: 0.42rem;
+          display: block;
         }
         .app-brand-title {
-          color: #0f172a;
-          font-size: 0.98rem;
-          font-weight: 850;
-        }
-        .app-brand-subtitle {
-          color: #475569;
-          font-size: 0.76rem;
-          font-weight: 650;
+          color: #111827;
+          font-size: 1.36rem;
+          font-weight: 700;
+          font-family: "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", "Segoe UI", sans-serif;
+          line-height: 1.15;
+          letter-spacing: -0.05em;
         }
         .app-nav {
           display: flex;
-          align-items: stretch;
+          align-items: center;
           height: 100%;
-          gap: 1.45rem;
+          gap: 2.35rem;
           min-width: 0;
+          overflow-x: auto;
+          overflow-y: hidden;
+          scrollbar-width: none;
+        }
+        .app-nav::-webkit-scrollbar {
+          display: none;
         }
         .app-nav-item {
           display: inline-flex;
           align-items: center;
-          height: 100%;
-          color: #475569;
-          border-bottom: 2px solid transparent;
-          font-size: 0.94rem;
-          font-weight: 650;
+          height: 96px;
+          color: #1f2937;
+          border-bottom: 3px solid transparent;
+          font-size: 1.3rem;
+          font-weight: 700;
+          font-family: "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", "Segoe UI", sans-serif;
+          line-height: 1;
+          letter-spacing: -0.035em;
           text-decoration: none !important;
           white-space: nowrap;
-        }
-        .app-nav-item:hover {
-          color: #1d4ed8;
+          flex: 0 0 auto;
         }
         .app-nav-item-active {
           color: #2563eb;
           border-bottom-color: #2563eb;
+          font-weight: 700;
+        }
+        .app-nav-item:hover {
+          color: #1f2937;
         }
         .app-actions {
           display: flex;
           align-items: center;
           justify-content: flex-end;
-          gap: 0.7rem;
+          gap: 0.55rem;
           min-width: 0;
         }
-        .app-search {
-          min-width: min(290px, 34vw);
-          height: 38px;
-          display: flex;
-          align-items: center;
-          gap: 0.55rem;
-          padding: 0 0.95rem;
-          color: #94a3b8;
-          background: #ffffff;
-          border: 1px solid #dbe3ef;
-          border-radius: 10px;
-          font-size: 0.86rem;
-          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-        }
-        .app-search-icon {
-          color: #475569;
-          font-size: 0.84rem;
-        }
-        .app-icon-button,
         .app-user-menu {
-          min-height: 38px;
+          min-height: 44px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          padding: 0 0.9rem;
-          color: #475569;
+          padding: 0 1rem;
+          color: #374151;
           background: #ffffff;
-          border: 1px solid #dbe3ef;
-          border-radius: 10px;
-          font-size: 0.84rem;
-          font-weight: 650;
+          border: 1px solid #e5e7eb;
+          border-radius: 12px;
+          font-size: 0.94rem;
+          font-weight: 700;
           white-space: nowrap;
-          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-        }
-        .app-icon-button {
-          position: relative;
-          width: 38px;
-          padding: 0;
-        }
-        .app-notice-badge {
-          position: absolute;
-          top: -4px;
-          right: -3px;
-          min-width: 18px;
-          height: 18px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          padding: 0 0.2rem;
-          color: #ffffff;
-          background: #ef4444;
-          border: 2px solid #ffffff;
-          border-radius: 999px;
-          font-size: 0.66rem;
-          font-weight: 800;
-          line-height: 1;
+          box-shadow: none;
         }
         .app-user-menu {
           align-items: flex-start;
           flex-direction: column;
-          gap: 0.1rem;
-          min-width: 92px;
+          gap: 0.16rem;
+          min-width: 118px;
         }
         .app-user-name {
-          color: #0f172a;
-          font-size: 0.84rem;
-          font-weight: 850;
+          color: #111827;
+          font-size: 0.94rem;
+          font-weight: 800;
           line-height: 1.1;
         }
         .app-user-role {
-          color: #64748b;
-          font-size: 0.7rem;
-          font-weight: 700;
+          color: #6b7280;
+          font-size: 0.78rem;
+          font-weight: 600;
           line-height: 1.1;
         }
-        @media (max-width: 1200px) {
+        @media (max-width: 900px) {
           .app-shell {
             grid-template-columns: 1fr;
-            gap: 0.7rem;
-            padding-bottom: 0.8rem;
+            align-items: flex-start;
+            gap: 0.45rem;
           }
           .app-actions {
             justify-content: flex-start;
             flex-wrap: wrap;
           }
-          .app-search {
-            min-width: 0;
-            width: 100%;
-          }
-        }
-        @media (max-width: 780px) {
           .app-nav {
-            overflow-x: auto;
+            width: 100%;
           }
         }
         </style>
@@ -14805,10 +14892,10 @@ def _inject_public_workspace_shell_styles() -> None:
 def render_public_workspace_navigation(mode_config: AppModeConfig, current_source: str, current_page: str) -> None:
     _inject_public_workspace_shell_styles()
     nav_items = [
-        ("Dashboard", "dashboard", "dashboard"),
-        ("RFP Queue", "iris", "rfp_queue"),
-        ("Notice Queue", "notices", "notice_queue"),
-        ("Favorites", "favorites", "favorites"),
+        (item.label, item.source_key, item.page_key)
+        for group in mode_config.nav_groups
+        if group.key == "workspace"
+        for item in group.items
     ]
     nav_links: list[str] = []
     for label, source_key, page_key in nav_items:
@@ -14823,15 +14910,12 @@ def render_public_workspace_navigation(mode_config: AppModeConfig, current_sourc
         (
             '<div class="app-shell">'
             '<div class="app-brand">'
-            '<span class="app-brand-mark">X</span>'
             '<span class="app-brand-copy">'
             '<span class="app-brand-title">R&amp;D Opportunity</span>'
-            '<span class="app-brand-subtitle">Public Viewer</span>'
             '</span>'
             '</div>'
             f'<nav class="app-nav">{"".join(nav_links)}</nav>'
             '<div class="app-actions">'
-            '<div class="app-icon-button" aria-label="Notifications">&#128276;<span class="app-notice-badge">3</span></div>'
             f'<div class="app-user-menu"><span class="app-user-name">{user_label}</span><span class="app-user-role">Researcher</span></div>'
             '</div>'
             '</div>'
@@ -14845,60 +14929,370 @@ def _inject_compact_public_dashboard_styles() -> None:
         """
         <style>
         .main .block-container {
-          max-width: min(1920px, calc(100vw - 0.75rem));
-          padding-left: 0.7rem;
-          padding-right: 0.7rem;
-          padding-top: 0.85rem;
+          max-width: 1360px;
+          padding-left: 28px;
+          padding-right: 28px;
+          padding-top: 0.2rem;
         }
         .app-shell {
-          gap: 0.9rem;
-          margin-bottom: 0.8rem;
-          grid-template-columns: minmax(220px, 250px) minmax(320px, 1fr) auto;
-        }
-        .dashboard-shell {
-          padding: 0;
-          gap: 0.85rem;
+          gap: 1.35rem;
+          margin: -0.1rem 0 0.14rem;
+          grid-template-columns: auto minmax(320px, 1fr) auto;
         }
         .dashboard-section,
         .queue-table-card,
         .summary-panel {
           border-radius: 14px;
-          padding: 0.95rem 1rem;
+          padding: 1rem 1.05rem;
         }
         .dashboard-kpi-grid {
+          display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 0.8rem;
-          margin: 0.45rem 0 0.95rem;
+          gap: 1rem;
+          margin: 0.15rem 0 0.9rem;
+        }
+        .dashboard-kpi-card {
+          position: relative;
+          display: block;
+          min-height: 108px;
+          padding: 0.95rem 1rem;
+          background: #ffffff;
+          border: 1px solid #e5e5e5;
+          border-radius: 10px;
+          color: #000000;
+          text-decoration: none !important;
+          box-shadow: none;
+        }
+        .dashboard-kpi-label {
+          font-size: 0.92rem;
+          margin-bottom: 0.42rem;
+          color: #757575;
+          font-weight: 600;
+        }
+        .dashboard-kpi-value {
+          font-size: 2rem;
+          color: #000000;
+          font-weight: 700;
+        }
+        .dashboard-kpi-caption {
+          font-size: 0.82rem;
+          color: #757575;
+          font-weight: 600;
+        }
+        .dashboard-kpi-symbol {
+          position: absolute;
+          top: 0.95rem;
+          right: 0.9rem;
+          width: 40px;
+          height: 40px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 10px;
+          font-size: 0.78rem;
+          font-weight: 800;
+          border: 1px solid #e5e5e5;
+          background: #f5f5f5;
+          color: #0050a9;
+        }
+        .dashboard-kpi-card.is-blue .dashboard-kpi-symbol {
+          background: #ecf5fa;
+          border-color: #bcd7ee;
+          color: #0050a9;
+        }
+        .dashboard-kpi-card.is-red .dashboard-kpi-symbol {
+          background: #fff1f1;
+          border-color: #f0c1c1;
+          color: #cb0000;
+        }
+        .dashboard-kpi-card.is-green .dashboard-kpi-symbol {
+          background: #eef8f0;
+          border-color: #c7dfcb;
+          color: #0d7a3b;
+        }
+        .dashboard-section {
+          margin-top: 1rem;
+          background: #ffffff;
+          border: 1px solid #e5e5e5;
+          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
+        }
+        .dashboard-section-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.75rem;
+          margin-bottom: 0.9rem;
+          padding-bottom: 0.75rem;
+          border-bottom: 1px solid #e5e5e5;
+        }
+        .dashboard-section-title {
+          position: relative;
+          padding-left: 12px;
+          color: #000000;
+          font-size: 1.04rem;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+        }
+        .dashboard-section-title::before {
+          content: "";
+          position: absolute;
+          left: 0;
+          top: 0.15rem;
+          width: 5px;
+          height: 1.1rem;
+          background: #0050a9;
+        }
+        .dashboard-section-link {
+          color: #0050a9 !important;
+          font-size: 0.8rem;
+          font-weight: 700;
+          text-decoration: none !important;
+        }
+        .dashboard-carousel-note {
+          margin: -0.2rem 0 0.9rem;
+          color: #6b7280;
+          font-size: 0.82rem;
+          font-weight: 500;
         }
         .rfp-card {
-          min-height: 208px;
-          padding: 0.9rem;
+          flex: 0 0 360px;
+          min-height: 236px;
+          padding: 0.95rem;
+          display: flex;
+          flex-direction: column;
+          background: #ffffff;
+          border: 1px solid #e5e7eb;
+          border-radius: 14px;
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+          text-decoration: none !important;
+          color: #000000;
         }
         .rfp-card-title {
-          font-size: 0.92rem;
+          color: #000000;
+          font-size: 1rem;
+          font-weight: 700;
+          line-height: 1.4;
+          margin-bottom: 0.45rem;
         }
         .rfp-card-notice,
-        .rfp-card-analysis,
+        .rfp-card-agency,
         .rfp-card-meta,
         .notice-row-meta,
         .notice-row-summary {
           font-size: 0.78rem;
+          color: #757575;
+        }
+        .rfp-card-topline,
+        .rfp-card-topline-left,
+        .rfp-card-meta {
+          display: flex;
+          align-items: center;
+        }
+        .rfp-card-topline {
+          justify-content: space-between;
+          gap: 0.7rem;
+          margin-bottom: 0.6rem;
+        }
+        .rfp-card-topline-left {
+          gap: 0.4rem;
+        }
+        .rfp-card-rank {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 28px;
+          height: 28px;
+          padding: 0 0.5rem;
+          border-radius: 5px;
+          background: #0050a9;
+          color: #ffffff;
+          font-size: 0.75rem;
+          font-weight: 800;
+        }
+        .dashboard-pill {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 24px;
+          padding: 0 0.5rem;
+          border-radius: 5px;
+          font-size: 0.7rem;
+          font-weight: 700;
+        }
+        .dashboard-pill.is-recommend {
+          background: #ecf5fa;
+          color: #0050a9;
+        }
+        .dashboard-pill.is-review {
+          background: #fff5eb;
+          color: #f89321;
+        }
+        .rfp-card-score {
+          font-size: 0.98rem;
+          color: #0050a9;
+          font-weight: 800;
+        }
+        .rfp-card-keywords {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.35rem;
+          margin-top: 0.75rem;
+        }
+        .rfp-card-keyword {
+          font-size: 0.72rem;
+          padding: 0.18rem 0.42rem;
+          border-radius: 5px;
+          background: #ecf5fa;
+          color: #0050a9;
+          font-weight: 700;
+        }
+        .rfp-card-agency {
+          margin: 0.7rem 0 0.75rem;
+          color: #333333;
+          font-weight: 600;
+        }
+        .rfp-card-meta {
+          margin-top: auto;
+          justify-content: space-between;
+          gap: 0.5rem;
+          border-top: 1px solid #eeeeee;
+          padding-top: 0.7rem;
         }
         .dashboard-search-meta {
           color: #64748b;
-          font-size: 0.8rem;
-          font-weight: 700;
+          font-size: 0.78rem;
+          font-weight: 600;
           display: flex;
           align-items: center;
-          min-height: 2.4rem;
+          justify-content: flex-end;
+          min-height: 52px;
+          white-space: nowrap;
+          text-align: right;
+        }
+        .dashboard-bottom-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1rem;
+          margin-top: 0;
+        }
+        .dashboard-list-panel {
+          min-height: 320px;
+        }
+        .dashboard-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+        .dashboard-list-item {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 0.9rem;
+          padding: 0.9rem 0.95rem;
+          color: #000000;
+          text-decoration: none !important;
+          border: 1px solid #e5e7eb;
+          border-radius: 14px;
+          background: #ffffff;
+          box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+          transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+        }
+        .dashboard-list-item:hover {
+          transform: translateY(-1px);
+          border-color: #cbd5e1;
+          background: #f8fafc;
+          box-shadow: 0 10px 22px rgba(15, 23, 42, 0.07);
+        }
+        .dashboard-list-main {
+          min-width: 0;
+        }
+        .dashboard-list-title {
+          color: #000000;
+          font-size: 0.9rem;
+          font-weight: 700;
+          line-height: 1.38;
+        }
+        .dashboard-list-meta {
+          margin-top: 0.22rem;
+          color: #757575;
+          font-size: 0.78rem;
+          line-height: 1.4;
+        }
+        .dashboard-list-side {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 0.3rem;
+          color: #64748b;
+          font-size: 0.76rem;
+          font-weight: 600;
+          line-height: 1.2;
+        }
+        .dashboard-dday-pill {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 56px;
+          height: 28px;
+          padding: 0 0.7rem;
+          border-radius: 999px;
+          font-size: 0.76rem;
+          font-weight: 850;
+          letter-spacing: 0.01em;
+          white-space: nowrap;
+        }
+        .dashboard-dday-pill.is-critical {
+          color: #ffffff;
+          background: #cb0000;
+        }
+        .dashboard-dday-pill.is-warning {
+          color: #ffffff;
+          background: #f89321;
+        }
+        .dashboard-dday-pill.is-calm {
+          color: #ffffff;
+          background: #0050a9;
+        }
+        .dashboard-activity-icon {
+          width: 38px;
+          height: 38px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: #0050a9;
+          background: #ecf5fa;
+          border-radius: 12px;
+          font-size: 0.76rem;
+          font-weight: 850;
+        }
+        .dashboard-list-date {
+          color: #6b7280;
+        }
+        .dashboard-list-empty,
+        .dashboard-empty {
+          color: #757575;
+          font-size: 0.92rem;
+          padding: 0.4rem 0 0.1rem;
         }
         .notice-row-head,
         .notice-row-body {
           grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr) minmax(0, 3fr) minmax(0, 1.55fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1.15fr) minmax(0, 2.2fr) minmax(0, 0.85fr);
         }
-        @media (max-width: 980px) {
+        @media (max-width: 1180px) {
+          .dashboard-bottom-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+        @media (max-width: 900px) {
           .dashboard-kpi-grid {
             grid-template-columns: 1fr;
+          }
+          .dashboard-search-meta {
+            justify-content: flex-start;
+            text-align: left;
+          }
+          .rfp-card {
+            flex-basis: min(86vw, 340px);
           }
         }
         </style>
@@ -14931,7 +15325,7 @@ def _filter_public_dashboard_frames(
         filtered_notices = filtered_notices[
             build_contains_mask(
                 filtered_notices,
-                ["공고명", "notice_title", "agency", "전문기관", "소관부처", "_queue_analysis", "_queue_project_name", "budget"],
+                ["Title", "Agency", "Ministry", "Notice No", "Notice ID", "Summary", "Project"],
                 search_text,
             )
         ].copy()
@@ -15011,27 +15405,34 @@ def _render_dashboard_workspace(
         if not opportunity_index.empty
         else pd.DataFrame()
     )
-    notice_rows = _build_dashboard_notice_inbox_rows(datasets, source_datasets)
+    notice_rows = _build_workspace_notice_rows(datasets, source_datasets, opportunity_index)
+    if not notice_rows.empty:
+        notice_rows = notice_rows.sort_values(
+            by=["_sort_date", "Source", "Title"],
+            ascending=[False, True, True],
+            na_position="last",
+        )
     favorite_count = len(build_favorite_notice_df(datasets["notice_view"], source_datasets or {}))
     urgent_count = int(
-        len(build_dashboard_deadline_table(build_dashboard_notice_index(datasets, source_datasets, archived=False), limit=30))
+        len(
+            build_dashboard_deadline_table(
+                notice_rows if not notice_rows.empty else build_dashboard_notice_index(datasets, source_datasets, archived=False),
+                limit=None,
+            )
+        )
     )
 
-    search_cols = st.columns([5.3, 1.1, 2.1], gap="small")
+    search_cols = st.columns([13.4, 1.2], gap="small")
     with search_cols[0]:
         dashboard_search = clean(
             st.text_input(
                 "Dashboard Search",
                 key="public_dashboard_compact_search_text",
-                placeholder="공고명, 과제명, 키워드, 기관 검색",
+                placeholder="공고명, 과제명, 키워드, 기관명 검색",
                 label_visibility="collapsed",
             )
         )
     with search_cols[1]:
-        if st.button("초기화", key="public_dashboard_compact_search_reset", use_container_width=True):
-            st.session_state["public_dashboard_compact_search_text"] = ""
-            st.rerun()
-    with search_cols[2]:
         updated_at = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M")
         st.markdown(
             f'<div class="dashboard-search-meta">업데이트 {escape(updated_at)}</div>',
@@ -15048,39 +15449,191 @@ def _render_dashboard_workspace(
         if not filtered_opportunity_rows.empty
         else pd.DataFrame()
     )
-    preview_rows = filtered_notice_rows.head(10).copy() if not filtered_notice_rows.empty else pd.DataFrame()
+    top_rows = recommended_filtered.head(10).copy() if not recommended_filtered.empty else pd.DataFrame()
+
+    def _deadline_sort_key(value: object) -> int | None:
+        text = clean(value)
+        if not text or text in {"-", "마감"}:
+            return None
+        if text == "D-Day":
+            return 0
+        match = re.fullmatch(r"D-(\d+)", text)
+        if not match:
+            return None
+        return int(match.group(1))
+
+    deadline_preview_rows = pd.DataFrame()
+    if not filtered_notice_rows.empty:
+        deadline_preview_rows = filtered_notice_rows.copy()
+        deadline_preview_rows["_deadline_sort"] = deadline_preview_rows["D-Day"].apply(_deadline_sort_key)
+        deadline_preview_rows = deadline_preview_rows[deadline_preview_rows["_deadline_sort"].notna()].copy()
+        if not deadline_preview_rows.empty:
+            deadline_preview_rows["_deadline_sort"] = deadline_preview_rows["_deadline_sort"].astype(int)
+            deadline_preview_rows = deadline_preview_rows.sort_values(
+                by=["_deadline_sort", "_sort_date", "Title"],
+                ascending=[True, False, True],
+                na_position="last",
+            ).head(5)
+
+    recent_notice_rows = pd.DataFrame()
+    if not filtered_notice_rows.empty:
+        recent_notice_rows = filtered_notice_rows.sort_values(
+            by=["_sort_date", "Title"],
+            ascending=[False, True],
+            na_position="last",
+        ).head(5).copy()
 
     if dashboard_search:
-        st.caption(f"검색 결과: 추천 RFP {len(recommended_filtered.head(5))}건, 최근 공고 {len(preview_rows)}건")
+        st.caption(f"검색 결과: 추천 RFP {len(top_rows)}건, 마감 임박 {len(deadline_preview_rows)}건")
 
-    _render_dashboard_kpi_cards(
-        recommended_rows.head(len(recommended_rows)),
-        build_dashboard_notice_index(datasets, source_datasets, archived=False),
+    kpi_cards = [
+        ("추천 RFP", f"{len(recommended_rows)}건", "AI 추천 기준", "iris", "rfp_queue", "blue", "RFP"),
+        ("마감 임박", f"{urgent_count}건", "D-30 이내", "notices", "notice_queue", "red", "D-30"),
+        ("관심공고", f"{favorite_count}건", "저장된 공고", "favorites", "favorites", "green", "SAVE"),
+    ]
+    st.markdown(
+        '<section class="dashboard-kpi-grid">'
+        + "".join(
+            (
+                f'<a class="dashboard-kpi-card is-{tone}" href="?source={source}&page={page}&view=table" target="_self">'
+                f'<div class="dashboard-kpi-label">{escape(label)}</div>'
+                f'<div class="dashboard-kpi-value">{escape(value)}</div>'
+                f'<div class="dashboard-kpi-caption">{escape(caption)}</div>'
+                f'<div class="dashboard-kpi-symbol">{escape(symbol)}</div>'
+                '</a>'
+            )
+            for label, value, caption, source, page, tone, symbol in kpi_cards
+        )
+        + '</section>',
+        unsafe_allow_html=True,
     )
 
-    top_left, top_right = st.columns([6, 1.8], gap="medium")
-    with top_left:
-        st.markdown(
-            '<div class="oppty-section-header"><div><div class="oppty-section-title">추천 RFP Top 5</div><div class="oppty-section-subtitle">핵심 정보만 빠르게 훑고 상세 검토가 필요한 공고만 선별합니다.</div></div></div>',
-            unsafe_allow_html=True,
+    card_html: list[str] = []
+    for rank, (_, row) in enumerate(top_rows.iterrows(), start=1):
+        ctx = _queue_row_context(row)
+        row_id = clean(row.get("Row ID"))
+        href = build_route_href("rfp_queue", row_id, source_key=resolve_route_source_key_for_row(row))
+        recommendation_text = clean(ctx["recommendation"]) or "검토필요"
+        recommendation_class = "is-recommend" if is_positive_recommendation(recommendation_text) else "is-review"
+        keywords_html = "".join(
+            f'<span class="rfp-card-keyword">{escape(keyword)}</span>'
+            for keyword in _extract_dashboard_keywords(row, limit=3)
         )
-    with top_right:
-        st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        if st.button("전체 RFP Queue 보기", key="public_dashboard_to_rfp_queue", use_container_width=True):
-            navigate_to_route_state(route_core.build_rfp_queue_route(), push=True)
-    _render_dashboard_top_rfp_cards(recommended_filtered, selected_item_id="", on_select=None, visible_count=5)
+        keyword_markup = keywords_html or '<span class="rfp-card-keyword">RFP</span>'
+        agency_line = " / ".join(
+            part for part in [ctx["ministry"], ctx["agency"]] if clean(part) and part != "-"
+        ) or ctx["agency"]
+        score_text = clean(ctx["score"])
+        score_label = f"{score_text}점" if score_text and score_text != "-" else "-"
+        card_html.append(
+            (
+                f'<a class="rfp-card" href="{escape(href, quote=True)}" target="_self">'
+                '<div class="rfp-card-topline">'
+                '<div class="rfp-card-topline-left">'
+                f'<span class="rfp-card-rank">{rank}</span>'
+                f'<span class="dashboard-pill {recommendation_class}">{escape(recommendation_text)}</span>'
+                '</div>'
+                f'<span class="rfp-card-score">{escape(score_label)}</span>'
+                '</div>'
+                f'<div class="rfp-card-title">{escape(truncate_text(ctx["project"], max_chars=56))}</div>'
+                f'<div class="rfp-card-notice">{escape(truncate_text(ctx["notice"], max_chars=72))}</div>'
+                f'<div class="rfp-card-keywords">{keyword_markup}</div>'
+                f'<div class="rfp-card-agency">{escape(truncate_text(agency_line, max_chars=40))}</div>'
+                '<div class="rfp-card-meta">'
+                f'<span>{escape(ctx["period"])}</span>'
+                f'<strong>{escape(ctx["deadline"])}</strong>'
+                f'<span>{escape(ctx["budget"])}</span>'
+                '</div>'
+                '</a>'
+            )
+        )
+    st.markdown(
+        (
+            '<section class="dashboard-section">'
+            '<div class="dashboard-section-header">'
+            '<div class="dashboard-section-title">추천 RFP Top 10</div>'
+            '<a class="dashboard-section-link" href="?source=iris&page=rfp_queue&view=table" target="_self">전체 RFP Queue 보기</a>'
+            '</div>'
+            '<div class="dashboard-carousel-note">좌우로 넘겨서 추천 RFP 10개를 확인할 수 있습니다.</div>'
+            f"""<div class="rfp-card-row">{"".join(card_html) if card_html else '<div class="dashboard-empty">표시할 추천 RFP가 없습니다.</div>'}</div>"""
+            '</section>'
+        ),
+        unsafe_allow_html=True,
+    )
 
-    notice_left, notice_right = st.columns([6, 2.0], gap="medium")
-    with notice_left:
-        st.markdown(
-            '<div class="oppty-section-header"><div><div class="oppty-section-title">최근 공고 (Notice Inbox)</div><div class="oppty-section-subtitle">최신 공고 10건만 compact inbox로 보여줍니다.</div></div></div>',
-            unsafe_allow_html=True,
+    deadline_body: list[str] = []
+    for _, row in deadline_preview_rows.iterrows():
+        source_key = _workspace_source_key(row)
+        notice_id = clean(row.get("Notice ID"))
+        href = build_dashboard_notice_route(source_key, notice_id)
+        dday_label = clean(row.get("D-Day")) or "-"
+        dday_sort = _deadline_sort_key(dday_label)
+        tone = "is-calm"
+        if dday_sort is not None and dday_sort <= 3:
+            tone = "is-critical"
+        elif dday_sort is not None and dday_sort <= 14:
+            tone = "is-warning"
+        agency_line = " / ".join(
+            part for part in [clean(row.get("Ministry")), clean(row.get("Agency"))]
+            if part and part != "-"
+        ) or clean(row.get("Agency")) or clean(row.get("Source")) or "-"
+        budget_text = extract_budget_summary(clean(row.get("Budget"))) or clean(row.get("Budget")) or "-"
+        deadline_body.append(
+            (
+                f'<a class="dashboard-list-item" href="{escape(href, quote=True)}" target="_self">'
+                f'<span class="dashboard-dday-pill {tone}">{escape(dday_label)}</span>'
+                '<div class="dashboard-list-main">'
+                f'<div class="dashboard-list-title">{escape(truncate_text(clean(row.get("Title")), max_chars=70))}</div>'
+                f'<div class="dashboard-list-meta">{escape(truncate_text(agency_line, max_chars=56))}</div>'
+                '</div>'
+                f'<div class="dashboard-list-side">{escape(truncate_text(budget_text, max_chars=14))}</div>'
+                '</a>'
+            )
         )
-    with notice_right:
-        st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        if st.button("전체 Notice Queue 보기", key="public_dashboard_to_notice_queue", use_container_width=True):
-            navigate_to_route_state(route_core.build_notice_queue_route(), push=True)
-    _render_dashboard_recent_notice_inbox(preview_rows, limit=10)
+
+    recent_notice_body: list[str] = []
+    for _, row in recent_notice_rows.iterrows():
+        source_key = _workspace_source_key(row)
+        notice_id = clean(row.get("Notice ID"))
+        href = build_dashboard_notice_route(source_key, notice_id)
+        source_label = clean(row.get("Source")) or "-"
+        status_badge = notice_status_badge_html(row.get("Status"))
+        date_text = clean(row.get("Date")) or "-"
+        period_text = clean(row.get("Period")) or "-"
+        recent_notice_body.append(
+            (
+                f'<a class="dashboard-list-item" href="{escape(href, quote=True)}" target="_self">'
+                f'<span class="dashboard-activity-icon">{escape(source_label[:4] or "공고")}</span>'
+                '<div class="dashboard-list-main">'
+                f'<div class="dashboard-list-title">{escape(truncate_text(clean(row.get("Title")), max_chars=70))}</div>'
+                f'<div class="dashboard-list-meta">{escape(truncate_text(period_text, max_chars=52))}</div>'
+                '</div>'
+                f'<div class="dashboard-list-side">{status_badge}<div class="dashboard-list-date">{escape(date_text)}</div></div>'
+                '</a>'
+            )
+        )
+
+    st.markdown(
+        (
+            '<div class="dashboard-bottom-grid">'
+            '<section class="dashboard-section dashboard-list-panel">'
+            '<div class="dashboard-section-header">'
+            '<div class="dashboard-section-title">최근 공고</div>'
+            '<a class="dashboard-section-link" href="?source=notices&page=notice_queue&view=table" target="_self">전체 보기</a>'
+            '</div>'
+            f"""<div class="dashboard-list">{"".join(recent_notice_body) if recent_notice_body else '<div class="dashboard-list-empty">표시할 최근 공고가 없습니다.</div>'}</div>"""
+            '</section>'
+            '<section class="dashboard-section dashboard-list-panel">'
+            '<div class="dashboard-section-header">'
+            '<div class="dashboard-section-title">마감 임박 공고</div>'
+            '<a class="dashboard-section-link" href="?source=notices&page=notice_queue&view=table" target="_self">전체 보기</a>'
+            '</div>'
+            f"""<div class="dashboard-list">{"".join(deadline_body) if deadline_body else '<div class="dashboard-list-empty">표시할 마감 임박 공고가 없습니다.</div>'}</div>"""
+            '</section>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def main(app_mode: str = "viewer"):
