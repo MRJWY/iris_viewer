@@ -363,6 +363,13 @@ def clean(value) -> str:
     return str(value).strip()
 
 
+def safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(clean(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def normalize_row_dict(row: dict[str, object] | pd.Series | None) -> dict[str, object]:
     if row is None:
         return {}
