@@ -10093,6 +10093,54 @@ def _render_notice_queue_screen(
     route_core.set_current_route(route_snapshot)
     replace_query_params(with_auth_params(route_core.serialize_route(route_snapshot)))
 
+def _build_favorites_workspace_entries(
+    opportunity_rows: pd.DataFrame,
+    notice_rows: pd.DataFrame,
+) -> pd.DataFrame:
+    del opportunity_rows
+    comment_lookup = _build_recent_comment_lookup()
+    notice_review_lookup = _build_notice_review_lookup(notice_rows)
+    favorite_notice_keys = {
+        key
+        for key, value in notice_review_lookup.items()
+        if clean(value) == FAVORITE_REVIEW_STATUS
+    }
+    rows: list[dict[str, object]] = []
+    for _, row in notice_rows.iterrows():
+        source_key = _workspace_source_key(row)
+        notice_id = _workspace_notice_id(row)
+        favorite_key = (normalize_opportunity_source_key(source_key), normalize_notice_id_for_match(notice_id))
+        if favorite_key not in favorite_notice_keys:
+            continue
+        rows.append(
+            {
+                "Type": "Notice",
+                "Source": clean(row.get("Source")) or "-",
+                "Title": clean(row.get("Title")) or "-",
+                "Subtitle": clean(row.get("Agency")) or "-",
+                "Status": normalize_notice_status_label(row.get("Status")) or clean(row.get("Status")) or "-",
+                "Review": FAVORITE_REVIEW_STATUS,
+                "D-Day": clean(row.get("D-Day")) or "-",
+                "Recommendation": clean(row.get("Recommendation")) or "-",
+                "Budget": clean(row.get("Budget")) or "-",
+                "Recent Memo": truncate_text(_recent_comment_for_notice(comment_lookup, source_key, notice_id), max_chars=72) or "-",
+                "Agency": clean(row.get("Agency")) or "-",
+                "Ministry": clean(row.get("Ministry")) or "-",
+                "Period": clean(row.get("Period")) or "-",
+                "Summary": truncate_text(clean(row.get("Summary")), max_chars=150) or "-",
+                "RFP Count": clean(row.get("RFP Count")) or "",
+                "Keywords": ", ".join(_extract_dashboard_keywords(row, limit=3)),
+                "_selection_type": "notice",
+                "_selection_id": notice_id,
+                "_source_key": source_key,
+                "_notice_id": notice_id,
+            }
+        )
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
 def render_favorite_notice_page(
     notice_view_df: pd.DataFrame,
     opportunity_df: pd.DataFrame,
