@@ -10251,6 +10251,109 @@ def _build_favorites_workspace_entries(
     return pd.DataFrame(rows)
 
 
+def _render_favorites_table(rows: pd.DataFrame, *, key_prefix: str) -> None:
+    if rows.empty:
+        st.info("저장된 관심 항목이 없습니다.")
+        return
+    del key_prefix
+
+    def _deadline_sort_value(value: object) -> int | None:
+        text = clean(value)
+        if not text or text in {"-", "예정", "미정", "마감"}:
+            return None
+        if text == "D-Day":
+            return 0
+        match = re.fullmatch(r"D-(\d+)", text)
+        if not match:
+            return None
+        return int(match.group(1))
+
+    def _selection_href(row: pd.Series) -> str:
+        if clean(row.get("_selection_type")) == "rfp":
+            return build_route_href("rfp_queue", clean(row.get("_selection_id")), source_key="iris")
+        return build_route_href("notice_queue", clean(row.get("_selection_id")), source_key="notices")
+
+    def _status_class(value: object) -> str:
+        text = normalize_notice_status_label(value) or clean(value)
+        if text == "접수중":
+            return "is-open"
+        if text == "예정":
+            return "is-pending"
+        if "임박" in text:
+            return "is-deadline"
+        if text == "마감":
+            return "is-closed"
+        if text == FAVORITE_REVIEW_STATUS:
+            return "is-open"
+        return "is-pending"
+
+    row_html: list[str] = []
+    for _, row in rows.iterrows():
+        is_rfp = clean(row.get("Type")) == "RFP"
+        row_class = ""
+        status_value = clean(row.get("Status")) or FAVORITE_REVIEW_STATUS
+        dday_label = clean(row.get("D-Day")) or "-"
+        dday_sort = _deadline_sort_value(dday_label)
+        tone_class = "is-calm"
+        if dday_sort is not None and dday_sort <= 3:
+            tone_class = "is-critical"
+        elif dday_sort is not None and dday_sort <= 14:
+            tone_class = "is-warning"
+        favorite_href = build_favorite_toggle_href(
+            page_key="favorites",
+            notice_id=clean(row.get("_notice_id")),
+            current_value=clean(row.get("Review")) or FAVORITE_REVIEW_STATUS,
+            source_key=clean(row.get("_source_key")) or "iris",
+        )
+        favorite_label = "해제" if clean(row.get("Review")) == FAVORITE_REVIEW_STATUS else "등록"
+        favorite_class = " is-active" if clean(row.get("Review")) == FAVORITE_REVIEW_STATUS else ""
+        type_badge = "RFP" if is_rfp else "공고"
+        agency_value = clean(row.get("Agency")) or clean(row.get("Subtitle")) or "미정"
+        period_value = clean(row.get("Period")) or "미정"
+        rfp_count = clean(row.get("RFP Count")) or "-"
+        status_label = normalize_notice_status_label(status_value) or status_value or "미정"
+        keyword_values = [clean(item) for item in clean(row.get("Keywords")).split(",") if clean(item)]
+        keyword_chips = "".join(
+            f'<span class="queue-grid-chip">{escape(keyword)}</span>'
+            for keyword in keyword_values[:3]
+        )
+        if not keyword_chips:
+            keyword_chips = '<span class="queue-grid-chip is-empty">키워드 없음</span>'
+        keywords_html = f'<div class="queue-grid-keywords">{keyword_chips}</div>'
+        row_html.append(
+            "".join(
+                [
+                    f'<div class="favorites-grid-row{row_class}">',
+                    f'<div class="queue-grid-cell"><span class="favorites-grid-kind">{escape(type_badge)}</span></div>',
+                    f'<div class="queue-grid-cell"><span class="notice-mailbox-status {_status_class(status_label)}">{escape(status_label)}</span></div>',
+                    '<div class="queue-grid-cell">',
+                    f'<a class="queue-grid-title" href="{escape(_selection_href(row), quote=True)}" target="_self">{escape(truncate_text(row.get("Title"), max_chars=108))}</a>',
+                    f'<div class="queue-grid-subtitle">{escape(truncate_text(clean(row.get("Source")) or "-", max_chars=18))} / {escape(truncate_text(clean(row.get("Subtitle")) or "-", max_chars=58))}</div>',
+                    '</div>',
+                    f'<div class="queue-grid-cell is-keywords">{keywords_html}</div>',
+                    f'<div class="queue-grid-cell">{escape(truncate_text(agency_value, max_chars=24))}</div>',
+                    f'<div class="queue-grid-cell queue-grid-period">{escape(truncate_text(period_value, max_chars=30))}</div>',
+                    f'<div class="queue-grid-cell"><span class="queue-grid-dday {tone_class}">{escape(dday_label)}</span></div>',
+                    f'<div class="queue-grid-cell queue-grid-rfp-count is-center">{escape(rfp_count)}</div>',
+                    f'<div class="queue-grid-cell is-center"><a class="queue-grid-favorite{favorite_class}" href="{escape(favorite_href, quote=True)}" target="_self">{favorite_label}</a></div>',
+                    '</div>',
+                ]
+            )
+        )
+
+    st.markdown(
+        (
+            '<div class="favorites-grid-scroll"><div class="favorites-grid">'
+            '<div class="favorites-grid-head">'
+            '<div>구분</div><div>상태</div><div>공고 / 과제명</div><div>키워드</div><div>기관</div><div>기간</div><div>D-day</div><div>RFP 수</div><div>관심</div>'
+            '</div>'
+            + "".join(row_html)
+            + '</div></div>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def render_favorite_notice_page(
     notice_view_df: pd.DataFrame,
     opportunity_df: pd.DataFrame,
@@ -10279,7 +10382,7 @@ def render_favorite_notice_page(
         ]
 
         with st.container(key="favorites_toolbar_shell"):
-            toolbar_cols = st.columns([1.05, 1.15, 3.7, 0.6], gap="small")
+            toolbar_cols = st.columns([1.05, 1.15, 3.92, 0.48], gap="small")
             with toolbar_cols[0]:
                 type_filter = st.selectbox(
                     "타입",
@@ -10315,7 +10418,7 @@ def render_favorite_notice_page(
             filtered_entries = filtered_entries[filtered_entries["Type"].eq(type_filter)]
         if clean(search_text):
             filtered_entries = filtered_entries[
-                build_contains_mask(filtered_entries, ["Title", "Subtitle", "Agency"], search_text)
+                build_contains_mask(filtered_entries, ["Title", "Subtitle", "Agency", "Keywords"], search_text)
             ]
         filtered_entries = _sort_favorites_workspace_entries(filtered_entries, clean(sort_option) or "마감 임박순")
         st.markdown(f'<div class="notice-queue-toolbar-meta">저장된 관심 항목 {len(filtered_entries):,}건</div>', unsafe_allow_html=True)
@@ -15153,6 +15256,15 @@ def render_notice_queue_ui_styles() -> None:
           justify-content: flex-start !important;
           padding: 0 1rem !important;
         }
+        [class*="st-key-favorites_workspace_type"] [data-baseweb="select"] > div > div,
+        [class*="st-key-favorites_workspace_sort"] [data-baseweb="select"] > div > div {
+          display: flex !important;
+          align-items: center !important;
+          min-height: 52px !important;
+          height: auto !important;
+          padding-top: 0 !important;
+          padding-bottom: 0 !important;
+        }
         [class*="st-key-favorites_workspace_search"] [data-testid="stTextInputRootElement"][data-baseweb="input"] {
           background: transparent !important;
           border: none !important;
@@ -15192,24 +15304,51 @@ def render_notice_queue_ui_styles() -> None:
           font-weight: 400 !important;
           line-height: 1.35 !important;
         }
+        [class*="st-key-favorites_workspace_type"] input,
+        [class*="st-key-favorites_workspace_sort"] input {
+          display: block !important;
+          min-height: 0 !important;
+          height: 1.4rem !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          align-self: center !important;
+          text-align: left !important;
+          color: #0f172a !important;
+          font-size: 0.98rem !important;
+          font-weight: 600 !important;
+          line-height: 1.35 !important;
+          opacity: 1 !important;
+        }
+        [class*="st-key-favorites_workspace_type"] input::placeholder,
+        [class*="st-key-favorites_workspace_sort"] input::placeholder {
+          color: #64748b !important;
+          font-size: 0.98rem !important;
+          font-weight: 600 !important;
+          line-height: 1.35 !important;
+          opacity: 1 !important;
+        }
         [class*="st-key-favorites_workspace_type"] [data-baseweb="select"] span,
         [class*="st-key-favorites_workspace_sort"] [data-baseweb="select"] span {
+          display: block !important;
+          line-height: 1.35 !important;
+          padding-top: 0 !important;
+          padding-bottom: 0 !important;
           color: #0f172a !important;
           font-size: 0.98rem !important;
           font-weight: 600 !important;
         }
         [class*="st-key-favorites_workspace_reset"] button {
-          min-height: 44px;
-          height: 44px !important;
+          min-height: 40px;
+          height: 40px !important;
           border: 1px solid #cfd8e3 !important;
           border-radius: 999px !important;
           background: #ffffff !important;
           color: #475569 !important;
-          font-size: 0.88rem !important;
+          font-size: 0.84rem !important;
           font-weight: 600 !important;
           text-align: center !important;
           box-shadow: none !important;
-          padding: 0 0.95rem !important;
+          padding: 0 0.8rem !important;
           transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease, color 0.16s ease;
         }
         .notice-queue-summary-wrap {
@@ -15231,7 +15370,7 @@ def render_notice_queue_ui_styles() -> None:
           overflow: hidden;
         }
         .favorites-grid {
-          min-width: 1120px;
+          min-width: 1340px;
           border: 1px solid #e5e7eb;
           border-radius: 16px;
           background: #ffffff;
@@ -15276,7 +15415,7 @@ def render_notice_queue_ui_styles() -> None:
         .favorites-grid-head,
         .favorites-grid-row {
           display: grid;
-          grid-template-columns: 72px 92px minmax(520px, 4fr) 160px 174px 78px 56px 76px;
+          grid-template-columns: 72px 92px minmax(420px, 3.2fr) 240px 150px 174px 78px 56px 76px;
           gap: 0.8rem;
           align-items: center;
           padding: 0.8rem 0.9rem;
@@ -15287,6 +15426,17 @@ def render_notice_queue_ui_styles() -> None:
           color: #64748b;
           font-size: 0.79rem;
           font-weight: 800;
+        }
+        .favorites-grid-head > div {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+        }
+        .favorites-grid-head > div:nth-child(3),
+        .favorites-grid-head > div:nth-child(4) {
+          justify-content: flex-start;
+          text-align: left;
         }
         .favorites-grid-row {
           border-top: 1px solid #eef2f7;
