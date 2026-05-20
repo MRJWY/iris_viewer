@@ -3096,16 +3096,17 @@ def _normalize_workspace_shell_route(route: dict[str, object]) -> dict[str, obje
     return normalized
 
 
-SOURCE_RENDERERS = {
-    "dashboard": render_dashboard_source,
-    "notices": render_notices_source,
-    "iris": render_iris_source,
-    "tipa": render_tipa_source,
-    "nipa": render_nipa_source,
-    "proposal": render_proposal_source,
-    "operations": render_operations_source,
-    "favorites": render_favorites_source,
-}
+def get_source_renderers() -> dict[str, object]:
+    return {
+        "dashboard": render_dashboard_source,
+        "notices": render_notices_source,
+        "iris": render_iris_source,
+        "tipa": render_tipa_source,
+        "nipa": render_nipa_source,
+        "proposal": render_proposal_source,
+        "operations": render_operations_source,
+        "favorites": render_favorites_source,
+    }
 
 
 def render_selected_source(
@@ -3119,7 +3120,8 @@ def render_selected_source(
 ) -> None:
     normalized_source_key = normalize_opportunity_source_key(source_key) or "iris"
     renderer_lookup_key = normalize_opportunity_source_key(source_config.renderer_key if source_config else normalized_source_key)
-    renderer = SOURCE_RENDERERS.get(renderer_lookup_key) or SOURCE_RENDERERS.get(normalized_source_key)
+    source_renderers = get_source_renderers()
+    renderer = source_renderers.get(renderer_lookup_key) or source_renderers.get(normalized_source_key)
     if renderer is None:
         fallback_config = source_config or SourceRouteConfig("iris", "IRIS", mode_config.default_iris_page, False, "iris")
         render_iris_source(fallback_config, mode_config, datasets, source_datasets, show_internal_tabs=show_internal_tabs)
