@@ -304,6 +304,15 @@ DETAIL_LINK_CANDIDATES = ["상세링크", "detail_link"]
 REVIEW_STATUS_CANDIDATES = ["검토 여부", "검토여부", "review_status"]
 STATUS_KEY_CANDIDATES = ["상태키", "status_key"]
 
+SOURCE_KEY_ALIAS_MAP = {
+    "iris": "iris",
+    "notices": "iris",
+    "tipa": "tipa",
+    "mss": "tipa",
+    "nipa": "nipa",
+    "favorites": "favorites",
+}
+
 USER_REVIEW_COLUMNS = [
     "user_id",
     "source",
@@ -351,6 +360,10 @@ def clean(value) -> str:
     except Exception:
         pass
     return str(value).strip()
+
+
+def normalize_opportunity_source_key(source_key: object) -> str:
+    return SOURCE_KEY_ALIAS_MAP.get(clean(source_key).lower(), clean(source_key).lower())
 
 
 def is_retryable_gspread_api_error(exc: Exception) -> bool:
@@ -1948,7 +1961,7 @@ def _navigate_from_dashboard_kpi(card_key: str) -> None:
     st.rerun()
 
 
-def _render_dashboard_kpi_cards(recommended_rows: pd.DataFrame, notice_rows: pd.DataFrame) -> None:
+def _legacy_render_dashboard_kpi_cards(recommended_rows: pd.DataFrame, notice_rows: pd.DataFrame) -> None:
     recommended_only_rows = pd.DataFrame()
     if recommended_rows is not None and not recommended_rows.empty:
         recommendation_series = series_from_candidates(
@@ -2513,7 +2526,7 @@ def _render_dashboard_recent_notice_inbox(rows: pd.DataFrame, *, limit: int = 12
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def _render_dashboard_workspace(
+def _legacy_render_dashboard_workspace(
     datasets: dict[str, pd.DataFrame],
     source_datasets: dict[str, object] | None,
 ) -> None:
@@ -2935,7 +2948,6 @@ def _normalize_workspace_shell_route(route: dict[str, object]) -> dict[str, obje
 
 SOURCE_RENDERERS = {
     "dashboard": render_dashboard_source,
-    "notices": render_iris_source,
     "iris": render_iris_source,
     "tipa": render_tipa_source,
     "nipa": render_nipa_source,
@@ -2954,8 +2966,8 @@ def render_selected_source(
     source_datasets: dict[str, object] | None,
     show_internal_tabs: bool = True,
 ) -> None:
-    normalized_source_key = "iris" if clean(source_key) == "notices" else clean(source_key)
-    renderer_lookup_key = source_config.renderer_key if source_config else normalized_source_key
+    normalized_source_key = normalize_opportunity_source_key(source_key) or "iris"
+    renderer_lookup_key = normalize_opportunity_source_key(source_config.renderer_key if source_config else normalized_source_key)
     renderer = SOURCE_RENDERERS.get(renderer_lookup_key) or SOURCE_RENDERERS.get(normalized_source_key)
     if renderer is None:
         fallback_config = source_config or SourceRouteConfig("iris", "IRIS", mode_config.default_iris_page, False, "iris")
@@ -3837,17 +3849,100 @@ def update_worksheet_row(ws, row_number: int, headers: list[str], row: dict[str,
     )
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def load_notice_comments() -> pd.DataFrame:
-    df = load_optional_sheet_as_dataframe(get_comment_sheet_name())
-    if df.empty:
-        return pd.DataFrame(columns=COMMENT_COLUMNS)
+def _empty_comment_dataframe() -> pd.DataFrame:
+    working = pd.DataFrame(columns=COMMENT_COLUMNS)
+    for legacy_column in ("author", "comment"):
+        working[legacy_column] = pd.Series(dtype="object")
+    working["created_at_sort"] = pd.Series(dtype="datetime64[ns]")
+    return working
+
+
+def _comment_text_series(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series("", index=df.index, dtype="object")
+    return df[column].fillna("").astype(str).str.strip()
+
+
+def build_comment_post_id(source_key: str, notice_id: str) -> str:
+    normalized_source = normalize_opportunity_source_key(source_key) or clean(source_key).lower()
+    normalized_notice_id = normalize_notice_id_for_match(notice_id)
+    if not normalized_source or not normalized_notice_id:
+        return ""
+    return f"{normalized_source}:{normalized_notice_id}"
+
+
+def _normalize_comment_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None:
+        return _empty_comment_dataframe()
 
     working = df.copy()
+    if working.empty and not list(working.columns):
+        working = pd.DataFrame(columns=COMMENT_COLUMNS)
+
     for column in COMMENT_COLUMNS:
         if column not in working.columns:
             working[column] = ""
+
+    legacy_author = _comment_text_series(working, "author")
+    legacy_comment = _comment_text_series(working, "comment")
+    nickname_series = _comment_text_series(working, "nickname")
+    user_id_series = _comment_text_series(working, "user_id")
+    content_series = _comment_text_series(working, "content")
+
+    working["nickname"] = nickname_series.where(nickname_series.ne(""), legacy_author)
+    working["user_id"] = user_id_series.where(
+        user_id_series.ne(""),
+        working["nickname"].where(_comment_text_series(working, "nickname").ne(""), legacy_author),
+    )
+    working["content"] = content_series.where(content_series.ne(""), legacy_comment)
+    working["updated_at"] = _comment_text_series(working, "updated_at").where(
+        _comment_text_series(working, "updated_at").ne(""),
+        _comment_text_series(working, "created_at"),
+    )
+    working["post_id"] = _comment_text_series(working, "post_id").where(
+        _comment_text_series(working, "post_id").ne(""),
+        [
+            build_comment_post_id(source, notice_id)
+            for source, notice_id in zip(_comment_text_series(working, "source"), _comment_text_series(working, "notice_id"))
+        ],
+    )
+
+    for column in COMMENT_COLUMNS:
+        working[column] = working[column].fillna("").astype(str).str.strip()
+
+    working["author"] = _comment_text_series(working, "nickname").where(
+        _comment_text_series(working, "nickname").ne(""),
+        _comment_text_series(working, "user_id"),
+    )
+    working["comment"] = _comment_text_series(working, "content")
     working["created_at_sort"] = pd.to_datetime(working["created_at"], errors="coerce")
+    return working
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_notice_comments(include_deleted: bool = False) -> pd.DataFrame:
+    sheet_name = get_comment_sheet_name()
+    df = load_optional_sheet_as_dataframe(sheet_name)
+    if df.empty:
+        ws = get_or_create_worksheet(sheet_name, COMMENT_COLUMNS, rows=1000, cols=len(COMMENT_COLUMNS))
+        header = get_worksheet_header(ws)
+        missing_headers = [column for column in COMMENT_COLUMNS if column not in header]
+        if missing_headers:
+            run_gspread_call(ws.update, range_name="A1", values=[header + missing_headers])
+        return _empty_comment_dataframe()
+
+    ws = get_or_create_worksheet(sheet_name, COMMENT_COLUMNS, rows=1000, cols=len(COMMENT_COLUMNS))
+    header = get_worksheet_header(ws)
+    missing_headers = [column for column in COMMENT_COLUMNS if column not in header]
+    if missing_headers:
+        run_gspread_call(ws.update, range_name="A1", values=[header + missing_headers])
+        df = load_sheet_as_dataframe_uncached(sheet_name)
+
+    working = _normalize_comment_dataframe(df)
+    if not include_deleted:
+        working = working[_comment_text_series(working, "deleted_at").eq("")].copy()
+    if working.empty:
+        return _empty_comment_dataframe()
     return working.sort_values(by=["created_at_sort"], ascending=False, na_position="last")
 
 
@@ -3898,7 +3993,7 @@ def get_auth_account(user_id: str) -> dict[str, str] | None:
     return load_auth_accounts().get(clean(user_id))
 
 
-def find_auth_account_row(*, user_id: str = "", email: str = "") -> tuple[int, list[str], dict[str, str]] | tuple[int, None, None]:
+def _legacy_find_auth_account_row(*, user_id: str = "", email: str = "") -> tuple[int, list[str], dict[str, str]] | tuple[int, None, None]:
     ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
     values = run_gspread_call(ws.get_all_values)
     headers = [clean(value) for value in values[0]] if values else AUTH_USER_COLUMNS
@@ -3920,7 +4015,7 @@ def find_auth_account_row(*, user_id: str = "", email: str = "") -> tuple[int, l
     return 0, None, None
 
 
-def sync_auth_account_status(
+def _legacy_sync_auth_account_status(
     *,
     user_id: str = "",
     email: str = "",
@@ -3960,7 +4055,11 @@ def sync_auth_account_status(
 
 def get_current_user_id() -> str:
     user = st.session_state.get("auth_user") or {}
-    return clean(user.get("user_id")) if isinstance(user, dict) else ""
+    if isinstance(user, dict):
+        user_id = clean(user.get("user_id"))
+        if user_id:
+            return user_id
+    return get_env("APP_USER_EMAIL") or get_env("DEFAULT_COMMENT_AUTHOR") or ""
 
 
 def get_current_user_label() -> str:
@@ -3977,6 +4076,37 @@ def get_current_user_email() -> str:
 
 def get_current_user_domain() -> str:
     return normalize_email_domain(get_current_user_email())
+
+
+def get_admin_user_ids() -> set[str]:
+    raw_value = get_env("ADMIN_USER_IDS", "admin")
+    return {clean(item).lower() for item in clean(raw_value).split(",") if clean(item)}
+
+
+def is_admin_user(user_id: str) -> bool:
+    return clean(user_id).lower() in get_admin_user_ids()
+
+
+def get_comment_owner_id(comment_row) -> str:
+    if isinstance(comment_row, pd.Series):
+        comment_row = comment_row.to_dict()
+    if not isinstance(comment_row, dict):
+        return ""
+    return (
+        clean(comment_row.get("user_id"))
+        or clean(comment_row.get("nickname"))
+        or clean(comment_row.get("author"))
+    )
+
+
+def can_delete_comment(comment_row, current_user_id: str) -> bool:
+    normalized_user_id = clean(current_user_id).lower()
+    if not normalized_user_id:
+        return False
+    if is_admin_user(normalized_user_id):
+        return True
+    owner_id = clean(get_comment_owner_id(comment_row)).lower()
+    return bool(owner_id and owner_id == normalized_user_id)
 
 
 def build_operation_scope_key(account: dict[str, str] | None) -> str:
@@ -4129,21 +4259,21 @@ def apply_user_review_statuses(
 
 def filter_notice_comments(comments_df: pd.DataFrame, *, source_key: str, notice_id: str) -> pd.DataFrame:
     if comments_df.empty:
-        return pd.DataFrame(columns=COMMENT_COLUMNS)
+        return _empty_comment_dataframe()
 
-    working = comments_df.copy()
-    for column in COMMENT_COLUMNS:
-        if column not in working.columns:
-            working[column] = ""
-
-    comment_notice_keys = working["notice_id"].apply(normalize_notice_id_for_match)
+    working = _normalize_comment_dataframe(comments_df)
+    comment_notice_keys = _comment_text_series(working, "notice_id").apply(normalize_notice_id_for_match)
     current_notice_key = normalize_notice_id_for_match(notice_id)
+    current_source_key = normalize_opportunity_source_key(source_key) or clean(source_key).lower()
+    current_post_id = build_comment_post_id(current_source_key, current_notice_key)
     filtered = working[
-        working["source"].fillna("").astype(str).str.strip().eq(clean(source_key))
-        & comment_notice_keys.eq(current_notice_key)
+        _comment_text_series(working, "source").str.lower().eq(current_source_key)
+        & (
+            comment_notice_keys.eq(current_notice_key)
+            | _comment_text_series(working, "post_id").eq(current_post_id)
+        )
     ].copy()
-    if is_user_scoped_operations_enabled() and "user_id" in filtered.columns:
-        filtered = filtered[filtered["user_id"].fillna("").astype(str).str.strip().eq(get_current_operation_scope_key())].copy()
+    filtered = filtered[_comment_text_series(filtered, "deleted_at").eq("")].copy()
     return filtered
 
 
@@ -4156,22 +4286,32 @@ def append_notice_comment(
     comment: str,
 ) -> None:
     notice_id = clean(notice_id)
-    comment = clean(comment)
+    content = clean(comment)
     if not notice_id:
         raise RuntimeError("공고ID가 없어 댓글을 저장할 수 없습니다.")
-    if not comment:
+    if not content:
         raise RuntimeError("댓글 내용을 입력해 주세요.")
 
     ws = get_or_create_worksheet(get_comment_sheet_name(), COMMENT_COLUMNS, rows=1000, cols=len(COMMENT_COLUMNS))
+    current_user_id = clean(get_current_user_id()) or clean(author) or clean(get_env("DEFAULT_COMMENT_AUTHOR"))
+    nickname = clean(author) or clean(get_current_user_label()) or current_user_id or "익명"
+    timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
     row = {
         "comment_id": str(uuid.uuid4()),
-        "created_at": pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S"),
-        "user_id": get_current_operation_scope_key(),
-        "source": clean(source_key) or "iris",
+        "post_id": build_comment_post_id(source_key, notice_id),
+        "source": normalize_opportunity_source_key(source_key) or clean(source_key).lower() or "iris",
         "notice_id": notice_id,
         "notice_title": clean(notice_title),
-        "author": clean(author) or get_current_user_label() or "익명",
-        "comment": comment[:5000],
+        "user_id": current_user_id or nickname,
+        "parent_id": "",
+        "nickname": nickname,
+        "content": content[:5000],
+        "mention": "",
+        "ip_address": "",
+        "ip_based_uid": "",
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "deleted_at": "",
     }
     append_dict_row(ws, row, COMMENT_COLUMNS)
     load_sheet_as_dataframe.clear()
@@ -4179,7 +4319,7 @@ def append_notice_comment(
     load_app_datasets.clear()
 
 
-def delete_notice_comment(comment_id: str) -> None:
+def delete_notice_comment(comment_id: str, current_user_id: str) -> None:
     comment_id = clean(comment_id)
     if not comment_id:
         raise RuntimeError("삭제할 댓글 ID가 없습니다.")
@@ -4197,7 +4337,18 @@ def delete_notice_comment(comment_id: str) -> None:
     for row_index, sheet_row in enumerate(values[1:], start=2):
         current_comment_id = clean(sheet_row[comment_id_col] if comment_id_col < len(sheet_row) else "")
         if current_comment_id == comment_id:
-            run_gspread_call(ws.delete_rows, row_index)
+            existing = {
+                header[column_index]: clean(sheet_row[column_index] if column_index < len(sheet_row) else "")
+                for column_index in range(len(header))
+            }
+            comment_row = _normalize_comment_dataframe(pd.DataFrame([existing])).iloc[0].to_dict()
+            if not can_delete_comment(comment_row, current_user_id):
+                raise RuntimeError("본인이 작성한 댓글만 삭제할 수 있습니다.")
+            timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
+            updated = dict(existing)
+            updated["deleted_at"] = timestamp
+            updated["updated_at"] = timestamp
+            update_worksheet_row(ws, row_index, header, updated)
             load_sheet_as_dataframe.clear()
             load_notice_comments.clear()
             load_app_datasets.clear()
@@ -4272,7 +4423,7 @@ def upsert_user_review_status(
     load_app_datasets.clear()
 
 
-def submit_signup_request(*, user_id: str, password: str, display_name: str, email: str) -> None:
+def _legacy_submit_signup_request(*, user_id: str, password: str, display_name: str, email: str) -> None:
     user_id = clean(user_id)
     password = clean(password)
     email = clean(email).lower()
@@ -4695,38 +4846,25 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
 
 
 def resolve_notice_source_key(row: dict | pd.Series | None) -> str:
+    candidate_values: list[str] = []
     if row is not None:
         row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row)
-        source_key = clean(row_dict.get("_source_key")).lower()
+        candidate_values.extend(
+            [
+                clean(row_dict.get("source_key")),
+                clean(row_dict.get("_source_key")),
+                clean(row_dict.get("source")),
+                clean(row_dict.get("Source")),
+                clean(row_dict.get("source_site")),
+                clean(row_dict.get("매체")),
+            ]
+        )
+    candidate_values.append(clean(get_query_param("source")))
 
-        source_alias_map = {
-            "tipa": "tipa",
-            "mss": "tipa",
-            "以묒냼湲곗뾽踰ㅼ쿂遺": "tipa",
-            "nipa": "nipa",
-            "iris": "iris",
-        }
-
-        source_key = source_alias_map.get(source_key, source_key)
-
-        if source_key and source_key != "favorites":
-            return source_key
-
-    current_source = clean(get_query_param("source")).lower()
-
-    source_alias_map = {
-        "tipa": "tipa",
-        "mss": "tipa",
-        "以묒냼湲곗뾽踰ㅼ쿂遺": "tipa",
-        "nipa": "nipa",
-        "iris": "iris",
-    }
-
-    current_source = source_alias_map.get(current_source, current_source)
-
-    if current_source in {"tipa", "nipa", "iris"}:
-        return current_source
-
+    for candidate in candidate_values:
+        normalized = normalize_opportunity_source_key(candidate)
+        if normalized and normalized != "favorites":
+            return normalized
     return "iris"
 
 
@@ -4938,122 +5076,93 @@ def find_header_column(header: list[str], candidates: list[str]) -> int | None:
     return None
 
 
-def update_notice_review_status(notice_id: str, review_status: str) -> None:
+def _update_review_status_in_sheets(
+    *,
+    notice_id: str,
+    review_status: str,
+    sheet_names: list[str],
+    missing_message: str,
+) -> None:
     notice_id = clean(notice_id)
     if not notice_id:
         raise RuntimeError("공고ID가 없어 검토 여부를 저장할 수 없습니다.")
 
-    notice_master_sheet = get_env("NOTICE_MASTER_SHEET", "IRIS_NOTICE_MASTER")
-    ws = get_worksheet(notice_master_sheet)
-    values = run_gspread_call(ws.get_all_values)
-    if not values:
-        raise RuntimeError("IRIS_NOTICE_MASTER 시트가 비어 있습니다.")
+    checked_sheets: list[str] = []
+    for sheet_name in dict.fromkeys([name for name in sheet_names if clean(name)]):
+        checked_sheets.append(sheet_name)
+        try:
+            ws = get_worksheet(sheet_name)
+        except Exception:
+            continue
 
-    header = [clean(x) for x in values[0]]
-    notice_id_col = find_header_column(header, ["공고ID", "notice_id"])
-    review_col = find_header_column(header, ["검토 여부", "검토여부", "review_status"])
-    if not notice_id_col:
-        raise RuntimeError("필수 컬럼이 없습니다: 공고ID/notice_id")
-    if not review_col:
-        review_col = len(header) + 1
-        ws.update_cell(1, review_col, "review_status")
+        values = run_gspread_call(ws.get_all_values)
+        if not values:
+            continue
 
-    for row_index, row in enumerate(values[1:], start=2):
-        current_notice_id = clean(row[notice_id_col - 1] if notice_id_col - 1 < len(row) else "")
-        if current_notice_id == notice_id:
-            ws.update_cell(row_index, review_col, clean(review_status))
-            load_sheet_as_dataframe.clear()
-            load_app_datasets.clear()
-            return
+        header = [clean(x) for x in values[0]]
+        notice_id_col = find_header_column(header, NOTICE_ID_CANDIDATES)
+        if not notice_id_col:
+            continue
 
-    raise RuntimeError(f"IRIS_NOTICE_MASTER에서 공고ID {notice_id}를 찾지 못했습니다.")
+        review_col = find_header_column(header, REVIEW_STATUS_CANDIDATES)
+        if not review_col:
+            review_col = len(header) + 1
+            ws.update_cell(1, review_col, "review_status")
+
+        for row_index, row in enumerate(values[1:], start=2):
+            current_notice_id = clean(row[notice_id_col - 1] if notice_id_col - 1 < len(row) else "")
+            if current_notice_id == notice_id:
+                ws.update_cell(row_index, review_col, clean(review_status))
+                load_sheet_as_dataframe.clear()
+                load_app_datasets.clear()
+                return
+
+    joined_sheets = ", ".join(checked_sheets) or "unknown"
+    raise RuntimeError(missing_message.format(sheet_names=joined_sheets, notice_id=notice_id))
+
+
+def update_notice_review_status(notice_id: str, review_status: str, source_key: str = "iris") -> None:
+    normalized_source = normalize_opportunity_source_key(source_key) or clean(source_key).lower() or "iris"
+    if normalized_source == "tipa":
+        update_mss_review_status(notice_id, review_status)
+        return
+    if normalized_source == "nipa":
+        update_nipa_review_status(notice_id, review_status)
+        return
+
+    _update_review_status_in_sheets(
+        notice_id=notice_id,
+        review_status=review_status,
+        sheet_names=[get_env("NOTICE_MASTER_SHEET", "IRIS_NOTICE_MASTER")],
+        missing_message="IRIS 시트({sheet_names})에서 공고ID {notice_id}를 찾지 못했습니다.",
+    )
 
 
 def update_mss_review_status(notice_id: str, review_status: str) -> None:
-    notice_id = clean(notice_id)
-    if not notice_id:
-        raise RuntimeError("공고ID가 없어 검토 여부를 저장할 수 없습니다.")
-
-    sheet_names = [
-        get_env("MSS_CURRENT_SHEET") or get_env("MSS_NOTICE_SHEET", "MSS_CURRENT"),
-        get_env("MSS_PAST_SHEET", "MSS_PAST"),
-    ]
-    checked_sheets = []
-    for sheet_name in dict.fromkeys([name for name in sheet_names if clean(name)]):
-        checked_sheets.append(sheet_name)
-        try:
-            ws = get_worksheet(sheet_name)
-        except Exception:
-            continue
-
-        values = run_gspread_call(ws.get_all_values)
-        if not values:
-            continue
-
-        header = [clean(x) for x in values[0]]
-        notice_id_col = find_header_column(header, ["공고ID", "notice_id"])
-        if not notice_id_col:
-            continue
-
-        review_col = find_header_column(header, ["검토 여부", "검토여부", "review_status"])
-        if not review_col:
-            review_col = len(header) + 1
-            ws.update_cell(1, review_col, "review_status")
-
-        for row_index, row in enumerate(values[1:], start=2):
-            current_notice_id = clean(row[notice_id_col - 1] if notice_id_col - 1 < len(row) else "")
-            if current_notice_id == notice_id:
-                ws.update_cell(row_index, review_col, clean(review_status))
-                load_sheet_as_dataframe.clear()
-                build_source_datasets.clear()
-                load_app_datasets.clear()
-                return
-
-    raise RuntimeError(f"중소기업벤처부 시트({', '.join(checked_sheets)})에서 공고ID {notice_id}를 찾지 못했습니다.")
+    _update_review_status_in_sheets(
+        notice_id=notice_id,
+        review_status=review_status,
+        sheet_names=[
+            get_env("MSS_CURRENT_SHEET") or get_env("MSS_NOTICE_SHEET", "MSS_CURRENT"),
+            get_env("MSS_PAST_SHEET", "MSS_PAST"),
+        ],
+        missing_message="MSS 시트({sheet_names})에서 공고ID {notice_id}를 찾지 못했습니다.",
+    )
+    build_source_datasets.clear()
 
 
 def update_nipa_review_status(notice_id: str, review_status: str) -> None:
-    notice_id = clean(notice_id)
-    if not notice_id:
-        raise RuntimeError("공고ID가 없어 검토 여부를 저장할 수 없습니다.")
-
-    sheet_names = [
-        get_env("NIPA_CURRENT_SHEET", "NIPA_CURRENT"),
-        get_env("NIPA_PAST_SHEET", "NIPA_PAST"),
-        get_env("NIPA_NOTICE_MASTER_SHEET", "NIPA_NOTICE_MASTER"),
-    ]
-    checked_sheets = []
-    for sheet_name in dict.fromkeys([name for name in sheet_names if clean(name)]):
-        checked_sheets.append(sheet_name)
-        try:
-            ws = get_worksheet(sheet_name)
-        except Exception:
-            continue
-
-        values = run_gspread_call(ws.get_all_values)
-        if not values:
-            continue
-
-        header = [clean(x) for x in values[0]]
-        notice_id_col = find_header_column(header, ["공고ID", "notice_id"])
-        if not notice_id_col:
-            continue
-
-        review_col = find_header_column(header, ["검토 여부", "검토여부", "review_status"])
-        if not review_col:
-            review_col = len(header) + 1
-            ws.update_cell(1, review_col, "review_status")
-
-        for row_index, row in enumerate(values[1:], start=2):
-            current_notice_id = clean(row[notice_id_col - 1] if notice_id_col - 1 < len(row) else "")
-            if current_notice_id == notice_id:
-                ws.update_cell(row_index, review_col, clean(review_status))
-                load_sheet_as_dataframe.clear()
-                build_source_datasets.clear()
-                load_app_datasets.clear()
-                return
-
-    raise RuntimeError(f"NIPA 시트({', '.join(checked_sheets)})에서 공고ID {notice_id}를 찾지 못했습니다.")
+    _update_review_status_in_sheets(
+        notice_id=notice_id,
+        review_status=review_status,
+        sheet_names=[
+            get_env("NIPA_CURRENT_SHEET", "NIPA_CURRENT"),
+            get_env("NIPA_PAST_SHEET", "NIPA_PAST"),
+            get_env("NIPA_NOTICE_MASTER_SHEET", "NIPA_NOTICE_MASTER"),
+        ],
+        missing_message="NIPA 시트({sheet_names})에서 공고ID {notice_id}를 찾지 못했습니다.",
+    )
+    build_source_datasets.clear()
 
 
 def enrich_notice_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -5419,7 +5528,7 @@ def build_opportunity_archive_mask(df: pd.DataFrame) -> pd.Series:
     review_series = series_from_candidates(df, ["review_status", "검토여부", "검토 여부"])
     archive_mask = archive_mask | review_series.apply(is_archived_review_status_value)
 
-    for status_source in ["notice_status", "status", "rcve_status", "공고상태", "怨듦퀬?곹깭"]:
+    for status_source in ["notice_status", "status", "rcve_status", "공고상태"]:
         if status_source in df.columns:
             archive_mask = archive_mask | df[status_source].apply(is_closed_status_value)
 
@@ -5678,7 +5787,7 @@ def build_contains_mask(df: pd.DataFrame, columns: list[str], query: str) -> pd.
     return mask
 
 
-def apply_multiselect_filter(df: pd.DataFrame, column: str, label: str, key: str) -> pd.DataFrame:
+def _legacy_apply_multiselect_filter(df: pd.DataFrame, column: str, label: str, key: str) -> pd.DataFrame:
     if column not in df.columns:
         return df
 
@@ -5712,12 +5821,12 @@ def unified_sidebar_filter_key(key: str) -> str:
     return key
 
 
-def render_sidebar_search(key: str = "sidebar_search") -> str:
+def _legacy_render_sidebar_search(key: str = "sidebar_search") -> str:
     st.sidebar.markdown("## Common Filters")
     return st.sidebar.text_input("통합 검색", "", key=unified_sidebar_filter_key(key))
 
 
-def render_notice_filter_sidebar(
+def _legacy_render_notice_filter_sidebar(
     key_prefix: str,
     *,
     current_only_default: bool = True,
@@ -8301,21 +8410,18 @@ def _sync_user_scoped_review(*, notice_id: str, source_key: str, notice_title: s
 
 def _persist_review_status(*, notice_id: str, source_key: str, review_status: str, notice_title: str = "") -> None:
     normalized_source = clean(source_key) or "iris"
-    if normalized_source == "tipa":
-        if callable(update_mss_review_status):
-            update_mss_review_status(notice_id, review_status)
-        elif callable(save_review_status):
-            save_review_status(notice_id=notice_id, review_status=review_status, source_key=normalized_source)
-    elif normalized_source == "nipa":
-        if callable(update_nipa_review_status):
-            update_nipa_review_status(notice_id, review_status)
-        elif callable(save_review_status):
-            save_review_status(notice_id=notice_id, review_status=review_status, source_key=normalized_source)
-    else:
-        if callable(update_notice_review_status):
-            update_notice_review_status(notice_id, review_status)
-        elif callable(save_review_status):
-            save_review_status(notice_id=notice_id, review_status=review_status, source_key=normalized_source)
+    if callable(update_notice_review_status):
+        update_notice_review_status(
+            notice_id,
+            review_status,
+            source_key=normalized_source,
+        )
+    elif callable(save_review_status):
+        save_review_status(
+            notice_id=notice_id,
+            review_status=review_status,
+            source_key=normalized_source,
+        )
     try:
         _sync_user_scoped_review(
             notice_id=notice_id,
@@ -8481,16 +8587,17 @@ def _css_safe_key(value: str) -> str:
 def _resolve_notice_id(row: dict | pd.Series | None) -> str:
     if row is None:
         return ""
-    return clean(first_non_empty(row, "怨듦퀬ID", "notice_id"))
+    return clean(first_non_empty(row, *NOTICE_ID_CANDIDATES))
 
 def _get_notice_row_by_id(rows: pd.DataFrame, notice_id: str) -> dict | pd.Series | None:
     selected_notice_id = clean(notice_id)
     if rows is None or rows.empty or not selected_notice_id:
         return None
-    selected_row = get_row_by_column_value(rows, "怨듦퀬ID", selected_notice_id)
-    if selected_row:
-        return selected_row
-    return get_row_by_column_value(rows, "notice_id", selected_notice_id)
+    for column in NOTICE_ID_CANDIDATES:
+        selected_row = get_row_by_column_value(rows, column, selected_notice_id)
+        if selected_row:
+            return selected_row
+    return None
 
 def _default_notice_detail_state() -> dict[str, str]:
     return {
@@ -9561,7 +9668,7 @@ def _render_notice_queue_screen(
             "dday_max": int(filters.get("dday_max") or 0),
             "include_closed": bool(filters.get("include_closed", False)),
         }
-        filtered_source_df = _apply_notice_filters(
+        filtered_view_rows = _apply_notice_filters(
             source_df,
             filters["status"],
             filters["recommendation"],
@@ -9577,12 +9684,12 @@ def _render_notice_queue_screen(
                 "NIPA": "nipa",
             }
             allowed_values = {allowed_source_keys.get(clean(value), clean(value).lower()) for value in selected_sources}
-            filtered_source_df = filtered_source_df[
-                filtered_source_df["source_key"].fillna("").astype(str).str.strip().isin(allowed_values)
+            filtered_view_rows = filtered_view_rows[
+                filtered_view_rows["source_key"].fillna("").astype(str).str.strip().isin(allowed_values)
             ].copy()
 
         page_size = int(filters["page_size"] or 20)
-        total_rows = len(filtered_source_df)
+        total_rows = len(filtered_view_rows)
         total_pages = max(1, math.ceil(total_rows / page_size)) if page_size else 1
         current_page = int(current_route.get("page_no") or st.session_state.get(page_index_state_key, 1) or 1)
         current_page = max(1, min(current_page, total_pages))
@@ -9590,7 +9697,7 @@ def _render_notice_queue_screen(
         selected_notice_id = clean(current_route.get("item_id")) if clean(current_route.get("view")) == "summary" else ""
 
         start_idx = (current_page - 1) * page_size
-        page_rows = filtered_source_df.iloc[start_idx:start_idx + page_size].copy()
+        page_rows = filtered_view_rows.iloc[start_idx:start_idx + page_size].copy()
 
         def _select_notice_preview(row: pd.Series) -> None:
             notice_id = _resolve_notice_id(row)
@@ -9631,7 +9738,7 @@ def _render_notice_queue_screen(
 
     with summary_col:
         selected_notice_id = clean(current_route.get("item_id")) if clean(current_route.get("view")) == "summary" else ""
-        selected_row = _get_notice_row_by_id(filtered_source_df, selected_notice_id) if selected_notice_id else None
+        selected_row = _get_notice_row_by_id(filtered_view_rows, selected_notice_id) if selected_notice_id else None
         if selected_row is None and selected_notice_id:
             selected_row = _get_notice_row_by_id(source_df, selected_notice_id)
         _render_notice_preview_panel(
@@ -9871,13 +9978,6 @@ def render_notices_source(
     )
 
 def resolve_route_source_key_for_row(row: dict | pd.Series | None, source_key: str | None = None) -> str:
-    source_alias_map = {
-        "mss": "tipa",
-        "tipa": "tipa",
-        "nipa": "nipa",
-        "iris": "iris",
-    }
-
     candidate_values = [source_key]
     if row is not None:
         row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row)
@@ -9892,7 +9992,7 @@ def resolve_route_source_key_for_row(row: dict | pd.Series | None, source_key: s
         )
 
     for candidate in candidate_values:
-        normalized = source_alias_map.get(clean(candidate).lower(), "")
+        normalized = normalize_opportunity_source_key(candidate)
         if normalized:
             return normalized
     return ""
@@ -10220,12 +10320,12 @@ def render_review_editor(
                         notice_title=notice_title,
                         review_status=review_value,
                     )
-                elif clean(source_key) == "tipa":
-                    update_mss_review_status(notice_id, review_value)
-                elif clean(source_key) == "nipa":
-                    update_nipa_review_status(notice_id, review_value)
                 else:
-                    update_notice_review_status(notice_id, review_value)
+                    update_notice_review_status(
+                        notice_id,
+                        review_value,
+                        source_key=source_key,
+                    )
                 st.success("검토 여부를 저장했습니다.")
                 st.rerun()
             except Exception as exc:
@@ -10247,31 +10347,59 @@ def save_review_status(
             notice_title=notice_title,
             review_status=review_status,
         )
-    elif clean(source_key) == "tipa":
-        update_mss_review_status(notice_id, review_status)
-    elif clean(source_key) == "nipa":
-        update_nipa_review_status(notice_id, review_status)
     else:
-        update_notice_review_status(notice_id, review_status)
+        update_notice_review_status(
+            notice_id,
+            review_status,
+            source_key=source_key,
+        )
 
 
 
 
 def render_notice_comments(row: dict, section_key: str) -> None:
-    notice_id = clean(row.get("공고ID") or row.get("notice_id"))
-    notice_title = clean(row.get("공고명") or row.get("notice_title"))
+    notice_id = clean(first_non_empty(row, *NOTICE_ID_CANDIDATES))
+    notice_title = clean(first_non_empty(row, *NOTICE_TITLE_CANDIDATES))
     source_key = resolve_notice_source_key(row)
+    current_user_id = get_current_user_id()
+    current_user_label = get_current_user_label()
+    widget_key_base = _css_safe_key(f"{section_key}_{source_key}_{notice_id}_comments")
 
-    st.markdown('<div class="detail-section-title">댓글</div>', unsafe_allow_html=True)
     if not notice_id:
         st.info("공고ID가 없어 댓글을 연결할 수 없습니다.")
         return
 
-    saved_comment = False
-    with st.form(f"{section_key}_comment_form"):
-        default_author = get_current_user_label() if is_user_scoped_operations_enabled() else get_env("DEFAULT_COMMENT_AUTHOR", "")
-        author = st.text_input("작성자", value=default_author, key=f"{section_key}_comment_author")
-        comment = st.text_area("의견", key=f"{section_key}_comment_text", height=110)
+    try:
+        comments_df = load_notice_comments()
+    except Exception as exc:
+        st.warning(f"댓글 이력을 불러오지 못했습니다: {exc}")
+        comments_df = _empty_comment_dataframe()
+
+    matched = filter_notice_comments(comments_df, source_key=source_key, notice_id=notice_id)
+    comment_count = len(matched)
+
+    render_detail_card(
+        "댓글",
+        [
+            ("작성자", current_user_label),
+            ("안내", "작성자는 로그인 ID로 자동 기록됩니다."),
+            ("댓글 수", f"{comment_count}건"),
+        ],
+    )
+
+    with st.form(f"{widget_key_base}_form", clear_on_submit=True):
+        st.text_input(
+            "작성자",
+            value=current_user_label,
+            key=f"{widget_key_base}_author",
+            disabled=True,
+        )
+        comment = st.text_area(
+            "의견",
+            key=f"{widget_key_base}_text",
+            height=120,
+            placeholder="이 공고에 대한 메모나 검토 의견을 남겨주세요.",
+        )
         submitted = st.form_submit_button("댓글 저장")
         if submitted:
             try:
@@ -10279,47 +10407,45 @@ def render_notice_comments(row: dict, section_key: str) -> None:
                     source_key=source_key,
                     notice_id=notice_id,
                     notice_title=notice_title,
-                    author=author,
+                    author=current_user_label,
                     comment=comment,
                 )
-                saved_comment = True
+                comments_df = load_notice_comments()
                 st.success("댓글을 저장했습니다.")
             except Exception as exc:
                 st.error(f"댓글 저장 실패: {exc}")
 
-    try:
-        comments_df = load_notice_comments()
-    except Exception as exc:
-        st.warning(f"댓글 이력을 불러오지 못했습니다: {exc}")
-        comments_df = pd.DataFrame(columns=COMMENT_COLUMNS)
-
     matched = filter_notice_comments(comments_df, source_key=source_key, notice_id=notice_id)
-
+    st.markdown("### 댓글 이력")
     if matched.empty:
-        if not saved_comment:
-            st.info("아직 등록된 댓글이 없습니다.")
+        st.info("아직 등록된 댓글이 없습니다.")
         return
 
-    st.caption(f"댓글 이력 {len(matched)}건")
     for _, comment_row in matched.iterrows():
         comment_id = clean(comment_row.get("comment_id"))
         created_at = clean(comment_row.get("created_at"))
-        author = clean(comment_row.get("author")) or "익명"
-        comment_text = clean(comment_row.get("comment"))
-        delete_key = f"{section_key}_delete_comment_{comment_id}"
+        author = clean(comment_row.get("nickname") or comment_row.get("author")) or "익명"
+        comment_text = clean(comment_row.get("content") or comment_row.get("comment"))
+        delete_key = f"{widget_key_base}_delete_{comment_id}"
         with st.container(border=True):
-            st.caption(" · ".join([value for value in [created_at, author] if value]))
-            st.write(comment_text)
-            if comment_id and st.button("댓글 삭제", key=delete_key):
-                try:
-                    delete_notice_comment(comment_id)
-                    st.success("댓글을 삭제했습니다.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"댓글 삭제 실패: {exc}")
+            header_col, action_col = st.columns([6, 1])
+            with header_col:
+                st.caption(" · ".join([value for value in [created_at, author] if value]))
+            with action_col:
+                if comment_id and can_delete_comment(comment_row, current_user_id) and st.button("삭제", key=delete_key, use_container_width=True):
+                    try:
+                        delete_notice_comment(comment_id, current_user_id)
+                        st.success("댓글을 삭제했습니다.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"댓글 삭제 실패: {exc}")
+            if comment_text:
+                st.write(comment_text)
+            else:
+                st.caption("내용 없음")
 
 
-def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
+def _legacy_render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
     if not row:
         st.info("표시할 공고가 없습니다.")
         return
@@ -10786,7 +10912,7 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
     st.markdown(f'<div class="queue-list-shell">{"".join(items)}</div>', unsafe_allow_html=True)
 
 
-def render_opportunity_detail_from_row(row: dict) -> None:
+def _legacy_render_opportunity_detail_from_row(row: dict) -> None:
     if not row:
         st.info("표시할 Opportunity가 없습니다.")
         return
@@ -10957,7 +11083,7 @@ def render_opportunity_detail_from_row(row: dict) -> None:
 
 
 
-def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
+def _legacy_render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
     if not row:
         st.info("표시할 요약 공고가 없습니다.")
         return
@@ -11247,7 +11373,7 @@ def filter_notice_dataframe_by_source(df: pd.DataFrame, source_site: str) -> pd.
     ].copy()
 
 
-def render_notice_page_with_scope(
+def _legacy_render_notice_page_with_scope(
     source_df: pd.DataFrame,
     opportunity_df: pd.DataFrame,
     *,
@@ -11324,7 +11450,7 @@ def render_notice_page_with_scope(
     )
 
 
-def render_opportunity_page_aligned(
+def _legacy_render_opportunity_page_aligned(
     df: pd.DataFrame,
     *,
     page_key: str | None = None,
@@ -11641,7 +11767,7 @@ def render_pending_page(df: pd.DataFrame) -> None:
     )
 
 
-def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
+def _legacy_render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
     render_page_header("Summary", "공고별 대표 과제와 추천 요약을 한눈에 봅니다.", eyebrow="Summary")
     page_key = "summary"
 
@@ -11709,7 +11835,7 @@ def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
     )
 
 
-def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
+def _legacy_render_summary_page_v2(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
     del df
 
     working = ensure_opportunity_row_ids(filter_rankable_opportunity_rows(filter_current_opportunity_rows(opportunity_df.copy())))
@@ -12040,7 +12166,7 @@ def main_viewer_v2(app_mode: str = "viewer") -> None:
     )
 
 
-def main(app_mode: str = "viewer"):
+def _legacy_main(app_mode: str = "viewer"):
     load_dotenv()
 
     mode_config = build_app_mode_config(
