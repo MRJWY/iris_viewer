@@ -3,7 +3,6 @@ import hashlib
 import hmac
 import os
 import re
-import sys
 import time
 import base64
 import uuid
@@ -14,12 +13,6 @@ from urllib.parse import urlencode
 import gspread
 import pandas as pd
 import streamlit as st
-from pages.dashboard import render_page as render_dashboard_page_module
-from pages.notice_detail import render_page as render_notice_detail_page_module
-from pages.notice_queue import render_page as render_notice_queue_page_module
-from pages.notice_queue import render_source as render_notice_queue_source_module
-from pages.rfp_detail import render_page as render_rfp_detail_page_module
-from pages.rfp_queue import render_page as render_rfp_queue_page_module
 from app_config import (
     AppModeConfig,
     SourcePageConfig,
@@ -290,10 +283,10 @@ FAVORITE_NOTICE_COLUMNS = [
 COMMENT_COLUMNS = [
     "comment_id",
     "post_id",
-    "user_id",
     "source",
     "notice_id",
     "notice_title",
+    "user_id",
     "parent_id",
     "nickname",
     "content",
@@ -304,6 +297,12 @@ COMMENT_COLUMNS = [
     "updated_at",
     "deleted_at",
 ]
+
+NOTICE_ID_CANDIDATES = ["공고ID", "notice_id"]
+NOTICE_TITLE_CANDIDATES = ["공고명", "notice_title", "title"]
+DETAIL_LINK_CANDIDATES = ["상세링크", "detail_link"]
+REVIEW_STATUS_CANDIDATES = ["검토 여부", "검토여부", "review_status"]
+STATUS_KEY_CANDIDATES = ["상태키", "status_key"]
 
 USER_REVIEW_COLUMNS = [
     "user_id",
@@ -419,7 +418,7 @@ def render_iris_page(page_key: str, datasets: dict[str, pd.DataFrame]) -> None:
             datasets["opportunity"],
             page_key="notice_scheduled",
             title="예정 공고",
-            default_status_scope="?덉젙",
+            default_status_scope="예정",
             current_only_default=True,
         )
     elif page_key == "notice_archive":
@@ -428,7 +427,7 @@ def render_iris_page(page_key: str, datasets: dict[str, pd.DataFrame]) -> None:
             datasets["opportunity"],
             page_key="notice_archive",
             title="Archive",
-            default_status_scope="?꾩껜",
+            default_status_scope="전체",
             current_only_default=False,
             archive=True,
         )
@@ -473,7 +472,7 @@ def build_dashboard_notice_index(
     if source_datasets:
         tipa_base = combine_notice_frames(source_datasets["mss_current"], source_datasets["mss_past"])
         tipa_df = filter_archived_notice_rows(tipa_base) if archived else filter_current_notice_rows(source_datasets["mss_current"])
-        append_source(tipa_df, source_key="tipa", source_label="以묒냼湲곗뾽踰ㅼ쿂遺")
+        append_source(tipa_df, source_key="tipa", source_label="중소기업벤처부")
 
         nipa_base = combine_notice_frames(source_datasets["nipa_current"], source_datasets["nipa_past"])
         nipa_df = filter_archived_notice_rows(nipa_base) if archived else filter_current_notice_rows(source_datasets["nipa_current"])
@@ -518,7 +517,7 @@ def build_dashboard_source_snapshot_rows(
         "tipa": source_datasets["mss_opportunity"] if source_datasets else pd.DataFrame(),
         "nipa": source_datasets["nipa_opportunity"] if source_datasets else pd.DataFrame(),
     }
-    source_labels = {"iris": "IRIS", "tipa": "以묒냼湲곗뾽踰ㅼ쿂遺", "nipa": "NIPA"}
+    source_labels = {"iris": "IRIS", "tipa": "중소기업벤처부", "nipa": "NIPA"}
 
     rows: list[dict[str, object]] = []
     for source_key, source_label in source_labels.items():
@@ -625,7 +624,7 @@ def build_dashboard_review_chart(df: pd.DataFrame) -> pd.DataFrame:
     pending = int(review_values.eq("").sum())
     return pd.DataFrame(
         {"Count": [reviewed, pending]},
-        index=["검토완료", "미검토"],
+        index=["검토 완료", "미검토"],
     )
 
 
@@ -645,13 +644,13 @@ def build_dashboard_opportunity_index(
         normalized = pd.DataFrame(index=working.index.copy())
         normalized["source_key"] = source_key
         normalized["Source"] = source_label
-        normalized["Notice ID"] = series_from_candidates(working, ["notice_id", "怨듦퀬ID"])
+        normalized["Notice ID"] = series_from_candidates(working, ["notice_id", "공고ID"])
         normalized["Notice Title"] = series_from_candidates(working, ["notice_title", "공고명"])
         normalized["Project"] = series_from_candidates(working, ["project_name", "해당 과제명", "llm_project_name"])
-        normalized["Recommendation"] = series_from_candidates(working, ["recommendation", "異붿쿇?щ?", "llm_recommendation"])
-        normalized["Score"] = to_numeric_column(series_from_candidates(working, ["rfp_score", "?먯닔", "llm_fit_score"]))
-        normalized["Budget"] = series_from_candidates(working, ["budget", "?덉궛", "llm_total_budget_text", "total_budget_text"])
-        normalized["Reason"] = series_from_candidates(working, ["llm_reason", "reason", "권고사유"])
+        normalized["Recommendation"] = series_from_candidates(working, ["recommendation", "추천여부", "llm_recommendation"])
+        normalized["Score"] = to_numeric_column(series_from_candidates(working, ["rfp_score", "점수", "llm_fit_score"]))
+        normalized["Budget"] = series_from_candidates(working, ["budget", "예산", "llm_total_budget_text", "total_budget_text"])
+        normalized["Reason"] = series_from_candidates(working, ["llm_reason", "reason", "관심사유"])
         normalized["Date"] = series_from_candidates(working, ["ancm_de", "공고일자", "registered_at"])
         normalized["_sort_date"] = parse_date_column(normalized["Date"])
         frames.append(normalized)
@@ -718,11 +717,11 @@ def build_dashboard_recent_comments_table(limit: int = 5) -> pd.DataFrame:
     recent = recent.head(limit).copy()
     if recent.empty:
         return pd.DataFrame(columns=["작성시각", "작성자", "댓글"])
-    recent["작성자"] = series_from_candidates(recent, ["nickname", "user_id", "author"])
-    recent["댓글"] = series_from_candidates(recent, ["content", "comment"]).apply(lambda value: compact_table_value(value, max_chars=42))
+    recent["댓글"] = recent["comment"].apply(lambda value: compact_table_value(value, max_chars=42))
     return recent.rename(
         columns={
             "created_at": "작성시각",
+            "author": "작성자",
         }
     )[["작성시각", "작성자", "댓글"]]
 
@@ -730,7 +729,7 @@ def build_dashboard_recent_comments_table(limit: int = 5) -> pd.DataFrame:
 def render_dashboard_chart_block(title: str, chart_df: pd.DataFrame, *, chart_type: str = "bar") -> None:
     st.markdown(f"### {title}")
     if chart_df.empty:
-        st.info("?쒖떆??곗씠?곌? ?놁뒿?덈떎.")
+        st.info("표시할 데이터가 없습니다.")
         return
 
     if chart_type == "line":
@@ -744,7 +743,7 @@ def render_dashboard_chart_block(title: str, chart_df: pd.DataFrame, *, chart_ty
 def render_dashboard_table_block(title: str, df: pd.DataFrame) -> None:
     st.markdown(f"### {title}")
     if df.empty:
-        st.info("?쒖떆??곗씠?곌? ?놁뒿?덈떎.")
+        st.info("표시할 데이터가 없습니다.")
         return
     st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -778,7 +777,7 @@ def render_dashboard_rank_list(
     title: str,
     rows: list[dict[str, str]],
     *,
-    empty_message: str = "?쒖떆??곗씠?곌? ?놁뒿?덈떎.",
+    empty_message: str = "표시할 데이터가 없습니다.",
 ) -> None:
     st.markdown(f"### {title}")
     if not rows:
@@ -972,12 +971,12 @@ def render_dashboard_quick_links(mode_config: AppModeConfig) -> None:
     st.markdown("### Quick Links")
 
     primary_links = [
-        ("IRIS 吏꾪뻾", "iris", "notice"),
+        ("IRIS 진행", "iris", "notice"),
         ("IRIS Opportunity", "iris", "opportunity"),
-        ("以묒냼湲곗뾽踰ㅼ쿂遺 吏꾪뻾", "tipa", "tipa_current"),
-        ("NIPA 吏꾪뻾", "nipa", "nipa_current"),
+        ("중소기업벤처부 진행", "tipa", "tipa_current"),
+        ("NIPA 진행", "nipa", "nipa_current"),
     ]
-    secondary_links = [("愿??怨듦퀬", "favorites", "favorites")]
+    secondary_links = [("관심 공고", "favorites", "favorites")]
     if "summary" in mode_config.valid_iris_pages:
         secondary_links.insert(0, ("IRIS Summary", "iris", "summary"))
 
@@ -1001,21 +1000,21 @@ def render_grant_search_dashboard_intro(
         f"""
         <div class="grant-search-header">
           <div class="grant-search-brand-row">
-            <div class="grant-search-brand">?뺣? 怨쇱젣 異붿쿇</div>
+            <div class="grant-search-brand">정부 과제 추천</div>
             <div class="grant-search-divider"></div>
             <div class="grant-search-nav">
-              <span class="active">怨쇱젣 寃??/span>
-              <span>留욎땄 異붿쿇</span>
+              <span class="active">과제 검색</span>
+              <span>맞춤 추천</span>
             </div>
           </div>
           <div class="grant-search-auth">
-            <span>濡쒓렇??/span>
-            <span>?뚯썝媛??/span>
+            <span>로그인</span>
+            <span>회원가입</span>
           </div>
         </div>
         <div class="grant-search-hero">
-          <div class="grant-search-title">?먰븯??뺣? 怨쇱젣瑜?寃?됲븯怨??꾪꽣瑜??곸슜?대낫?몄슂</div>
-          <div class="grant-search-subtitle">{source_count}媛?遺泥?쨌 {agency_count:,}媛??섑뻾湲곌? 쨌 {notice_count:,}媛?怨듦퀬 ?ъ씠??湲곕컲 ?ㅼ떆媛??낅뜲?댄듃</div>
+          <div class="grant-search-title">원하는 정부 과제를 검색하고 필터를 적용해보세요</div>
+          <div class="grant-search-subtitle">{source_count}개 부처 · {agency_count:,}개 수행기관 · {notice_count:,}개 공고 사이트 기반 실시간 업데이트</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1028,13 +1027,13 @@ def render_grant_search_dashboard_intro(
             search_text = st.text_area(
                 "과제 검색",
                 key="grant_dashboard_search_text",
-                placeholder="예: 과제명, 사업 분야, 기술/연구 키워드를 입력해 필요한 과제를 찾아보세요.",
+                placeholder="예) 과제명, 사업 분야 키워드, 기술/연구 세부 키워드 입력을 통해 필요한 과제를 찾아보세요.",
                 label_visibility="collapsed",
                 height=210,
             )
         with button_col:
             st.markdown('<div class="grant-search-button-wrap">', unsafe_allow_html=True)
-            submitted = st.form_submit_button("검색", use_container_width=True)
+            submitted = st.form_submit_button("⌕\n검색하기", use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1045,53 +1044,53 @@ def render_grant_search_dashboard_intro(
     st.markdown(
         """
         <div class="grant-filter-head">
-          <div class="grant-filter-title">?붽굔 / ?꾪꽣</div>
-          <div class="grant-chip">??珥덇린??/div>
+          <div class="grant-filter-title">요건 / 필터</div>
+          <div class="grant-chip">↻ 초기화</div>
         </div>
         <div class="grant-filter-grid">
           <div class="grant-filter-cell">
-            <div class="grant-filter-label">湲곌? ?좏삎</div>
+            <div class="grant-filter-label">기관 유형</div>
             <div class="grant-chip-row">
-              <span class="grant-chip">?湲곗뾽</span>
-              <span class="grant-chip">以묎껄湲곗뾽</span>
-              <span class="grant-chip">以묒냼湲곗뾽/?ㅽ??몄뾽</span>
-              <span class="grant-chip">???곌뎄??/span>
-              <span class="grant-chip">怨듦났/誘쇨컙 ?곌뎄湲곌?</span>
-              <span class="grant-chip">?섎즺湲곌?</span>
+              <span class="grant-chip">대기업</span>
+              <span class="grant-chip">중견기업</span>
+              <span class="grant-chip">중소기업/스타트업</span>
+              <span class="grant-chip">대학 연구실</span>
+              <span class="grant-chip">공공/민간 연구기관</span>
+              <span class="grant-chip">의료기관</span>
             </div>
           </div>
           <div class="grant-filter-cell">
-            <div class="grant-filter-label">??留ㅼ텧??/div>
-            <div class="grant-filter-input"><div class="grant-filter-placeholder">留ㅼ텧??낅젰</div><div class="grant-filter-unit">?듭썝</div></div>
+            <div class="grant-filter-label">내 매출액</div>
+            <div class="grant-filter-input"><div class="grant-filter-placeholder">매출액 입력</div><div class="grant-filter-unit">억원</div></div>
           </div>
           <div class="grant-filter-cell">
-            <div class="grant-filter-label">??ъ뾽?곗닔</div>
-            <div class="grant-filter-input"><div class="grant-filter-placeholder">?ъ뾽 ?곗닔 ?낅젰</div><div class="grant-filter-unit">??/div></div>
+            <div class="grant-filter-label">내 사업연수</div>
+            <div class="grant-filter-input"><div class="grant-filter-placeholder">사업 연수 입력</div><div class="grant-filter-unit">년</div></div>
           </div>
           <div class="grant-filter-cell">
-            <div class="grant-filter-label">湲곌? ?뚯옱吏</div>
+            <div class="grant-filter-label">기관 소재지</div>
             <div class="grant-chip-row">
-              <span class="grant-chip active">?꾧뎅</span>
-              <span class="grant-chip">?쒖슱</span>
-              <span class="grant-chip">寃쎄린</span>
-              <span class="grant-chip">?몄쿇</span>
-              <span class="grant-chip">遺??/span>
-              <span class="grant-chip">?援?/span>
+              <span class="grant-chip active">전국</span>
+              <span class="grant-chip">서울</span>
+              <span class="grant-chip">경기</span>
+              <span class="grant-chip">인천</span>
+              <span class="grant-chip">부산</span>
+              <span class="grant-chip">대구</span>
             </div>
           </div>
           <div class="grant-filter-cell">
-            <div class="grant-filter-label">遺?ㅼ뿰援ъ냼/?곌뎄?꾨떞遺??좊Т</div>
+            <div class="grant-filter-label">부설연구소/연구전담부서 유무</div>
             <div class="grant-chip-row">
-              <span class="grant-chip">??/span>
-              <span class="grant-chip">?꾨땲??/span>
+              <span class="grant-chip">예</span>
+              <span class="grant-chip">아니오</span>
             </div>
           </div>
           <div class="grant-filter-cell">
-            <div class="grant-filter-label">怨쇱젣 ?좏삎</div>
+            <div class="grant-filter-label">과제 유형</div>
             <div class="grant-chip-row">
-              <span class="grant-chip active">?꾩껜</span>
-              <span class="grant-chip">?곌뎄媛쒕컻</span>
-              <span class="grant-chip">?ъ뾽??/span>
+              <span class="grant-chip active">전체</span>
+              <span class="grant-chip">연구개발</span>
+              <span class="grant-chip">사업화</span>
             </div>
           </div>
         </div>
@@ -1154,7 +1153,7 @@ def render_external_source(
     show_internal_tabs: bool = True,
 ) -> None:
     if not source_datasets:
-        st.error(f"{source_config.label} ?곗씠?곕? 遺덈윭?ㅼ? 紐삵뻽?듬땲??")
+        st.error(f"{source_config.label} 데이터를 불러오지 못했습니다.")
         return
 
     st.subheader(source_config.label)
@@ -1180,7 +1179,7 @@ def render_external_source(
 
     page_config = next((page for page in source_config.page_configs if page.key == current_page_key), None)
     if page_config is None:
-        st.error(f"{source_config.label} ?섏씠吏 援ъ꽦??李얠? 紐삵뻽?듬땲?? {current_page_key}")
+        st.error(f"{source_config.label} 페이지 구성을 찾지 못했습니다: {current_page_key}")
         return
 
     render_external_source_page(source_config, page_config, source_datasets)
@@ -1237,32 +1236,32 @@ def render_proposal_source(
 ) -> None:
     del source_config, mode_config, show_internal_tabs
     opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
-    recommended_count = int(opportunity_index["Recommendation"].fillna("").astype(str).str.contains("異붿쿇").sum()) if not opportunity_index.empty else 0
+    recommended_count = int(opportunity_index["Recommendation"].fillna("").astype(str).str.contains("추천").sum()) if not opportunity_index.empty else 0
     high_score_count = int(opportunity_index["Score"].fillna(0).ge(80).sum()) if not opportunity_index.empty else 0
 
     render_page_header(
-        "?쒖븞愿由?,
-        "?쒖븞 ?④퀎 ?곗씠?곕뒗 ?꾩쭅 遺꾨━ ?곕룞 ?꾩엯?덈떎. ?꾩옱??異붿쿇湲고쉶? 愿??怨듦퀬 以묒떖?쇰줈 ?꾨낫瑜?愿由ы빀?덈떎.",
+        "제안관리",
+        "제안 단계 데이터는 아직 분리 연동 전입니다. 현재는 추천기회와 관심 공고 중심으로 후보를 관리합니다.",
         eyebrow="Proposal",
     )
     render_metrics(
         [
-            ("異붿쿇 ?꾨낫", str(recommended_count)),
-            ("怨좊뱷??꾨낫", str(high_score_count)),
-            ("?묒꽦以?, "-"),
-            ("?쒖텧 ?꾨즺", "-"),
+            ("추천 후보", str(recommended_count)),
+            ("고득점 후보", str(high_score_count)),
+            ("작성중", "-"),
+            ("제출 완료", "-"),
         ]
     )
-    st.info("?쒖븞 ?④퀎蹂??곹깭, ?쒖텧 ?대젰, 寃곌낵 ?湲??꾪솴? ?꾩냽 ?곕룞??꾩슂?⑸땲??")
+    st.info("제안 단계별 상태, 제출 이력, 결과 대기 현황은 후속 연동이 필요합니다.")
     action_cols = st.columns(3)
     with action_cols[0]:
-        if st.button("異붿쿇湲고쉶濡??대룞", key="proposal_go_opportunity", use_container_width=True):
+        if st.button("추천기회로 이동", key="proposal_go_opportunity", use_container_width=True):
             navigate_to_route("iris", "rfp_queue")
     with action_cols[1]:
-        if st.button("愿??怨듦퀬 蹂닿린", key="proposal_go_favorites", use_container_width=True):
+        if st.button("관심 공고 보기", key="proposal_go_favorites", use_container_width=True):
             navigate_to_route("favorites", "favorites")
     with action_cols[2]:
-        if st.button("??쒕낫?쒕줈 ?대룞", key="proposal_go_dashboard", use_container_width=True):
+        if st.button("대시보드로 이동", key="proposal_go_dashboard", use_container_width=True):
             navigate_to_route("dashboard", "dashboard")
 
 
@@ -1286,54 +1285,54 @@ def render_operations_source(
     recent_comments_df = build_dashboard_recent_comments_table(limit=8)
 
     render_page_header(
-        "?댁쁺愿由?,
+        "운영관리",
         (
-            f"{get_current_operation_scope_label()} 湲곗??愿??怨듦퀬, ?볤?, ?ㅻ쪟, 寃??而ㅻ쾭由ъ?瑜??뺤씤?⑸땲??"
+            f"{get_current_operation_scope_label()} 기준의 관심 공고, 댓글, 오류, 검토 커버리지를 확인합니다."
             if is_user_scoped_operations_enabled()
-            else "愿??怨듦퀬, ?볤?, ?ㅻ쪟, 寃??而ㅻ쾭由ъ?瑜?湲곗??쇰줈 ?댁쁺 ?곹깭瑜??뺤씤?⑸땲??"
+            else "관심 공고, 댓글, 오류, 검토 커버리지를 기준으로 운영 상태를 확인합니다."
         ),
         eyebrow="Operations",
     )
     render_metrics(
         [
-            ("?꾩옱 怨듦퀬", str(total_current_notices)),
-            ("誘멸??, str(total_review_needed)),
-            ("愿??怨듦퀬", str(len(favorites_df))),
-            ("而ㅻ쾭由ъ?", review_coverage),
+            ("현재 공고", str(total_current_notices)),
+            ("미검토", str(total_review_needed)),
+            ("관심 공고", str(len(favorites_df))),
+            ("커버리지", review_coverage),
         ]
     )
 
     left_col, right_col = st.columns([1.2, 1.0])
     with left_col:
         render_dashboard_table_block(
-            "愿??怨듦퀬",
-            favorites_df[["留ㅼ껜", "怨듦퀬紐?, "怨듦퀬?쇱옄"]].head(10)
-            if not favorites_df.empty and {"留ㅼ껜", "怨듦퀬紐?, "怨듦퀬?쇱옄"}.issubset(favorites_df.columns)
+            "관심 공고",
+            favorites_df[["매체", "공고명", "공고일자"]].head(10)
+            if not favorites_df.empty and {"매체", "공고명", "공고일자"}.issubset(favorites_df.columns)
             else pd.DataFrame(),
         )
     with right_col:
-        render_dashboard_table_block("理쒓렐 ?볤?", recent_comments_df)
+        render_dashboard_table_block("최근 댓글", recent_comments_df)
 
 
 def render_signup_request_public_page() -> None:
     render_page_header(
-        "媛??붿껌",
-        "Viewer ?ъ슜 ?붿껌??④린硫?private admin app?먯꽌 諛붾줈 寃?좏븷 ??덈룄濡??묒닔?⑸땲??",
+        "가입 요청",
+        "Viewer 사용 요청을 남기면 private admin app에서 바로 검토할 수 있도록 접수됩니다.",
         eyebrow="Support",
     )
-    st.caption("?묒닔??붿껌 寃?좎? ?뱀씤/諛섎젮 泥섎━??蹂꾨룄 private admin app?먯꽌 吏꾪뻾?⑸땲??")
+    st.caption("접수된 요청 검토와 승인/반려 처리는 별도 private admin app에서 진행됩니다.")
 
     default_email = clean(get_env("APP_USER_EMAIL"))
     default_name = clean(get_env("APP_USER_NAME") or get_env("DEFAULT_COMMENT_AUTHOR"))
     default_org = clean(get_env("APP_USER_ORGANIZATION"))
 
     with st.form("signup_request_public_form"):
-        name = st.text_input("?대쫫", value=default_name)
-        email = st.text_input("?대찓??, value=default_email)
-        organization = st.text_input("?뚯냽 / ?뚯궗", value=default_org)
-        account_type = st.selectbox("怨꾩젙 ?좏삎", ["company", "lab", "institution", "student", "team"], index=0)
-        request_note = st.text_area("?붿껌 硫붾え", height=140, placeholder="?ъ슜 紐⑹쟻?대굹 ?꾩슂??곗씠??踰붿쐞瑜??곸뼱二쇱꽭??")
-        submitted = st.form_submit_button("媛??붿껌 蹂대궡湲?, type="primary", use_container_width=True)
+        name = st.text_input("이름", value=default_name)
+        email = st.text_input("이메일", value=default_email)
+        organization = st.text_input("소속 / 회사", value=default_org)
+        account_type = st.selectbox("계정 유형", ["company", "lab", "institution", "student", "team"], index=0)
+        request_note = st.text_area("요청 메모", height=140, placeholder="사용 목적이나 필요한 데이터 범위를 적어주세요.")
+        submitted = st.form_submit_button("가입 요청 보내기", type="primary", use_container_width=True)
 
     normalized_email = clean(email).lower()
     existing_requests = get_signup_requests_for_email(normalized_email) if normalized_email else pd.DataFrame()
@@ -1342,13 +1341,13 @@ def render_signup_request_public_page() -> None:
 
     if submitted:
         if not normalized_email:
-            st.error("?대찓?쇱? 鍮꾩썙??놁뒿?덈떎.")
+            st.error("이메일은 비워둘 수 없습니다.")
             return
         if latest_status in {"PENDING", "HOLD"}:
-            st.warning("媛숈? ?대찓?쇰줈 吏꾪뻾 以묒씤 媛??붿껌??대? ?덉뒿?덈떎. private admin app 寃??ㅼ떆 ?뺤씤?댁＜?몄슂.")
+            st.warning("같은 이메일로 진행 중인 가입 요청이 이미 있습니다. private admin app 검토 후 다시 확인해주세요.")
             return
         if latest_status == "APPROVED":
-            st.success("?대? ?뱀씤??붿껌??덉뒿?덈떎. ?댁쁺? ?덈궡 硫붿씪??癒쇱? ?뺤씤?댁＜?몄슂.")
+            st.success("이미 승인된 요청이 있습니다. 운영팀 안내 메일을 먼저 확인해주세요.")
             return
         save_signup_request(
             {
@@ -1360,7 +1359,7 @@ def render_signup_request_public_page() -> None:
                 "status": "PENDING",
             }
         )
-        st.success("媛??붿껌??묒닔?덉뒿?덈떎. private admin app?먯꽌 諛붾줈 寃?좏븷 ??덉뒿?덈떎.")
+        st.success("가입 요청을 접수했습니다. private admin app에서 바로 검토할 수 있습니다.")
         st.rerun()
 
 
@@ -1872,14 +1871,14 @@ def _extract_dashboard_keywords(row: dict[str, object] | pd.Series, *, limit: in
 
 
 def _dashboard_review_value(row: dict[str, object] | pd.Series | None) -> str:
-    return clean(first_non_empty(row or {}, "Review", "review_status", "寃??щ?", "寃?좎뿬遺"))
+    return clean(first_non_empty(row or {}, "Review", "review_status", "검토 여부", "검토여부"))
 
 
 def _count_dashboard_urgent_notices(rows: pd.DataFrame, *, max_days: int = 30) -> int:
     if rows is None or rows.empty:
         return 0
     count = 0
-    period_values = series_from_candidates(rows, ["notice_period", "?묒닔湲곌컙", "period"]).fillna("").astype(str)
+    period_values = series_from_candidates(rows, ["notice_period", "접수기간", "period"]).fillna("").astype(str)
     today = pd.Timestamp.now().normalize()
     for period_text in period_values:
         period_end = extract_period_end(clean(period_text))
@@ -1895,12 +1894,12 @@ def _navigate_from_dashboard_kpi(card_key: str) -> None:
     if card_key == "recommended_rfp":
         route = route_core.build_rfp_queue_route(
             filters={
-                "recommendation": ["異붿쿇"],
+                "recommendation": ["추천"],
                 "status": [],
                 "deadline": [],
                 "field": [],
                 "review": [],
-                "sort": "異붿쿇??,
+                "sort": "추천순",
                 "archive_reason": [],
             },
             page_no=1,
@@ -1909,12 +1908,12 @@ def _navigate_from_dashboard_kpi(card_key: str) -> None:
     elif card_key == "review_needed":
         route = route_core.build_rfp_queue_route(
             filters={
-                "recommendation": ["異붿쿇"],
+                "recommendation": ["추천"],
                 "status": [],
                 "deadline": [],
                 "field": [],
-                "review": ["", "寃?좎쟾", "誘멸??],
-                "sort": "異붿쿇??,
+                "review": ["", "검토전", "미검토"],
+                "sort": "추천순",
                 "archive_reason": [],
             },
             page_no=1,
@@ -1923,7 +1922,7 @@ def _navigate_from_dashboard_kpi(card_key: str) -> None:
     elif card_key == "urgent_notice":
         route = route_core.build_notice_queue_route(
             filters={
-                "status": ["吏꾪뻾以?, "?덉젙"],
+                "status": ["진행중", "예정"],
                 "recommendation": [],
                 "search": "",
                 "source": [],
@@ -1949,30 +1948,30 @@ def _navigate_from_dashboard_kpi(card_key: str) -> None:
     st.rerun()
 
 
-def _render_compact_public_dashboard_kpi_cards(recommended_rows: pd.DataFrame, notice_rows: pd.DataFrame) -> None:
+def _render_dashboard_kpi_cards(recommended_rows: pd.DataFrame, notice_rows: pd.DataFrame) -> None:
     recommended_only_rows = pd.DataFrame()
     if recommended_rows is not None and not recommended_rows.empty:
         recommendation_series = series_from_candidates(
             recommended_rows,
             ["_queue_recommendation", "Recommendation", "recommendation", "llm_recommendation"],
         ).fillna("").astype(str).apply(_normalize_recommendation_value)
-        recommended_only_rows = recommended_rows[recommendation_series.eq("異붿쿇")].copy()
+        recommended_only_rows = recommended_rows[recommendation_series.eq("추천")].copy()
     recommended_count = len(recommended_only_rows) if not recommended_only_rows.empty else 0
     review_needed = 0
     favorite_count = 0
     if not recommended_only_rows.empty:
         review_series = recommended_only_rows.apply(_dashboard_review_value, axis=1)
-        review_needed = int(review_series.isin(["", "寃?좎쟾", "誘멸??]).sum())
+        review_needed = int(review_series.isin(["", "검토전", "미검토"]).sum())
     if notice_rows is not None and not notice_rows.empty:
         favorite_series = notice_rows.apply(_dashboard_review_value, axis=1)
         favorite_count = int(favorite_series.eq(FAVORITE_REVIEW_STATUS).sum())
     urgent_count = _count_dashboard_urgent_notices(notice_rows)
 
     cards = [
-        ("recommended_rfp", "異붿쿇 RFP", str(recommended_count), "異붿쿇 RFP Queue濡?諛붾줈 ?대룞", "??),
-        ("review_needed", "寃??꾩슂", str(review_needed), "寃?좎쟾 異붿쿇 怨쇱젣留?紐⑥븘??蹂닿린", "??),
-        ("urgent_notice", "留덇컧 ?꾨컯", str(urgent_count), "30??대궡 吏꾪뻾以??덉젙 怨듦퀬 蹂닿린", "!"),
-        ("favorite_notice", "愿?ш났怨?, str(favorite_count), "Favorites 紐⑸줉?쇰줈 諛붾줈 ?대룞", "??),
+        ("recommended_rfp", "추천 RFP", str(recommended_count), "추천 RFP Queue로 바로 이동", "↗"),
+        ("review_needed", "검토 필요", str(review_needed), "검토전 추천 과제만 모아서 보기", "•"),
+        ("urgent_notice", "마감 임박", str(urgent_count), "30일 이내 진행중/예정 공고 보기", "!"),
+        ("favorite_notice", "관심공고", str(favorite_count), "Favorites 목록으로 바로 이동", "★"),
     ]
     cols = st.columns(4, gap="medium")
     for column, (card_key, label, value, copy, icon) in zip(cols, cards):
@@ -2007,7 +2006,7 @@ def _render_compact_public_dashboard_kpi_cards(recommended_rows: pd.DataFrame, n
         )
         with column:
             if st.button(
-                f"{label}  {icon}\n{value}\n{copy}\n諛붾줈媛湲?->",
+                f"{label}  {icon}\n{value}\n{copy}\n바로가기 ->",
                 key=f"dashboard_kpi_{card_key}",
                 use_container_width=True,
                 type="secondary",
@@ -2046,7 +2045,7 @@ def _set_dashboard_rfp_selection(row: dict[str, object] | pd.Series) -> None:
 
 
 def _set_dashboard_notice_selection(row: dict[str, object] | pd.Series) -> None:
-    notice_id = clean(first_non_empty(row, "怨듦퀬ID", "notice_id"))
+    notice_id = clean(first_non_empty(row, "공고ID", "notice_id"))
     if not notice_id:
         return
     st.session_state["selected_item_type"] = "notice"
@@ -2098,7 +2097,7 @@ def _is_selected_dashboard_notice(row: dict[str, object] | pd.Series) -> bool:
     if selection.get("type") != "notice":
         return False
     return (
-        clean(selection.get("notice_id")) == clean(first_non_empty(row, "怨듦퀬ID", "notice_id"))
+        clean(selection.get("notice_id")) == clean(first_non_empty(row, "공고ID", "notice_id"))
         and clean(selection.get("source_key")) == (resolve_route_source_key_for_row(row, source_key=first_non_empty(row, "source_key")) or "iris")
     )
 
@@ -2158,7 +2157,7 @@ def _render_rfp_preview_panel(
     with header_cols[0]:
         st.markdown('<div class="summary-panel-header">Preview Panel</div>', unsafe_allow_html=True)
     with header_cols[1]:
-        if st.button("??, key=f"{panel_key}_close", use_container_width=True, disabled=selected_row is None):
+        if st.button("✕", key=f"{panel_key}_close", use_container_width=True, disabled=selected_row is None):
             if callable(close_callback):
                 close_callback()
             else:
@@ -2195,8 +2194,8 @@ def _render_rfp_preview_panel(
             f'<div class="summary-panel-title">{escape(ctx["project"])}</div>'
             f'<div class="summary-panel-source">{escape(source_line or "-")}</div>'
             '<div class="summary-panel-meta-grid">'
-            f'<div><div class="summary-panel-meta-label">湲곌컙 / D-day</div><div class="summary-panel-meta-value">{escape(ctx["period"])} 쨌 {escape(ctx["deadline"])}</div></div>'
-            f'<div><div class="summary-panel-meta-label">?덉궛</div><div class="summary-panel-meta-value">{escape(ctx["budget"])}</div></div>'
+            f'<div><div class="summary-panel-meta-label">기간 / D-day</div><div class="summary-panel-meta-value">{escape(ctx["period"])} · {escape(ctx["deadline"])}</div></div>'
+            f'<div><div class="summary-panel-meta-label">예산</div><div class="summary-panel-meta-value">{escape(ctx["budget"])}</div></div>'
             '</div>'
             f'<div class="summary-panel-copy">{escape(summary_text)}</div>'
             f'<div class="summary-panel-keywords">{keyword_html}</div>'
@@ -2216,12 +2215,12 @@ def _render_rfp_preview_panel(
             use_container_width=True,
         )
     with detail_col:
-        if st.button("RFP ?곸꽭 蹂닿린", key=f"{panel_key}_detail", type="primary", use_container_width=True):
+        if st.button("RFP 상세 보기", key=f"{panel_key}_detail", type="primary", use_container_width=True):
             navigate_to_opportunity_detail(source_key, detail_target_id)
 
     st.markdown('<div style="height:0.45rem"></div>', unsafe_allow_html=True)
     _render_same_tab_link_button(
-        "?먮Ц怨듦퀬 ?닿린",
+        "원문공고 열기",
         detail_link,
         kind="secondary",
         key=f"{panel_key}_origin_{notice_id or detail_target_id}",
@@ -2243,7 +2242,7 @@ def _render_notice_preview_panel(
     with header_cols[0]:
         st.markdown('<div class="summary-panel-header">Summary Panel</div>', unsafe_allow_html=True)
     with header_cols[1]:
-        if st.button("??, key=f"{panel_key}_close", use_container_width=True, disabled=selected_row is None):
+        if st.button("✕", key=f"{panel_key}_close", use_container_width=True, disabled=selected_row is None):
             if callable(close_callback):
                 close_callback()
             else:
@@ -2258,12 +2257,12 @@ def _render_notice_preview_panel(
         selected_row,
         source_key=first_non_empty(selected_row, "source_key"),
     ) or "iris"
-    title_text = clean(first_non_empty(selected_row, "怨듦퀬紐?, "notice_title")) or "-"
-    period_text = clean(first_non_empty(selected_row, "notice_period", "?묒닔湲곌컙", "period")) or "-"
-    summary_text = clean(first_non_empty(selected_row, "_queue_analysis", "summary", "_queue_project_name")) or "?곌껐??RFP 遺꾩꽍??꾩쭅 ?놁뒿?덈떎."
+    title_text = clean(first_non_empty(selected_row, "공고명", "notice_title")) or "-"
+    period_text = clean(first_non_empty(selected_row, "notice_period", "접수기간", "period")) or "-"
+    summary_text = clean(first_non_empty(selected_row, "_queue_analysis", "summary", "_queue_project_name")) or "연결된 RFP 분석이 아직 없습니다."
     keywords = _extract_dashboard_keywords(selected_row)
-    status_text = normalize_notice_status_label(first_non_empty(selected_row, "status", "rcve_status", "怨듦퀬?곹깭")) or "-"
-    recommendation_text = clean(first_non_empty(selected_row, "_queue_recommendation", "recommendation")) or "蹂댄넻"
+    status_text = normalize_notice_status_label(first_non_empty(selected_row, "status", "rcve_status", "공고상태")) or "-"
+    recommendation_text = clean(first_non_empty(selected_row, "_queue_recommendation", "recommendation")) or "보통"
     top_badges = "".join(
         [
             '<span class="summary-panel-type">Notice</span>',
@@ -2271,17 +2270,17 @@ def _render_notice_preview_panel(
             _pill_html(status_text, kind="deadline"),
         ]
     )
-    detail_target_id = clean(first_non_empty(selected_row, "怨듦퀬ID", "notice_id"))
-    current_value = clean(first_non_empty(selected_row, "review_status", "寃?좎뿬遺", "寃??щ?"))
+    detail_target_id = clean(first_non_empty(selected_row, "공고ID", "notice_id"))
+    current_value = clean(first_non_empty(selected_row, "review_status", "검토여부", "검토 여부"))
     source_line = " / ".join(
         part
         for part in [
-            clean(first_non_empty(selected_row, "留ㅼ껜", "source_label", "source_site")) or (source_key or "IRIS").upper(),
-            clean(first_non_empty(selected_row, "?꾨Ц湲곌?", "agency", "?대떦遺??)),
+            clean(first_non_empty(selected_row, "매체", "source_label", "source_site")) or (source_key or "IRIS").upper(),
+            clean(first_non_empty(selected_row, "전문기관", "agency", "담당부서")),
         ]
         if clean(part) and part != "-"
     )
-    budget_text = clean(first_non_empty(selected_row, "_queue_budget", "budget", "?덉궛")) or "-"
+    budget_text = clean(first_non_empty(selected_row, "_queue_budget", "budget", "예산")) or "-"
     deadline_text = format_dashboard_deadline_badge(period_text, status_text) or "-"
     detail_link = resolve_external_detail_link(selected_row, source_key=source_key)
     keyword_html = "".join(f'<span class="summary-panel-keyword">{escape(keyword)}</span>' for keyword in keywords[:6])
@@ -2292,8 +2291,8 @@ def _render_notice_preview_panel(
             f'<div class="summary-panel-title">{escape(title_text)}</div>'
             f'<div class="summary-panel-source">{escape(source_line or "-")}</div>'
             '<div class="summary-panel-meta-grid">'
-            f'<div><div class="summary-panel-meta-label">湲곌컙 / D-day</div><div class="summary-panel-meta-value">{escape(period_text)} 쨌 {escape(deadline_text)}</div></div>'
-            f'<div><div class="summary-panel-meta-label">?덉궛</div><div class="summary-panel-meta-value">{escape(budget_text)}</div></div>'
+            f'<div><div class="summary-panel-meta-label">기간 / D-day</div><div class="summary-panel-meta-value">{escape(period_text)} · {escape(deadline_text)}</div></div>'
+            f'<div><div class="summary-panel-meta-label">예산</div><div class="summary-panel-meta-value">{escape(budget_text)}</div></div>'
             '</div>'
             f'<div class="summary-panel-copy">{escape(summary_text)}</div>'
             f'<div class="summary-panel-keywords">{keyword_html}</div>'
@@ -2313,12 +2312,12 @@ def _render_notice_preview_panel(
             use_container_width=True,
         )
     with detail_col:
-        if st.button("Notice ?곸꽭 蹂닿린", key=f"{panel_key}_detail", type="primary", use_container_width=True):
+        if st.button("Notice 상세 보기", key=f"{panel_key}_detail", type="primary", use_container_width=True):
             navigate_to_notice_detail(source_key, detail_target_id)
 
     st.markdown('<div style="height:0.45rem"></div>', unsafe_allow_html=True)
     _render_same_tab_link_button(
-        "?먮Ц怨듦퀬 ?닿린",
+        "원문공고 열기",
         detail_link,
         kind="secondary",
         key=f"{panel_key}_origin_{detail_target_id}",
@@ -2340,16 +2339,16 @@ def _render_dashboard_summary_panel(
         _render_rfp_preview_panel(
             selected_row,
             panel_key="dashboard_rfp_preview",
-            empty_title="移대뱶??怨듦퀬瑜??좏깮?섎㈃ ?붿빟??대┰?덈떎.",
-            empty_copy="Dashboard 蹂몃Ц? 洹몃?濡??좎??梨??곗륫 ?⑤꼸?먯꽌 ?듭떖 ?뺣낫留?癒쇱? 蹂닿퀬, ?꾩슂??寃쎌슦?먮쭔 ?곸꽭 ?섏씠吏濡??대룞??덉뒿?덈떎.",
+            empty_title="카드나 공고를 선택하면 요약이 열립니다.",
+            empty_copy="Dashboard 본문은 그대로 유지한 채 우측 패널에서 핵심 정보만 먼저 보고, 필요한 경우에만 상세 페이지로 이동할 수 있습니다.",
             close_callback=lambda: (_clear_dashboard_selection(), st.rerun()),
         )
         return
     _render_notice_preview_panel(
         selected_row,
         panel_key="dashboard_notice_preview",
-        empty_title="移대뱶??怨듦퀬瑜??좏깮?섎㈃ ?붿빟??대┰?덈떎.",
-        empty_copy="Dashboard 蹂몃Ц? 洹몃?濡??좎??梨??곗륫 ?⑤꼸?먯꽌 ?듭떖 ?뺣낫留?癒쇱? 蹂닿퀬, ?꾩슂??寃쎌슦?먮쭔 ?곸꽭 ?섏씠吏濡??대룞??덉뒿?덈떎.",
+        empty_title="카드나 공고를 선택하면 요약이 열립니다.",
+        empty_copy="Dashboard 본문은 그대로 유지한 채 우측 패널에서 핵심 정보만 먼저 보고, 필요한 경우에만 상세 페이지로 이동할 수 있습니다.",
         close_callback=lambda: (_clear_dashboard_selection(), st.rerun()),
     )
 
@@ -2362,7 +2361,7 @@ def _build_dashboard_notice_inbox_rows(
     if rows.empty:
         return rows
     working = rows.copy()
-    working["_dashboard_notice_id"] = series_from_candidates(working, ["怨듦퀬ID", "notice_id"]).fillna("").astype(str).str.strip()
+    working["_dashboard_notice_id"] = series_from_candidates(working, ["공고ID", "notice_id"]).fillna("").astype(str).str.strip()
     working = working[working["_notice_scope"].fillna("").astype(str).str.strip().ne("archive")].copy()
     opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
     if not opportunity_index.empty:
@@ -2389,7 +2388,7 @@ def _build_dashboard_notice_inbox_rows(
         if column not in working.columns:
             working[column] = ""
         working[column] = working[column].fillna("").astype(str).str.strip()
-    return working.sort_values(by=["_sort_date", "留ㅼ껜", "怨듦퀬紐?], ascending=[False, True, True], na_position="last")
+    return working.sort_values(by=["_sort_date", "매체", "공고명"], ascending=[False, True, True], na_position="last")
 
 
 def _render_dashboard_top_rfp_cards(
@@ -2400,7 +2399,7 @@ def _render_dashboard_top_rfp_cards(
     visible_count: int = 5,
 ) -> None:
     if rows.empty:
-        st.info("?쒖떆??異붿쿇 Opportunity媛 ?놁뒿?덈떎.")
+        st.info("표시할 추천 Opportunity가 없습니다.")
         return
 
     window = rows.head(visible_count).copy()
@@ -2427,10 +2426,10 @@ def _render_dashboard_top_rfp_cards(
                     f'<div class="rfp-card-analysis">{escape(ctx["reason"])}</div>'
                     f'<div class="rfp-card-keywords">{keywords}</div>'
                     '<div class="rfp-card-meta">'
-                    f'<div><div class="rfp-card-meta-label">湲곌?</div><div class="rfp-card-meta-value">{escape(ctx["agency"])}</div></div>'
-                    f'<div><div class="rfp-card-meta-label">湲곌컙 / D-day</div><div class="rfp-card-meta-value">{escape(ctx["period"])} / {escape(ctx["deadline"])}</div></div>'
-                    f'<div><div class="rfp-card-meta-label">?덉궛</div><div class="rfp-card-meta-value">{escape(ctx["budget"])}</div></div>'
-                    f'<div><div class="rfp-card-meta-label">異쒖쿂</div><div class="rfp-card-meta-value">{escape(ctx["source"])}</div></div>'
+                    f'<div><div class="rfp-card-meta-label">기관</div><div class="rfp-card-meta-value">{escape(ctx["agency"])}</div></div>'
+                    f'<div><div class="rfp-card-meta-label">기간 / D-day</div><div class="rfp-card-meta-value">{escape(ctx["period"])} / {escape(ctx["deadline"])}</div></div>'
+                    f'<div><div class="rfp-card-meta-label">예산</div><div class="rfp-card-meta-value">{escape(ctx["budget"])}</div></div>'
+                    f'<div><div class="rfp-card-meta-label">출처</div><div class="rfp-card-meta-value">{escape(ctx["source"])}</div></div>'
                     '</div>'
                     '</div>'
                 ),
@@ -2438,7 +2437,7 @@ def _render_dashboard_top_rfp_cards(
             )
             st.markdown('<div class="rfp-card-action-slot">', unsafe_allow_html=True)
             if st.button(
-                "?좏깮?? if is_active else "?붿빟 蹂닿린",
+                "선택됨" if is_active else "요약 보기",
                 key=f"dashboard_recommended_rfp_select_{rank}",
                 type="primary" if is_active else "secondary",
                 use_container_width=True,
@@ -2453,26 +2452,26 @@ def _render_dashboard_top_rfp_cards(
 
 def _render_dashboard_recent_notice_inbox(rows: pd.DataFrame, *, limit: int = 12) -> None:
     if rows.empty:
-        st.info("理쒓렐 ?쒖떆??怨듦퀬媛 ?놁뒿?덈떎.")
+        st.info("최근 표시할 공고가 없습니다.")
         return
 
     st.markdown(
-        '<div class="notice-row-shell"><div class="notice-row-head"><div>?곹깭</div><div>異붿쿇?щ?</div><div>怨듦퀬紐?/div><div>湲곌?</div><div>?깅줉??/div><div>D-day</div><div>?덉궛</div><div>?붿빟</div><div>愿?ш났怨?/div></div>',
+        '<div class="notice-row-shell"><div class="notice-row-head"><div>상태</div><div>추천여부</div><div>공고명</div><div>기관</div><div>등록일</div><div>D-day</div><div>예산</div><div>요약</div><div>관심공고</div></div>',
         unsafe_allow_html=True,
     )
     for idx, (_, row) in enumerate(rows.head(limit).iterrows(), start=1):
         source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
         is_active = _is_selected_dashboard_notice(row)
-        status_text = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "怨듦퀬?곹깭")) or "-"
+        status_text = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태")) or "-"
         recommendation_text = clean(row.get("_queue_recommendation")) or "-"
-        title_text = clean(first_non_empty(row, "怨듦퀬紐?, "notice_title")) or "-"
-        agency_text = clean(first_non_empty(row, "?꾨Ц湲곌?", "agency", "?대떦遺??)) or "-"
-        notice_date = clean(first_non_empty(row, "registered_at", "怨듦퀬?쇱옄", "ancm_de")) or "-"
-        period_text = clean(first_non_empty(row, "notice_period", "?묒닔湲곌컙", "period")) or ""
-        budget_text = clean(first_non_empty(row, "_queue_budget", "budget", "?덉궛")) or "-"
-        summary_text = clean(first_non_empty(row, "_queue_analysis", "_queue_project_name")) or "?곌껐??RFP 遺꾩꽍??꾩쭅 ?놁뒿?덈떎."
+        title_text = clean(first_non_empty(row, "공고명", "notice_title")) or "-"
+        agency_text = clean(first_non_empty(row, "전문기관", "agency", "담당부서")) or "-"
+        notice_date = clean(first_non_empty(row, "registered_at", "공고일자", "ancm_de")) or "-"
+        period_text = clean(first_non_empty(row, "notice_period", "접수기간", "period")) or ""
+        budget_text = clean(first_non_empty(row, "_queue_budget", "budget", "예산")) or "-"
+        summary_text = clean(first_non_empty(row, "_queue_analysis", "_queue_project_name")) or "연결된 RFP 분석이 아직 없습니다."
         dday_text = format_dashboard_deadline_badge(period_text, status_text) or "-"
-        notice_id = clean(first_non_empty(row, "怨듦퀬ID", "notice_id"))
+        notice_id = clean(first_non_empty(row, "공고ID", "notice_id"))
         st.markdown(f'<div class="notice-row-body{" is-active" if is_active else ""}">', unsafe_allow_html=True)
         row_cols = st.columns([1.0, 1.1, 3.0, 1.6, 1.0, 0.9, 1.2, 2.3, 0.9], gap="small")
         with row_cols[0]:
@@ -2482,7 +2481,7 @@ def _render_dashboard_recent_notice_inbox(rows: pd.DataFrame, *, limit: int = 12
         with row_cols[2]:
             st.markdown(f'<div class="notice-row-title">{escape(truncate_text(title_text, max_chars=78))}</div>', unsafe_allow_html=True)
             if notice_id and st.button(
-                "?좏깮?? if is_active else "?붿빟 蹂닿린",
+                "선택됨" if is_active else "요약 보기",
                 key=f"dashboard_notice_open_{idx}",
                 type="primary" if is_active else "secondary",
                 use_container_width=True,
@@ -2502,7 +2501,7 @@ def _render_dashboard_recent_notice_inbox(rows: pd.DataFrame, *, limit: int = 12
         with row_cols[8]:
             render_favorite_scrap_button(
                 notice_id=notice_id,
-                current_value=clean(row.get("review_status") or row.get("寃?좎뿬遺")),
+                current_value=clean(row.get("review_status") or row.get("검토여부")),
                 source_key=source_key or "iris",
                 notice_title=title_text,
                 button_key=f"dashboard_notice_favorite_{idx}",
@@ -2514,7 +2513,7 @@ def _render_dashboard_recent_notice_inbox(rows: pd.DataFrame, *, limit: int = 12
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def _render_compact_public_dashboard_workspace(
+def _render_dashboard_workspace(
     datasets: dict[str, pd.DataFrame],
     source_datasets: dict[str, object] | None,
 ) -> None:
@@ -2545,13 +2544,13 @@ def _render_compact_public_dashboard_workspace(
         (
             '<div class="dashboard-greeting">'
             '<div>'
-            f'<div class="dashboard-greeting-title">{escape(current_user_label)}?? ?ㅻ뒛??醫뗭? 湲고쉶瑜?李얠븘蹂댁꽭??</div>'
-            '<div class="dashboard-greeting-copy">AI 遺꾩꽍 湲곕컲?쇰줈 ?좊퀎??R&amp;D Opportunity瑜?異붿쿇?쒕┰?덈떎.</div>'
+            f'<div class="dashboard-greeting-title">{escape(current_user_label)}님, 오늘도 좋은 기회를 찾아보세요!</div>'
+            '<div class="dashboard-greeting-copy">AI 분석 기반으로 선별한 R&amp;D Opportunity를 추천드립니다.</div>'
             '</div>'
             '<div class="dashboard-greeting-meta">'
-            f'<span class="dashboard-greeting-pill">異붿쿇 RFP {len(recommended_rows.head(5))}嫄?/span>'
-            f'<span class="dashboard-greeting-pill">理쒓렐 怨듦퀬 {len(preview_rows)}嫄?/span>'
-            f'<span class="dashboard-greeting-pill">遺꾩꽍 ?꾨즺 {len(opportunity_index)}嫄?/span>'
+            f'<span class="dashboard-greeting-pill">추천 RFP {len(recommended_rows.head(5))}건</span>'
+            f'<span class="dashboard-greeting-pill">최근 공고 {len(preview_rows)}건</span>'
+            f'<span class="dashboard-greeting-pill">분석 완료 {len(opportunity_index)}건</span>'
             '</div>'
             '</div>'
         ),
@@ -2568,26 +2567,26 @@ def _render_compact_public_dashboard_workspace(
         top_left, top_right = st.columns([6, 1.8], gap="medium")
         with top_left:
             st.markdown(
-                '<div class="oppty-section-header"><div><div class="oppty-section-title">?뵦 異붿쿇 RFP Top 5</div><div class="oppty-section-subtitle">異붿쿇 移대뱶?먯꽌 ?듭떖 ?뺣낫留?癒쇱? 蹂닿퀬, ?꾩슂??寃쎌슦?먮쭔 ?곗륫 Summary Panel?먯꽌 ?곸꽭 寃?좊줈 ?댁뼱吏묐땲??</div></div></div>',
+                '<div class="oppty-section-header"><div><div class="oppty-section-title">🔥 추천 RFP Top 5</div><div class="oppty-section-subtitle">추천 카드에서 핵심 정보만 먼저 보고, 필요한 경우에만 우측 Summary Panel에서 상세 검토로 이어집니다.</div></div></div>',
                 unsafe_allow_html=True,
             )
         with top_right:
             st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-            if st.button("?꾩껜 RFP Queue 蹂닿린 >", key="dashboard_to_rfp_queue", use_container_width=True):
+            if st.button("전체 RFP Queue 보기 >", key="dashboard_to_rfp_queue", use_container_width=True):
                 navigate_to_route_state(route_core.build_rfp_queue_route(), push=True)
         _render_dashboard_top_rfp_cards(recommended_rows, selected_item_id="", on_select=None, visible_count=5)
 
         notice_left, notice_right = st.columns([6, 2.1], gap="medium")
         with notice_left:
             st.markdown(
-                '<div class="oppty-section-header"><div><div class="oppty-section-title">Recent Notice Inbox</div><div class="oppty-section-subtitle">理쒓렐 怨듦퀬瑜?compact table濡?鍮좊Ⅴ寃??묎퀬, ?꾩슂??怨듦퀬留?Summary Panel濡??뺤씤?⑸땲??</div></div></div>',
+                '<div class="oppty-section-header"><div><div class="oppty-section-title">Recent Notice Inbox</div><div class="oppty-section-subtitle">최근 공고를 compact table로 빠르게 훑고, 필요한 공고만 Summary Panel로 확인합니다.</div></div></div>',
                 unsafe_allow_html=True,
             )
         with notice_right:
             notice_action_col, notice_size_col = st.columns([2.3, 1.2], gap="small")
             with notice_action_col:
                 st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-                if st.button("?꾩껜 Notice Queue 蹂닿린 >", key="dashboard_to_notice_queue", use_container_width=True):
+                if st.button("전체 Notice Queue 보기 >", key="dashboard_to_notice_queue", use_container_width=True):
                     navigate_to_route_state(route_core.build_notice_queue_route(), push=True)
             with notice_size_col:
                 st.selectbox(
@@ -2624,19 +2623,19 @@ def _render_recommended_opportunity_cards(
         )
         return
     if rows.empty:
-        st.info("?쒖떆??異붿쿇 Opportunity媛 ?놁뒿?덈떎.")
+        st.info("표시할 추천 Opportunity가 없습니다.")
         return
     max_start = max(len(rows) - visible_count, 0)
     start = int(st.session_state.get(carousel_key, 0))
     start = max(0, min(start, max_start))
     nav_left, nav_mid, nav_right = st.columns([1, 4, 1])
     with nav_left:
-        if st.button("?", key=f"{carousel_key}_prev", use_container_width=True, disabled=start <= 0):
+        if st.button("◀", key=f"{carousel_key}_prev", use_container_width=True, disabled=start <= 0):
             start = max(0, start - visible_count)
     with nav_mid:
         st.markdown(f'<div class="oppty-carousel-summary">{start + 1}-{min(start + visible_count, len(rows))} / {len(rows)}</div>', unsafe_allow_html=True)
     with nav_right:
-        if st.button("??, key=f"{carousel_key}_next", use_container_width=True, disabled=start >= max_start):
+        if st.button("▶", key=f"{carousel_key}_next", use_container_width=True, disabled=start >= max_start):
             start = min(max_start, start + visible_count)
     st.session_state[carousel_key] = start
     window = rows.iloc[start:start + visible_count].copy()
@@ -2661,10 +2660,10 @@ def _render_recommended_opportunity_cards(
                     f'<div class="rfp-card-analysis">{escape(ctx["reason"])}</div>'
                     f'<div class="rfp-card-keywords">{keywords}</div>'
                     '<div class="rfp-card-meta">'
-                    f'<div><div class="rfp-card-meta-label">湲곌?</div><div class="rfp-card-meta-value">{escape(ctx["agency"])}</div></div>'
-                    f'<div><div class="rfp-card-meta-label">湲곌컙</div><div class="rfp-card-meta-value">{escape(ctx["period"])}</div></div>'
-                    f'<div><div class="rfp-card-meta-label">?덉궛</div><div class="rfp-card-meta-value">{escape(ctx["budget"])}</div></div>'
-                    f'<div><div class="rfp-card-meta-label">?뚯뒪</div><div class="rfp-card-meta-value">{escape(ctx["source"])}</div></div>'
+                    f'<div><div class="rfp-card-meta-label">기관</div><div class="rfp-card-meta-value">{escape(ctx["agency"])}</div></div>'
+                    f'<div><div class="rfp-card-meta-label">기간</div><div class="rfp-card-meta-value">{escape(ctx["period"])}</div></div>'
+                    f'<div><div class="rfp-card-meta-label">예산</div><div class="rfp-card-meta-value">{escape(ctx["budget"])}</div></div>'
+                    f'<div><div class="rfp-card-meta-label">소스</div><div class="rfp-card-meta-value">{escape(ctx["source"])}</div></div>'
                     '</div>'
                     '</div>'
                 ),
@@ -2674,14 +2673,14 @@ def _render_recommended_opportunity_cards(
             detail_link = resolve_external_detail_link(row, source_key=source_key)
             with action_cols[0]:
                 _render_same_tab_link_button(
-                    "?먮Ц怨듦퀬",
+                    "원문공고",
                     detail_link,
                     kind="secondary",
                     key=f"{carousel_key}_origin_disabled_{rank}",
                 )
             with action_cols[1]:
                 if st.button(
-                    "?붿빟 蹂닿린" if not is_active else "?좏깮??,
+                    "요약 보기" if not is_active else "선택됨",
                     key=f"{carousel_key}_select_{rank}",
                     type="primary" if is_active else "secondary",
                     use_container_width=True,
@@ -2705,37 +2704,37 @@ def _render_recent_notice_inbox(rows: pd.DataFrame, *, limit: int = 12) -> None:
     _render_dashboard_recent_notice_inbox(rows, limit=limit)
     return
     if rows.empty:
-        st.info("理쒓렐 ?쒖떆??怨듦퀬媛 ?놁뒿?덈떎.")
+        st.info("최근 표시할 공고가 없습니다.")
         return
     st.markdown(
-        '<div class="notice-row-shell"><div class="notice-row-head"><div>?곹깭</div><div>異붿쿇</div><div>異쒖쿂</div><div>怨듦퀬紐?/div><div>?깅줉??/div><div>D-day</div><div>?덉궛</div><div>?붿빟</div><div>愿??/div></div>',
+        '<div class="notice-row-shell"><div class="notice-row-head"><div>상태</div><div>추천</div><div>출처</div><div>공고명</div><div>등록일</div><div>D-day</div><div>예산</div><div>요약</div><div>관심</div></div>',
         unsafe_allow_html=True,
     )
     for idx, (_, row) in enumerate(rows.head(limit).iterrows(), start=1):
         source_key = resolve_route_source_key_for_row(row, source_key=row.get("source_key"))
         is_active = _is_selected_dashboard_notice(row)
-        status_text = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "怨듦퀬?곹깭")) or "-"
+        status_text = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태")) or "-"
         recommendation_text = clean(row.get("_queue_recommendation")) or "-"
-        title_text = clean(first_non_empty(row, "怨듦퀬紐?, "notice_title")) or "-"
-        source_text = clean(first_non_empty(row, "留ㅼ껜", "source_label", "source_site")) or (source_key or "IRIS").upper()
-        agency_text = clean(first_non_empty(row, "?꾨Ц湲곌?", "agency", "?대떦遺??)) or "-"
-        notice_date = clean(first_non_empty(row, "registered_at", "怨듦퀬?쇱옄", "ancm_de")) or "-"
-        period_text = clean(first_non_empty(row, "notice_period", "?묒닔湲곌컙", "period")) or ""
-        budget_text = clean(first_non_empty(row, "_queue_budget", "budget", "?덉궛")) or "-"
-        summary_text = clean(first_non_empty(row, "_queue_analysis", "_queue_project_name")) or "?곌껐??RFP 遺꾩꽍??꾩쭅 ?놁뒿?덈떎."
+        title_text = clean(first_non_empty(row, "공고명", "notice_title")) or "-"
+        source_text = clean(first_non_empty(row, "매체", "source_label", "source_site")) or (source_key or "IRIS").upper()
+        agency_text = clean(first_non_empty(row, "전문기관", "agency", "담당부서")) or "-"
+        notice_date = clean(first_non_empty(row, "registered_at", "공고일자", "ancm_de")) or "-"
+        period_text = clean(first_non_empty(row, "notice_period", "접수기간", "period")) or ""
+        budget_text = clean(first_non_empty(row, "_queue_budget", "budget", "예산")) or "-"
+        summary_text = clean(first_non_empty(row, "_queue_analysis", "_queue_project_name")) or "연결된 RFP 분석이 아직 없습니다."
         dday_text = format_dashboard_deadline_badge(period_text, status_text) or "-"
-        notice_id = clean(first_non_empty(row, "怨듦퀬ID", "notice_id"))
+        notice_id = clean(first_non_empty(row, "공고ID", "notice_id"))
         row_cols = st.columns([1.1, 1.1, 1.2, 3.4, 1.2, 1.0, 1.1, 2.7, 0.9], gap="small")
         with row_cols[0]:
             st.markdown(_pill_html(status_text, kind="deadline"), unsafe_allow_html=True)
         with row_cols[1]:
             st.markdown(_pill_html(recommendation_text), unsafe_allow_html=True)
         with row_cols[2]:
-            st.markdown(f'<div class="notice-row-meta">{escape(source_text)} 쨌 {escape(agency_text)}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="notice-row-meta">{escape(source_text)} · {escape(agency_text)}</div>', unsafe_allow_html=True)
         with row_cols[3]:
             st.markdown(f'<div class="notice-row-title">{escape(truncate_text(title_text, max_chars=84))}</div>', unsafe_allow_html=True)
             if notice_id and st.button(
-                "?붿빟 蹂닿린" if not is_active else "?좏깮??,
+                "요약 보기" if not is_active else "선택됨",
                 key=f"dashboard_notice_open_{idx}",
                 type="primary" if is_active else "secondary",
                 use_container_width=False,
@@ -2753,7 +2752,7 @@ def _render_recent_notice_inbox(rows: pd.DataFrame, *, limit: int = 12) -> None:
         with row_cols[8]:
             render_favorite_scrap_button(
                 notice_id=notice_id,
-                current_value=clean(row.get("review_status") or row.get("寃?좎뿬遺")),
+                current_value=clean(row.get("review_status") or row.get("검토여부")),
                 source_key=source_key or "iris",
                 notice_title=title_text,
                 button_key=f"dashboard_notice_favorite_{idx}",
@@ -2772,15 +2771,92 @@ def render_dashboard_source(
     *,
     show_internal_tabs: bool = True,
 ) -> None:
-    render_dashboard_page_module(
-        st,
-        source_config,
-        mode_config,
-        datasets,
-        source_datasets,
-        show_internal_tabs=show_internal_tabs,
-        api=sys.modules[__name__],
+    del source_config, mode_config, show_internal_tabs
+    _inject_opportunity_workspace_styles()
+    _render_dashboard_workspace(datasets, source_datasets)
+    return
+
+    opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
+    if not opportunity_index.empty:
+        opportunity_index = opportunity_index.sort_values(
+            by=["Score", "_sort_date", "Project"],
+            ascending=[False, False, True],
+            na_position="last",
+        )
+    recommended_rows = opportunity_index[build_positive_recommendation_mask(opportunity_index)].copy() if not opportunity_index.empty else pd.DataFrame()
+    notice_rows = _build_dashboard_notice_inbox_rows(datasets, source_datasets)
+    preview_rows = notice_rows.head(12).copy() if not notice_rows.empty else pd.DataFrame()
+    search_key = "dashboard_global_notice_search"
+
+    render_page_header(
+        "R&D Opportunity Dashboard",
+        "추천된 Opportunity를 먼저 검토하고, 필요할 때만 Notice Inbox로 내려가는 intelligence workspace입니다.",
+        eyebrow="Intelligence Workspace",
     )
+    st.markdown(f"### {escape(get_current_user_label() or '사용자')}님, 오늘도 좋은 기회를 찾아보세요!")
+    st.caption(
+        f"AI 분석 기반으로 선별한 Opportunity {len(recommended_rows.head(10))}건과 최근 Notice {len(preview_rows)}건을 바로 검토할 수 있습니다."
+    )
+
+    search_col, action_col = st.columns([4.6, 1], gap="medium")
+    with search_col:
+        st.text_input(
+            "dashboard-notice-search",
+            key=search_key,
+            placeholder="공고명 / 과제명 / 기관명 검색",
+            label_visibility="collapsed",
+        )
+    with action_col:
+        st.markdown('<div style="height:0.1rem"></div>', unsafe_allow_html=True)
+        if st.button("Notice 검색", key="dashboard_notice_search_submit", use_container_width=True):
+            navigate_to_route_state(
+                route_core.build_notice_queue_route(
+                    filters={
+                        "status": [],
+                        "recommendation": [],
+                        "search": clean(st.session_state.get(search_key, "")),
+                        "source": [],
+                        "page_size": 20,
+                    },
+                    page_no=1,
+                    page_size=20,
+                ),
+                push=True,
+            )
+    workspace_col, summary_col = st.columns([5.4, 2.15], gap="large")
+    with workspace_col:
+        section_left, section_right = st.columns([6, 1.8], gap="medium")
+        with section_left:
+            st.markdown(
+                '<div class="oppty-section-header"><div><div class="oppty-section-title">Recommended RFP Queue</div><div class="oppty-section-subtitle">분석 완료된 Opportunity를 추천순 Top 10 기준으로 먼저 보고, 실제 지원 검토 대상으로 이어집니다.</div></div></div>',
+                unsafe_allow_html=True,
+            )
+        with section_right:
+            st.markdown('<div style="height:1.3rem"></div>', unsafe_allow_html=True)
+            if st.button("RFP Queue 전체보기", key="dashboard_to_rfp_queue", use_container_width=True):
+                navigate_to_route_state(route_core.build_rfp_queue_route(), push=True)
+        _render_recommended_opportunity_cards(
+            recommended_rows.head(10),
+            page_key="dashboard",
+            carousel_key="dashboard_recommended_rfp",
+            visible_count=4,
+            show_rank=True,
+        )
+
+        inbox_left, inbox_right = st.columns([6, 1.8], gap="medium")
+        with inbox_left:
+            st.markdown(
+                '<div class="oppty-section-header"><div><div class="oppty-section-title">Recent Notice Inbox</div><div class="oppty-section-subtitle">최근 공고는 compact inbox로 빠르게 훑고, 필요한 공고만 Notice 상세에서 검토합니다.</div></div></div>',
+                unsafe_allow_html=True,
+            )
+        with inbox_right:
+            st.markdown('<div style="height:1.3rem"></div>', unsafe_allow_html=True)
+            if st.button("전체 공고 보기", key="dashboard_to_notice_browser", use_container_width=True):
+                navigate_to_route_state(route_core.build_notice_queue_route(), push=True)
+        _render_recent_notice_inbox(preview_rows, limit=12)
+    with summary_col:
+        _render_dashboard_summary_panel(opportunity_index, notice_rows)
+
 
 def render_iris_source(
     source_config: SourceRouteConfig,
@@ -2804,15 +2880,6 @@ def render_iris_source(
             list(mode_config.iris_tabs),
             key=mode_config.iris_tab_key,
         )
-
-    if current_page_key in {"opportunity", "rfp_queue"}:
-        render_rfp_queue_page_module(
-            st,
-            datasets,
-            source_datasets,
-            api=sys.modules[__name__],
-        )
-        return
 
     if current_page_key == "notice_queue":
         render_notice_queue_page(datasets, source_datasets)
@@ -2887,16 +2954,14 @@ def render_selected_source(
     source_datasets: dict[str, object] | None,
     show_internal_tabs: bool = True,
 ) -> None:
-    renderer_lookup_key = source_config.renderer_key if source_config else source_key
-    if source_key == "notices":
-        renderer = render_notices_source
-    else:
-        renderer = SOURCE_RENDERERS.get(renderer_lookup_key) or SOURCE_RENDERERS.get(source_key)
+    normalized_source_key = "iris" if clean(source_key) == "notices" else clean(source_key)
+    renderer_lookup_key = source_config.renderer_key if source_config else normalized_source_key
+    renderer = SOURCE_RENDERERS.get(renderer_lookup_key) or SOURCE_RENDERERS.get(normalized_source_key)
     if renderer is None:
         fallback_config = source_config or SourceRouteConfig("iris", "IRIS", mode_config.default_iris_page, False, "iris")
-        render_iris_source(fallback_config, mode_config, datasets, show_internal_tabs=show_internal_tabs)
+        render_iris_source(fallback_config, mode_config, datasets, source_datasets, show_internal_tabs=show_internal_tabs)
         return
-    active_config = source_config or SourceRouteConfig(source_key, source_key, mode_config.default_iris_page, False, source_key)
+    active_config = source_config or SourceRouteConfig(normalized_source_key, normalized_source_key, mode_config.default_iris_page, False, normalized_source_key)
     renderer(active_config, mode_config, datasets, source_datasets, show_internal_tabs=show_internal_tabs)
 
 
@@ -2923,21 +2988,16 @@ def row_first_non_empty(row: dict | pd.Series, *keys: str) -> str:
 
 
 def resolve_external_detail_link(row: dict | pd.Series, source_key: str = "") -> str:
-    link = row_first_non_empty(row, "?곸꽭留곹겕", "detail_link")
-    normalized_source = clean(
-        source_key
-        or row.get("_source_key")
-        or row.get("source_site")
-        or row.get("異쒖쿂?ъ씠??)
-    ).lower()
-    if normalized_source in {"tipa", "mss", "nipa"}:
+    link = row_first_non_empty(row, *DETAIL_LINK_CANDIDATES)
+    normalized_source = resolve_route_source_key_for_row(row, source_key=source_key)
+    if normalized_source in {"tipa", "nipa"}:
         return link
 
-    notice_id = row_first_non_empty(row, "怨듦퀬ID", "notice_id")
+    notice_id = row_first_non_empty(row, *NOTICE_ID_CANDIDATES)
     if not notice_id:
         return link
 
-    status_key = row_first_non_empty(row, "?곹깭??, "status_key")
+    status_key = row_first_non_empty(row, *STATUS_KEY_CANDIDATES)
     if not link or (IRIS_DETAIL_BASE_URL in link and "ancmStsCd=" not in link):
         return build_iris_detail_link(notice_id, status_key)
     return link
@@ -3068,11 +3128,11 @@ def truncate_text(value: str, max_chars: int = 140) -> str:
 
 
 LONG_ANALYSIS_LABELS = {
-    "媛쒕뀗 諛?媛쒕컻 ?댁슜",
-    "吏?먰븘?붿꽦(怨쇱젣 諛곌꼍)",
-    "?쒖슜遺꾩빞",
-    "吏?먭린媛?諛??덉궛쨌異붿쭊泥닿퀎",
-    "異붿쿇 ?댁쑀",
+    "개념 및 개발 내용",
+    "지원필요성(과제 배경)",
+    "활용분야",
+    "지원기간 및 예산·추진체계",
+    "추천 이유",
 }
 
 
@@ -3080,7 +3140,7 @@ def preview_max_chars_for_label(label: str) -> int:
     normalized = clean(label)
     if normalized in LONG_ANALYSIS_LABELS:
         return 900
-    if "?덉궛" in normalized or normalized.lower() == "budget":
+    if "예산" in normalized or normalized.lower() == "budget":
         return 80
     return 220
 
@@ -3099,7 +3159,7 @@ def extract_budget_summary(value: str, max_items: int = 3) -> str:
     if not text:
         return ""
 
-    matches = re.findall(r"\d[\d,]*(?:\.\d+)?\s*(?:議곗썝|?듭썝|泥쒕쭔??諛깅쭔??留뚯썝|??", text)
+    matches = re.findall(r"\d[\d,]*(?:\.\d+)?\s*(?:조원|억원|천만원|백만원|만원|원)", text)
     unique_matches = []
     for match in matches:
         normalized = re.sub(r"\s+", "", clean(match))
@@ -3120,7 +3180,7 @@ def display_value_for_label(label: str, value: str) -> str:
     if not text:
         return ""
 
-    if "?덉궛" in normalized_label or normalized_label.lower() == "budget":
+    if "예산" in normalized_label or normalized_label.lower() == "budget":
         budget_summary = extract_budget_summary(text)
         if budget_summary:
             return budget_summary
@@ -3136,7 +3196,7 @@ def should_use_expandable_value(label: str, value: str) -> bool:
     if len(text) <= preview_max_chars_for_label(label):
         return False
     normalized_label = clean(label)
-    if "?덉궛" in normalized_label or normalized_label.lower() == "budget":
+    if "예산" in normalized_label or normalized_label.lower() == "budget":
         return True
     return True
 
@@ -3174,8 +3234,8 @@ def extract_period_end(value: object) -> pd.Timestamp:
 
 
 def classify_notice_status_for_view(row: pd.Series) -> str:
-    status_key = clean(row.get("status_key") or row.get("?곹깭??))
-    period_text = clean(row.get("period") or row.get("?묒닔湲곌컙"))
+    status_key = clean(row.get("status_key") or row.get("상태키"))
+    period_text = clean(row.get("period") or row.get("접수기간"))
     period_end = extract_period_end(period_text)
     period_start = pd.to_datetime(
         clean(period_text).split("~", 1)[0].strip().replace(".", "-") if "~" in clean(period_text) else "",
@@ -3185,31 +3245,31 @@ def classify_notice_status_for_view(row: pd.Series) -> str:
 
     if status_key == "ancmIng":
         if pd.notna(period_start) and period_start.normalize() > today:
-            return "?덉젙"
+            return "예정"
         if pd.notna(period_end) and period_end.normalize() < today:
-            return "留덇컧"
-        return "?묒닔以?
+            return "마감"
+        return "접수중"
     if status_key == "ancmPre":
-        return "?덉젙"
+        return "예정"
     if status_key in {"ancmCls", "ancmEnd"}:
-        return "留덇컧"
+        return "마감"
 
-    status_text = clean(row.get("rcve_status") or row.get("怨듦퀬?곹깭"))
-    if "?묒닔以? in status_text or "怨듦퀬以? in status_text:
+    status_text = clean(row.get("rcve_status") or row.get("공고상태"))
+    if "접수중" in status_text or "공고중" in status_text:
         if pd.notna(period_start) and period_start.normalize() > today:
-            return "?덉젙"
+            return "예정"
         if pd.notna(period_end) and period_end.normalize() < today:
-            return "留덇컧"
-        return "?묒닔以?
-    if "?덉젙" in status_text:
-        return "?덉젙"
-    if "留덇컧" in status_text:
-        return "留덇컧"
+            return "마감"
+        return "접수중"
+    if "예정" in status_text:
+        return "예정"
+    if "마감" in status_text:
+        return "마감"
 
     if pd.notna(period_start) and period_start.normalize() > today:
-        return "?덉젙"
+        return "예정"
     if pd.notna(period_end) and period_end.normalize() < today:
-        return "留덇컧"
+        return "마감"
 
     return status_text
 
@@ -3235,7 +3295,7 @@ def build_opportunity_row_id(row: pd.Series) -> str:
     composite = " | ".join([value for value in [notice_id, project_name or rfp_title, file_name] if value])
     if composite:
         return composite
-    return clean(row.get("notice_title")) or clean(row.get("怨듦퀬紐?))
+    return clean(row.get("notice_title")) or clean(row.get("공고명"))
 
 
 def ensure_opportunity_row_ids(df: pd.DataFrame) -> pd.DataFrame:
@@ -3777,100 +3837,17 @@ def update_worksheet_row(ws, row_number: int, headers: list[str], row: dict[str,
     )
 
 
-def _empty_comment_dataframe() -> pd.DataFrame:
-    working = pd.DataFrame(columns=COMMENT_COLUMNS)
-    for legacy_column in ("author", "comment"):
-        working[legacy_column] = pd.Series(dtype="object")
-    working["created_at_sort"] = pd.Series(dtype="datetime64[ns]")
-    return working
-
-
-def _comment_text_series(df: pd.DataFrame, column: str) -> pd.Series:
-    if column not in df.columns:
-        return pd.Series("", index=df.index, dtype="object")
-    return df[column].fillna("").astype(str).str.strip()
-
-
-def build_comment_post_id(source_key: str, notice_id: str) -> str:
-    normalized_source = normalize_opportunity_source_key(source_key) or clean(source_key).lower()
-    normalized_notice_id = normalize_notice_id_for_match(notice_id)
-    if not normalized_source or not normalized_notice_id:
-        return ""
-    return f"{normalized_source}:{normalized_notice_id}"
-
-
-def _normalize_comment_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None:
-        return _empty_comment_dataframe()
+@st.cache_data(ttl=300, show_spinner=False)
+def load_notice_comments() -> pd.DataFrame:
+    df = load_optional_sheet_as_dataframe(get_comment_sheet_name())
+    if df.empty:
+        return pd.DataFrame(columns=COMMENT_COLUMNS)
 
     working = df.copy()
-    if working.empty and not list(working.columns):
-        working = pd.DataFrame(columns=COMMENT_COLUMNS)
-
     for column in COMMENT_COLUMNS:
         if column not in working.columns:
             working[column] = ""
-
-    legacy_author = _comment_text_series(working, "author")
-    legacy_comment = _comment_text_series(working, "comment")
-    nickname_series = _comment_text_series(working, "nickname")
-    user_id_series = _comment_text_series(working, "user_id")
-    content_series = _comment_text_series(working, "content")
-
-    working["nickname"] = nickname_series.where(nickname_series.ne(""), legacy_author)
-    working["user_id"] = user_id_series.where(
-        user_id_series.ne(""),
-        working["nickname"].where(_comment_text_series(working, "nickname").ne(""), legacy_author),
-    )
-    working["content"] = content_series.where(content_series.ne(""), legacy_comment)
-    working["updated_at"] = _comment_text_series(working, "updated_at").where(
-        _comment_text_series(working, "updated_at").ne(""),
-        _comment_text_series(working, "created_at"),
-    )
-    working["post_id"] = _comment_text_series(working, "post_id").where(
-        _comment_text_series(working, "post_id").ne(""),
-        [
-            build_comment_post_id(source, notice_id)
-            for source, notice_id in zip(_comment_text_series(working, "source"), _comment_text_series(working, "notice_id"))
-        ],
-    )
-
-    for column in COMMENT_COLUMNS:
-        working[column] = working[column].fillna("").astype(str).str.strip()
-
-    working["author"] = _comment_text_series(working, "nickname").where(
-        _comment_text_series(working, "nickname").ne(""),
-        _comment_text_series(working, "user_id"),
-    )
-    working["comment"] = _comment_text_series(working, "content")
     working["created_at_sort"] = pd.to_datetime(working["created_at"], errors="coerce")
-    return working
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def load_notice_comments(include_deleted: bool = False) -> pd.DataFrame:
-    sheet_name = get_comment_sheet_name()
-    df = load_optional_sheet_as_dataframe(sheet_name)
-    if df.empty:
-        ws = get_or_create_worksheet(sheet_name, COMMENT_COLUMNS, rows=1000, cols=len(COMMENT_COLUMNS))
-        header = get_worksheet_header(ws)
-        missing_headers = [column for column in COMMENT_COLUMNS if column not in header]
-        if missing_headers:
-            run_gspread_call(ws.update, range_name="A1", values=[header + missing_headers])
-        return _empty_comment_dataframe()
-
-    ws = get_or_create_worksheet(sheet_name, COMMENT_COLUMNS, rows=1000, cols=len(COMMENT_COLUMNS))
-    header = get_worksheet_header(ws)
-    missing_headers = [column for column in COMMENT_COLUMNS if column not in header]
-    if missing_headers:
-        run_gspread_call(ws.update, range_name="A1", values=[header + missing_headers])
-        df = load_sheet_as_dataframe_uncached(sheet_name)
-
-    working = _normalize_comment_dataframe(df)
-    if not include_deleted:
-        working = working[_comment_text_series(working, "deleted_at").eq("")].copy()
-    if working.empty:
-        return _empty_comment_dataframe()
     return working.sort_values(by=["created_at_sort"], ascending=False, na_position="last")
 
 
@@ -4002,37 +3979,6 @@ def get_current_user_domain() -> str:
     return normalize_email_domain(get_current_user_email())
 
 
-def get_admin_user_ids() -> set[str]:
-    raw_value = get_env("ADMIN_USER_IDS", "admin")
-    return {clean(item).lower() for item in clean(raw_value).split(",") if clean(item)}
-
-
-def is_admin_user(user_id: str) -> bool:
-    return clean(user_id).lower() in get_admin_user_ids()
-
-
-def get_comment_owner_id(comment_row) -> str:
-    if isinstance(comment_row, pd.Series):
-        comment_row = comment_row.to_dict()
-    if not isinstance(comment_row, dict):
-        return ""
-    return (
-        clean(comment_row.get("user_id"))
-        or clean(comment_row.get("nickname"))
-        or clean(comment_row.get("author"))
-    )
-
-
-def can_delete_comment(comment_row, current_user_id: str) -> bool:
-    normalized_user_id = clean(current_user_id).lower()
-    if not normalized_user_id:
-        return False
-    if is_admin_user(normalized_user_id):
-        return True
-    owner_id = clean(get_comment_owner_id(comment_row)).lower()
-    return bool(owner_id and owner_id == normalized_user_id)
-
-
 def build_operation_scope_key(account: dict[str, str] | None) -> str:
     account = account or {}
     domain = normalize_email_domain(account.get("email", ""))
@@ -4114,7 +4060,7 @@ def apply_user_review_statuses_to_df(df: pd.DataFrame, source_key: str, user_rev
     if not lookup:
         return working
 
-    notice_ids = series_from_candidates(working, ["怨듦퀬ID", "notice_id"])
+    notice_ids = series_from_candidates(working, ["공고ID", "notice_id"])
     override_values = [
         lookup.get((source_key, normalize_notice_id_for_match(notice_id)), None)
         for notice_id in notice_ids
@@ -4124,7 +4070,7 @@ def apply_user_review_statuses_to_df(df: pd.DataFrame, source_key: str, user_rev
     if not override_mask.any():
         return working
 
-    for column in ["寃??щ?", "寃?좎뿬遺", "review_status"]:
+    for column in ["검토 여부", "검토여부", "review_status"]:
         if column in working.columns:
             working.loc[override_mask, column] = override_series[override_mask].fillna("")
     return working
@@ -4183,21 +4129,21 @@ def apply_user_review_statuses(
 
 def filter_notice_comments(comments_df: pd.DataFrame, *, source_key: str, notice_id: str) -> pd.DataFrame:
     if comments_df.empty:
-        return _empty_comment_dataframe()
+        return pd.DataFrame(columns=COMMENT_COLUMNS)
 
-    working = _normalize_comment_dataframe(comments_df)
-    comment_notice_keys = _comment_text_series(working, "notice_id").apply(normalize_notice_id_for_match)
+    working = comments_df.copy()
+    for column in COMMENT_COLUMNS:
+        if column not in working.columns:
+            working[column] = ""
+
+    comment_notice_keys = working["notice_id"].apply(normalize_notice_id_for_match)
     current_notice_key = normalize_notice_id_for_match(notice_id)
-    current_source_key = normalize_opportunity_source_key(source_key) or clean(source_key).lower()
-    current_post_id = build_comment_post_id(current_source_key, current_notice_key)
     filtered = working[
-        _comment_text_series(working, "source").str.lower().eq(current_source_key)
-        & (
-            comment_notice_keys.eq(current_notice_key)
-            | _comment_text_series(working, "post_id").eq(current_post_id)
-        )
+        working["source"].fillna("").astype(str).str.strip().eq(clean(source_key))
+        & comment_notice_keys.eq(current_notice_key)
     ].copy()
-    filtered = filtered[_comment_text_series(filtered, "deleted_at").eq("")].copy()
+    if is_user_scoped_operations_enabled() and "user_id" in filtered.columns:
+        filtered = filtered[filtered["user_id"].fillna("").astype(str).str.strip().eq(get_current_operation_scope_key())].copy()
     return filtered
 
 
@@ -4210,32 +4156,22 @@ def append_notice_comment(
     comment: str,
 ) -> None:
     notice_id = clean(notice_id)
-    content = clean(comment)
+    comment = clean(comment)
     if not notice_id:
         raise RuntimeError("공고ID가 없어 댓글을 저장할 수 없습니다.")
-    if not content:
+    if not comment:
         raise RuntimeError("댓글 내용을 입력해 주세요.")
 
     ws = get_or_create_worksheet(get_comment_sheet_name(), COMMENT_COLUMNS, rows=1000, cols=len(COMMENT_COLUMNS))
-    current_user_id = clean(get_current_user_id()) or clean(author) or clean(get_env("DEFAULT_COMMENT_AUTHOR"))
-    nickname = clean(author) or clean(get_current_user_label()) or current_user_id or "익명"
-    timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
     row = {
         "comment_id": str(uuid.uuid4()),
-        "post_id": build_comment_post_id(source_key, notice_id),
-        "user_id": current_user_id or nickname,
-        "source": normalize_opportunity_source_key(source_key) or clean(source_key).lower() or "iris",
+        "created_at": pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S"),
+        "user_id": get_current_operation_scope_key(),
+        "source": clean(source_key) or "iris",
         "notice_id": notice_id,
         "notice_title": clean(notice_title),
-        "parent_id": "",
-        "nickname": nickname,
-        "content": content[:5000],
-        "mention": "",
-        "ip_address": "",
-        "ip_based_uid": "",
-        "created_at": timestamp,
-        "updated_at": timestamp,
-        "deleted_at": "",
+        "author": clean(author) or get_current_user_label() or "익명",
+        "comment": comment[:5000],
     }
     append_dict_row(ws, row, COMMENT_COLUMNS)
     load_sheet_as_dataframe.clear()
@@ -4243,7 +4179,7 @@ def append_notice_comment(
     load_app_datasets.clear()
 
 
-def delete_notice_comment(comment_id: str, current_user_id: str) -> None:
+def delete_notice_comment(comment_id: str) -> None:
     comment_id = clean(comment_id)
     if not comment_id:
         raise RuntimeError("삭제할 댓글 ID가 없습니다.")
@@ -4261,19 +4197,7 @@ def delete_notice_comment(comment_id: str, current_user_id: str) -> None:
     for row_index, sheet_row in enumerate(values[1:], start=2):
         current_comment_id = clean(sheet_row[comment_id_col] if comment_id_col < len(sheet_row) else "")
         if current_comment_id == comment_id:
-            existing = {
-                header[column_index]: clean(sheet_row[column_index] if column_index < len(sheet_row) else "")
-                for column_index in range(len(header))
-            }
-            comment_row = _normalize_comment_dataframe(pd.DataFrame([existing])).iloc[0].to_dict()
-            if not can_delete_comment(comment_row, current_user_id):
-                raise RuntimeError("본인이 작성한 댓글만 삭제할 수 있습니다.")
-
-            timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
-            updated = dict(existing)
-            updated["deleted_at"] = timestamp
-            updated["updated_at"] = timestamp
-            update_worksheet_row(ws, row_index, header, updated)
+            run_gspread_call(ws.delete_rows, row_index)
             load_sheet_as_dataframe.clear()
             load_notice_comments.clear()
             load_app_datasets.clear()
@@ -4294,9 +4218,9 @@ def upsert_user_review_status(
     source_key = clean(source_key) or "iris"
     notice_id = clean(notice_id)
     if not user_id:
-        raise RuntimeError("濡쒓렇??ъ슜??뺣낫媛 ?놁뼱 寃??щ?瑜???ν븷 ??놁뒿?덈떎.")
+        raise RuntimeError("로그인 사용자 정보가 없어 검토 여부를 저장할 수 없습니다.")
     if not notice_id:
-        raise RuntimeError("怨듦퀬ID媛 ?놁뼱 寃??щ?瑜???ν븷 ??놁뒿?덈떎.")
+        raise RuntimeError("공고ID가 없어 검토 여부를 저장할 수 없습니다.")
 
     ws = get_or_create_worksheet(get_user_review_sheet_name(), USER_REVIEW_COLUMNS, rows=1000, cols=len(USER_REVIEW_COLUMNS))
     values = run_gspread_call(ws.get_all_values)
@@ -4312,7 +4236,7 @@ def upsert_user_review_status(
     title_col = col_index("notice_title")
     updated_col = col_index("updated_at")
     if user_col is None or source_col is None or notice_col is None or review_col is None:
-        raise RuntimeError("?ъ슜??寃??쒗듃??꾩닔 而щ읆??놁뒿?덈떎.")
+        raise RuntimeError("사용자 검토 시트의 필수 컬럼이 없습니다.")
 
     timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
     notice_key = normalize_notice_id_for_match(notice_id)
@@ -4353,19 +4277,19 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
     password = clean(password)
     email = clean(email).lower()
     if not user_id:
-        raise RuntimeError("?꾩씠?붾? ?낅젰??二쇱꽭??")
+        raise RuntimeError("아이디를 입력해 주세요.")
     if len(user_id) < 3:
-        raise RuntimeError("?꾩씠?붾뒗 3??댁긽?댁뼱??⑸땲??")
+        raise RuntimeError("아이디는 3자 이상이어야 합니다.")
     if not re.match(r"^[A-Za-z0-9_.-]+$", user_id):
-        raise RuntimeError("?꾩씠?붾뒗 ?곷Ц, ?レ옄, ?? 諛묒쨪, ?섏씠?덈쭔 ?ъ슜??덉뒿?덈떎.")
+        raise RuntimeError("아이디는 영문, 숫자, 점, 밑줄, 하이픈만 사용할 수 있습니다.")
     if len(password) < 6:
-        raise RuntimeError("鍮꾨?踰덊샇??6??댁긽?댁뼱??⑸땲??")
+        raise RuntimeError("비밀번호는 6자 이상이어야 합니다.")
     allowed_domains = load_allowed_email_domains()
     email_domain = normalize_email_domain(email)
     if allowed_domains and email_domain not in allowed_domains:
-        raise RuntimeError("?덉슜??뚯궗 ?대찓??꾨찓?몃쭔 媛??붿껌??덉뒿?덈떎.")
+        raise RuntimeError("허용된 회사 이메일 도메인만 가입 요청할 수 있습니다.")
     if get_auth_account(user_id):
-        raise RuntimeError("?대? ?깅줉?섏뿀嫄곕굹 ?뱀씤 ?湲?以묒씤 ?꾩씠?붿엯?덈떎.")
+        raise RuntimeError("이미 등록되었거나 승인 대기 중인 아이디입니다.")
 
     ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
     timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
@@ -4386,20 +4310,20 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
 
 
 def render_signup_form() -> None:
-    st.markdown("#### 媛??붿껌")
+    st.markdown("#### 가입 요청")
     allowed_domains = sorted(load_allowed_email_domains())
     if allowed_domains:
-        st.caption("媛??媛??꾨찓?? " + ", ".join(allowed_domains))
+        st.caption("가입 가능 도메인: " + ", ".join(allowed_domains))
     with st.form("signup_form"):
-        user_id = st.text_input("?꾩씠??, key="signup_user_id")
-        display_name = st.text_input("?대쫫", key="signup_display_name")
-        email = st.text_input("?대찓??, key="signup_email")
-        password = st.text_input("鍮꾨?踰덊샇", type="password", key="signup_password")
-        password_confirm = st.text_input("鍮꾨?踰덊샇 ?뺤씤", type="password", key="signup_password_confirm")
-        submitted = st.form_submit_button("媛??붿껌", use_container_width=True)
+        user_id = st.text_input("아이디", key="signup_user_id")
+        display_name = st.text_input("이름", key="signup_display_name")
+        email = st.text_input("이메일", key="signup_email")
+        password = st.text_input("비밀번호", type="password", key="signup_password")
+        password_confirm = st.text_input("비밀번호 확인", type="password", key="signup_password_confirm")
+        submitted = st.form_submit_button("가입 요청", use_container_width=True)
     if submitted:
         if clean(password) != clean(password_confirm):
-            st.error("鍮꾨?踰덊샇 ?뺤씤??쇱튂?섏? ?딆뒿?덈떎.")
+            st.error("비밀번호 확인이 일치하지 않습니다.")
             return
         try:
             submit_signup_request(
@@ -4408,9 +4332,9 @@ def render_signup_form() -> None:
                 display_name=display_name,
                 email=email,
             )
-            st.success("媛??붿껌??蹂대깉?듬땲?? 愿由ъ옄媛 ?뱀씤?섎㈃ 濡쒓렇?명븷 ??덉뒿?덈떎.")
+            st.success("가입 요청을 보냈습니다. 관리자가 승인하면 로그인할 수 있습니다.")
         except Exception as exc:
-            st.error(f"媛??붿껌 ?ㅽ뙣: {exc}")
+            st.error(f"가입 요청 실패: {exc}")
 
 
 def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, str]]) -> None:
@@ -4418,14 +4342,14 @@ def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, 
     _, center_col, _ = st.columns([1.2, 1, 1.2])
     with center_col:
         st.title(mode_config.header_title)
-        st.caption("媛숈? ?대찓??꾨찓?몄쓣 媛吏??ъ슜?먮겮由щ뒗 ?볤?, 愿?ш났怨? 寃??곹깭瑜??④퍡 怨듭쑀?⑸땲??")
+        st.caption("같은 이메일 도메인을 가진 사용자끼리는 댓글, 관심공고, 검토 상태를 함께 공유합니다.")
         if mode_config.mode == "viewer":
-            login_tab, signup_tab = st.tabs(["濡쒓렇??, "媛??붿껌"])
+            login_tab, signup_tab = st.tabs(["로그인", "가입 요청"])
             with login_tab:
                 with st.form("login_form"):
-                    user_id = st.text_input("?꾩씠??)
-                    password = st.text_input("鍮꾨?踰덊샇", type="password")
-                    submitted = st.form_submit_button("濡쒓렇??, use_container_width=True)
+                    user_id = st.text_input("아이디")
+                    password = st.text_input("비밀번호", type="password")
+                    submitted = st.form_submit_button("로그인", use_container_width=True)
                 if submitted:
                     account = accounts.get(clean(user_id))
                     if account and clean(account.get("status")).lower() == "approved" and verify_password(password, account.get("password_hash", "")):
@@ -4440,18 +4364,18 @@ def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, 
                         replace_query_params(with_auth_params(get_query_params_dict()))
                         st.rerun()
                     elif account and clean(account.get("status")).lower() == "pending":
-                        st.warning("?꾩쭅 ?쒖꽦?붾릺吏 ?딆? 怨꾩젙?낅땲?? 愿由ъ옄?먭쾶 ?쒖꽦??곹깭瑜??뺤씤??二쇱꽭??")
+                        st.warning("아직 활성화되지 않은 계정입니다. 관리자에게 활성화 상태를 확인해 주세요.")
                     elif account and clean(account.get("status")).lower() == "rejected":
-                        st.error("?ъ슜??以묒??怨꾩젙?낅땲?? 愿由ъ옄?먭쾶 臾몄쓽??二쇱꽭??")
+                        st.error("사용이 중지된 계정입니다. 관리자에게 문의해 주세요.")
                     else:
-                        st.error("?꾩씠??먮뒗 鍮꾨?踰덊샇瑜??뺤씤??二쇱꽭??")
+                        st.error("아이디 또는 비밀번호를 확인해 주세요.")
             with signup_tab:
                 render_signup_form()
         else:
             with st.form("login_form"):
-                user_id = st.text_input("?꾩씠??)
-                password = st.text_input("鍮꾨?踰덊샇", type="password")
-                submitted = st.form_submit_button("濡쒓렇??, use_container_width=True)
+                user_id = st.text_input("아이디")
+                password = st.text_input("비밀번호", type="password")
+                submitted = st.form_submit_button("로그인", use_container_width=True)
             if submitted:
                 account = accounts.get(clean(user_id))
                 if account and clean(account.get("status")).lower() == "approved" and verify_password(password, account.get("password_hash", "")):
@@ -4466,11 +4390,11 @@ def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, 
                     replace_query_params(with_auth_params(get_query_params_dict()))
                     st.rerun()
                 elif account and clean(account.get("status")).lower() == "pending":
-                    st.warning("?꾩쭅 ?쒖꽦?붾릺吏 ?딆? 怨꾩젙?낅땲?? 愿由ъ옄?먭쾶 ?쒖꽦??곹깭瑜??뺤씤??二쇱꽭??")
+                    st.warning("아직 활성화되지 않은 계정입니다. 관리자에게 활성화 상태를 확인해 주세요.")
                 elif account and clean(account.get("status")).lower() == "rejected":
-                    st.error("?ъ슜??以묒??怨꾩젙?낅땲?? 愿由ъ옄?먭쾶 臾몄쓽??二쇱꽭??")
+                    st.error("사용이 중지된 계정입니다. 관리자에게 문의해 주세요.")
                 else:
-                    st.error("?꾩씠??먮뒗 鍮꾨?踰덊샇瑜??뺤씤??二쇱꽭??")
+                    st.error("아이디 또는 비밀번호를 확인해 주세요.")
 
 
 def require_login(mode_config: AppModeConfig) -> None:
@@ -4718,28 +4642,28 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
     email = clean(email).lower()
     display_name = clean(display_name) or user_id
     if not user_id:
-        raise RuntimeError("?꾩씠?붾? ?낅젰??二쇱꽭??")
+        raise RuntimeError("아이디를 입력해 주세요.")
     if len(user_id) < 3:
-        raise RuntimeError("?꾩씠?붾뒗 3??댁긽?댁뼱??⑸땲??")
+        raise RuntimeError("아이디는 3자 이상이어야 합니다.")
     if not re.match(r"^[A-Za-z0-9_.-]+$", user_id):
-        raise RuntimeError("?꾩씠?붾뒗 ?곷Ц, ?レ옄, 諛묒쨪, ?? ?섏씠?덈쭔 ?ъ슜??덉뒿?덈떎.")
+        raise RuntimeError("아이디는 영문, 숫자, 밑줄, 점, 하이픈만 사용할 수 있습니다.")
     if len(password) < 6:
-        raise RuntimeError("鍮꾨?踰덊샇??6??댁긽?댁뼱??⑸땲??")
+        raise RuntimeError("비밀번호는 6자 이상이어야 합니다.")
 
     allowed_domains = load_allowed_email_domains()
     email_domain = normalize_email_domain(email)
     if allowed_domains and email_domain not in allowed_domains:
-        raise RuntimeError("?덉슜??뚯궗 ?대찓??꾨찓?몃쭔 媛??붿껌??덉뒿?덈떎.")
+        raise RuntimeError("허용된 회사 이메일 도메인만 가입 요청할 수 있습니다.")
     if get_auth_account(user_id):
-        raise RuntimeError("?대? ?깅줉?먭굅??뱀씤 ?湲?以묒씤 ?꾩씠?붿엯?덈떎.")
+        raise RuntimeError("이미 등록됐거나 승인 대기 중인 아이디입니다.")
 
     existing_requests = get_signup_requests_for_email(email)
     if not existing_requests.empty:
         latest_status = clean(existing_requests.iloc[0].get("status")).upper()
         if latest_status in {"PENDING", "HOLD"}:
-            raise RuntimeError("媛숈? ?대찓?쇰줈 吏꾪뻾 以묒씤 媛??붿껌??대? ?덉뒿?덈떎.")
+            raise RuntimeError("같은 이메일로 진행 중인 가입 요청이 이미 있습니다.")
         if latest_status == "APPROVED":
-            raise RuntimeError("?대? ?뱀씤??媛??붿껌??덉뒿?덈떎.")
+            raise RuntimeError("이미 승인된 가입 요청이 있습니다.")
 
     ws = get_or_create_worksheet(get_auth_user_sheet_name(), AUTH_USER_COLUMNS, rows=1000, cols=len(AUTH_USER_COLUMNS))
     timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
@@ -4778,7 +4702,7 @@ def resolve_notice_source_key(row: dict | pd.Series | None) -> str:
         source_alias_map = {
             "tipa": "tipa",
             "mss": "tipa",
-            "餓λ쵐?쇗묾怨쀫씜甕겹끉荑귡겫?": "tipa",
+            "以묒냼湲곗뾽踰ㅼ쿂遺": "tipa",
             "nipa": "nipa",
             "iris": "iris",
         }
@@ -4793,7 +4717,7 @@ def resolve_notice_source_key(row: dict | pd.Series | None) -> str:
     source_alias_map = {
         "tipa": "tipa",
         "mss": "tipa",
-        "餓λ쵐?쇗묾怨쀫씜甕겹끉荑귡겫?": "tipa",
+        "以묒냼湲곗뾽踰ㅼ쿂遺": "tipa",
         "nipa": "nipa",
         "iris": "iris",
     }
@@ -4811,31 +4735,31 @@ def normalize_mss_notice_df(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     working = df.copy()
-    working["registered_at"] = series_from_candidates(working, ["registered_at", "ancm_de", "?깅줉??])
-    working["period"] = series_from_candidates(working, ["period", "?좎껌湲곌컙"])
-    working["agency"] = series_from_candidates(working, ["agency", "department", "?대떦遺??])
-    working["notice_title"] = series_from_candidates(working, ["notice_title", "title", "怨듦퀬紐?])
-    working["notice_no"] = series_from_candidates(working, ["notice_no", "ancm_no", "怨듦퀬踰덊샇"])
-    working["status"] = series_from_candidates(working, ["status", "怨듦퀬?곹깭"])
-    working["views"] = series_from_candidates(working, ["views", "議고쉶"])
-    working["detail_link"] = series_from_candidates(working, ["detail_link", "?곸꽭留곹겕"])
-    working["review_status"] = series_from_candidates(working, ["review_status", "寃??щ?", "寃?좎뿬遺"])
-    working["notice_id"] = series_from_candidates(working, ["notice_id", "怨듦퀬ID"])
+    working["registered_at"] = series_from_candidates(working, ["registered_at", "ancm_de", "등록일"])
+    working["period"] = series_from_candidates(working, ["period", "신청기간"])
+    working["agency"] = series_from_candidates(working, ["agency", "department", "담당부서"])
+    working["notice_title"] = series_from_candidates(working, ["notice_title", "title", "공고명"])
+    working["notice_no"] = series_from_candidates(working, ["notice_no", "ancm_no", "공고번호"])
+    working["status"] = series_from_candidates(working, ["status", "공고상태"])
+    working["views"] = series_from_candidates(working, ["views", "조회"])
+    working["detail_link"] = series_from_candidates(working, ["detail_link", "상세링크"])
+    working["review_status"] = series_from_candidates(working, ["review_status", "검토 여부", "검토여부"])
+    working["notice_id"] = series_from_candidates(working, ["notice_id", "공고ID"])
     working["_sort_date"] = parse_date_column(working["registered_at"])
 
-    working["?깅줉??] = working["registered_at"]
-    working["?좎껌湲곌컙"] = working["period"]
-    working["?대떦遺??] = working["agency"]
-    working["?꾨Ц湲곌?"] = working["agency"]
-    working["怨듦퀬紐?] = working["notice_title"]
-    working["怨듦퀬踰덊샇"] = working["notice_no"]
-    working["?곹깭"] = working["status"]
-    working["怨듦퀬?곹깭"] = working["status"]
-    working["議고쉶"] = working["views"]
-    working["?곸꽭留곹겕"] = working["detail_link"]
-    working["寃??щ?"] = working["review_status"]
-    working["怨듦퀬ID"] = working["notice_id"]
-    return working.sort_values(by=["_sort_date", "怨듦퀬踰덊샇", "怨듦퀬紐?], ascending=[False, False, True], na_position="last")
+    working["등록일"] = working["registered_at"]
+    working["신청기간"] = working["period"]
+    working["담당부서"] = working["agency"]
+    working["전문기관"] = working["agency"]
+    working["공고명"] = working["notice_title"]
+    working["공고번호"] = working["notice_no"]
+    working["상태"] = working["status"]
+    working["공고상태"] = working["status"]
+    working["조회"] = working["views"]
+    working["상세링크"] = working["detail_link"]
+    working["검토 여부"] = working["review_status"]
+    working["공고ID"] = working["notice_id"]
+    return working.sort_values(by=["_sort_date", "공고번호", "공고명"], ascending=[False, False, True], na_position="last")
 
 
 def normalize_nipa_notice_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -4843,35 +4767,35 @@ def normalize_nipa_notice_df(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     working = df.copy()
-    working["registered_at"] = series_from_candidates(working, ["registered_at", "ancm_de", "?깅줉??])
-    working["period"] = series_from_candidates(working, ["period", "?좎껌湲곌컙"])
-    working["business_name"] = series_from_candidates(working, ["business_name", "project_name", "?ъ뾽紐?])
-    working["agency"] = series_from_candidates(working, ["agency", "department", "?대떦遺??, "?꾨Ц湲곌?"])
-    working["notice_title"] = series_from_candidates(working, ["notice_title", "title", "怨듦퀬紐?])
-    working["notice_no"] = series_from_candidates(working, ["notice_no", "ancm_no", "怨듦퀬踰덊샇", "row_number"])
-    working["status"] = series_from_candidates(working, ["status", "?곹깭", "怨듦퀬?곹깭"])
-    working["detail_link"] = series_from_candidates(working, ["detail_link", "?곸꽭留곹겕"])
-    working["review_status"] = series_from_candidates(working, ["review_status", "寃??щ?", "寃?좎뿬遺"])
-    working["notice_id"] = series_from_candidates(working, ["notice_id", "怨듦퀬ID"])
-    working["d_day"] = series_from_candidates(working, ["d_day", "?⑥??좎껌湲곌컙"])
-    working["author"] = series_from_candidates(working, ["author", "?묒꽦??])
+    working["registered_at"] = series_from_candidates(working, ["registered_at", "ancm_de", "등록일"])
+    working["period"] = series_from_candidates(working, ["period", "신청기간"])
+    working["business_name"] = series_from_candidates(working, ["business_name", "project_name", "사업명"])
+    working["agency"] = series_from_candidates(working, ["agency", "department", "담당부서", "전문기관"])
+    working["notice_title"] = series_from_candidates(working, ["notice_title", "title", "공고명"])
+    working["notice_no"] = series_from_candidates(working, ["notice_no", "ancm_no", "공고번호", "row_number"])
+    working["status"] = series_from_candidates(working, ["status", "상태", "공고상태"])
+    working["detail_link"] = series_from_candidates(working, ["detail_link", "상세링크"])
+    working["review_status"] = series_from_candidates(working, ["review_status", "검토 여부", "검토여부"])
+    working["notice_id"] = series_from_candidates(working, ["notice_id", "공고ID"])
+    working["d_day"] = series_from_candidates(working, ["d_day", "남은신청기간"])
+    working["author"] = series_from_candidates(working, ["author", "작성자"])
     working["_sort_date"] = parse_date_column(working["registered_at"])
 
-    working["?깅줉??] = working["registered_at"]
-    working["?좎껌湲곌컙"] = working["period"]
-    working["?ъ뾽紐?] = working["business_name"]
-    working["?대떦遺??] = working["agency"]
-    working["?꾨Ц湲곌?"] = working["agency"]
-    working["怨듦퀬紐?] = working["notice_title"]
-    working["怨듦퀬踰덊샇"] = working["notice_no"]
-    working["?곹깭"] = working["status"]
-    working["怨듦퀬?곹깭"] = working["status"]
-    working["?곸꽭留곹겕"] = working["detail_link"]
-    working["寃??щ?"] = working["review_status"]
-    working["怨듦퀬ID"] = working["notice_id"]
-    working["?묒꽦??] = working["author"]
-    working["?⑥??좎껌湲곌컙"] = working["d_day"]
-    return working.sort_values(by=["_sort_date", "怨듦퀬踰덊샇", "怨듦퀬紐?], ascending=[False, False, True], na_position="last")
+    working["등록일"] = working["registered_at"]
+    working["신청기간"] = working["period"]
+    working["사업명"] = working["business_name"]
+    working["담당부서"] = working["agency"]
+    working["전문기관"] = working["agency"]
+    working["공고명"] = working["notice_title"]
+    working["공고번호"] = working["notice_no"]
+    working["상태"] = working["status"]
+    working["공고상태"] = working["status"]
+    working["상세링크"] = working["detail_link"]
+    working["검토 여부"] = working["review_status"]
+    working["공고ID"] = working["notice_id"]
+    working["작성자"] = working["author"]
+    working["남은신청기간"] = working["d_day"]
+    return working.sort_values(by=["_sort_date", "공고번호", "공고명"], ascending=[False, False, True], na_position="last")
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -5017,19 +4941,19 @@ def find_header_column(header: list[str], candidates: list[str]) -> int | None:
 def update_notice_review_status(notice_id: str, review_status: str) -> None:
     notice_id = clean(notice_id)
     if not notice_id:
-        raise RuntimeError("怨듦퀬ID媛 ?놁뼱 寃??щ?瑜???ν븷 ??놁뒿?덈떎.")
+        raise RuntimeError("공고ID가 없어 검토 여부를 저장할 수 없습니다.")
 
     notice_master_sheet = get_env("NOTICE_MASTER_SHEET", "IRIS_NOTICE_MASTER")
     ws = get_worksheet(notice_master_sheet)
     values = run_gspread_call(ws.get_all_values)
     if not values:
-        raise RuntimeError("IRIS_NOTICE_MASTER ?쒗듃媛 鍮꾩뼱 ?덉뒿?덈떎.")
+        raise RuntimeError("IRIS_NOTICE_MASTER 시트가 비어 있습니다.")
 
     header = [clean(x) for x in values[0]]
-    notice_id_col = find_header_column(header, ["怨듦퀬ID", "notice_id"])
-    review_col = find_header_column(header, ["寃??щ?", "寃?좎뿬遺", "review_status"])
+    notice_id_col = find_header_column(header, ["공고ID", "notice_id"])
+    review_col = find_header_column(header, ["검토 여부", "검토여부", "review_status"])
     if not notice_id_col:
-        raise RuntimeError("?꾩닔 而щ읆??놁뒿?덈떎: 怨듦퀬ID/notice_id")
+        raise RuntimeError("필수 컬럼이 없습니다: 공고ID/notice_id")
     if not review_col:
         review_col = len(header) + 1
         ws.update_cell(1, review_col, "review_status")
@@ -5042,13 +4966,13 @@ def update_notice_review_status(notice_id: str, review_status: str) -> None:
             load_app_datasets.clear()
             return
 
-    raise RuntimeError(f"IRIS_NOTICE_MASTER?먯꽌 怨듦퀬ID {notice_id}瑜?李얠? 紐삵뻽?듬땲??")
+    raise RuntimeError(f"IRIS_NOTICE_MASTER에서 공고ID {notice_id}를 찾지 못했습니다.")
 
 
 def update_mss_review_status(notice_id: str, review_status: str) -> None:
     notice_id = clean(notice_id)
     if not notice_id:
-        raise RuntimeError("怨듦퀬ID媛 ?놁뼱 寃??щ?瑜???ν븷 ??놁뒿?덈떎.")
+        raise RuntimeError("공고ID가 없어 검토 여부를 저장할 수 없습니다.")
 
     sheet_names = [
         get_env("MSS_CURRENT_SHEET") or get_env("MSS_NOTICE_SHEET", "MSS_CURRENT"),
@@ -5067,11 +4991,11 @@ def update_mss_review_status(notice_id: str, review_status: str) -> None:
             continue
 
         header = [clean(x) for x in values[0]]
-        notice_id_col = find_header_column(header, ["怨듦퀬ID", "notice_id"])
+        notice_id_col = find_header_column(header, ["공고ID", "notice_id"])
         if not notice_id_col:
             continue
 
-        review_col = find_header_column(header, ["寃??щ?", "寃?좎뿬遺", "review_status"])
+        review_col = find_header_column(header, ["검토 여부", "검토여부", "review_status"])
         if not review_col:
             review_col = len(header) + 1
             ws.update_cell(1, review_col, "review_status")
@@ -5085,13 +5009,13 @@ def update_mss_review_status(notice_id: str, review_status: str) -> None:
                 load_app_datasets.clear()
                 return
 
-    raise RuntimeError(f"以묒냼湲곗뾽踰ㅼ쿂遺 ?쒗듃({', '.join(checked_sheets)})?먯꽌 怨듦퀬ID {notice_id}瑜?李얠? 紐삵뻽?듬땲??")
+    raise RuntimeError(f"중소기업벤처부 시트({', '.join(checked_sheets)})에서 공고ID {notice_id}를 찾지 못했습니다.")
 
 
 def update_nipa_review_status(notice_id: str, review_status: str) -> None:
     notice_id = clean(notice_id)
     if not notice_id:
-        raise RuntimeError("怨듦퀬ID媛 ?놁뼱 寃??щ?瑜???ν븷 ??놁뒿?덈떎.")
+        raise RuntimeError("공고ID가 없어 검토 여부를 저장할 수 없습니다.")
 
     sheet_names = [
         get_env("NIPA_CURRENT_SHEET", "NIPA_CURRENT"),
@@ -5111,11 +5035,11 @@ def update_nipa_review_status(notice_id: str, review_status: str) -> None:
             continue
 
         header = [clean(x) for x in values[0]]
-        notice_id_col = find_header_column(header, ["怨듦퀬ID", "notice_id"])
+        notice_id_col = find_header_column(header, ["공고ID", "notice_id"])
         if not notice_id_col:
             continue
 
-        review_col = find_header_column(header, ["寃??щ?", "寃?좎뿬遺", "review_status"])
+        review_col = find_header_column(header, ["검토 여부", "검토여부", "review_status"])
         if not review_col:
             review_col = len(header) + 1
             ws.update_cell(1, review_col, "review_status")
@@ -5129,42 +5053,42 @@ def update_nipa_review_status(notice_id: str, review_status: str) -> None:
                 load_app_datasets.clear()
                 return
 
-    raise RuntimeError(f"NIPA ?쒗듃({', '.join(checked_sheets)})?먯꽌 怨듦퀬ID {notice_id}瑜?李얠? 紐삵뻽?듬땲??")
+    raise RuntimeError(f"NIPA 시트({', '.join(checked_sheets)})에서 공고ID {notice_id}를 찾지 못했습니다.")
 
 
 def enrich_notice_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     enriched = df.copy()
-    enriched["怨듦퀬ID"] = series_from_candidates(enriched, ["怨듦퀬ID", "notice_id"])
-    enriched["怨듦퀬?쇱옄"] = series_from_candidates(enriched, ["怨듦퀬?쇱옄", "registered_at", "ancm_de"])
-    enriched["怨듦퀬踰덊샇"] = series_from_candidates(enriched, ["怨듦퀬踰덊샇", "notice_no", "ancm_no"])
-    enriched["怨듦퀬紐?] = series_from_candidates(enriched, ["怨듦퀬紐?, "notice_title", "title"])
-    enriched["?꾨Ц湲곌?"] = series_from_candidates(enriched, ["?꾨Ц湲곌?", "agency"])
-    enriched["?뚭?遺泥?] = series_from_candidates(enriched, ["?뚭?遺泥?, "ministry"])
-    enriched["寃??щ?"] = series_from_candidates(enriched, ["寃??щ?", "寃?좎뿬遺", "review_status"])
-    enriched["?곸꽭留곹겕"] = series_from_candidates(enriched, ["?곸꽭留곹겕", "detail_link"])
-    if "??쒖젏?? in enriched.columns:
-        enriched["??쒖젏??] = to_numeric_column(enriched["??쒖젏??])
+    enriched["공고ID"] = series_from_candidates(enriched, ["공고ID", "notice_id"])
+    enriched["공고일자"] = series_from_candidates(enriched, ["공고일자", "registered_at", "ancm_de"])
+    enriched["공고번호"] = series_from_candidates(enriched, ["공고번호", "notice_no", "ancm_no"])
+    enriched["공고명"] = series_from_candidates(enriched, ["공고명", "notice_title", "title"])
+    enriched["전문기관"] = series_from_candidates(enriched, ["전문기관", "agency"])
+    enriched["소관부처"] = series_from_candidates(enriched, ["소관부처", "ministry"])
+    enriched["검토 여부"] = series_from_candidates(enriched, ["검토 여부", "검토여부", "review_status"])
+    enriched["상세링크"] = series_from_candidates(enriched, ["상세링크", "detail_link"])
+    if "대표점수" in enriched.columns:
+        enriched["대표점수"] = to_numeric_column(enriched["대표점수"])
     else:
-        enriched["??쒖젏??] = 0
-    enriched["怨듦퀬?곹깭"] = series_from_candidates(enriched, ["怨듦퀬?곹깭", "status", "rcve_status"])
-    enriched["?묒닔湲곌컙"] = series_from_candidates(enriched, ["?묒닔湲곌컙", "period"])
-    enriched["?곹깭??] = series_from_candidates(enriched, ["?곹깭??, "status_key"])
-    enriched["rcve_status"] = series_from_candidates(enriched, ["rcve_status", "怨듦퀬?곹깭"])
-    enriched["period"] = series_from_candidates(enriched, ["period", "?묒닔湲곌컙"])
-    enriched["status_key"] = series_from_candidates(enriched, ["status_key", "?곹깭??])
-    enriched["?곸꽭留곹겕"] = enriched.apply(resolve_external_detail_link, axis=1)
-    enriched["detail_link"] = enriched["?곸꽭留곹겕"]
+        enriched["대표점수"] = 0
+    enriched["공고상태"] = series_from_candidates(enriched, ["공고상태", "status", "rcve_status"])
+    enriched["접수기간"] = series_from_candidates(enriched, ["접수기간", "period"])
+    enriched["상태키"] = series_from_candidates(enriched, ["상태키", "status_key"])
+    enriched["rcve_status"] = series_from_candidates(enriched, ["rcve_status", "공고상태"])
+    enriched["period"] = series_from_candidates(enriched, ["period", "접수기간"])
+    enriched["status_key"] = series_from_candidates(enriched, ["status_key", "상태키"])
+    enriched["상세링크"] = enriched.apply(resolve_external_detail_link, axis=1)
+    enriched["detail_link"] = enriched["상세링크"]
     enriched["_view_status"] = enriched.apply(classify_notice_status_for_view, axis=1)
-    enriched["怨듦퀬?곹깭"] = series_from_candidates(enriched, ["_view_status", "怨듦퀬?곹깭", "rcve_status"])
-    enriched["rcve_status"] = series_from_candidates(enriched, ["_view_status", "rcve_status", "怨듦퀬?곹깭"])
-    if "怨듦퀬?쇱옄" in enriched.columns:
-        enriched["_sort_date"] = parse_date_column(enriched["怨듦퀬?쇱옄"])
+    enriched["공고상태"] = series_from_candidates(enriched, ["_view_status", "공고상태", "rcve_status"])
+    enriched["rcve_status"] = series_from_candidates(enriched, ["_view_status", "rcve_status", "공고상태"])
+    if "공고일자" in enriched.columns:
+        enriched["_sort_date"] = parse_date_column(enriched["공고일자"])
     else:
         enriched["_sort_date"] = pd.NaT
     return enriched.sort_values(
-        by=["_sort_date", "??쒖젏??, "怨듦퀬紐?],
+        by=["_sort_date", "대표점수", "공고명"],
         ascending=[False, False, True],
         na_position="last",
     )
@@ -5175,67 +5099,67 @@ def enrich_opportunity_df(df: pd.DataFrame) -> pd.DataFrame:
         return df
     enriched = df.copy()
 
-    enriched["rfp_score"] = to_numeric_column(series_from_candidates(enriched, ["?먯닔", "rfp_score"]))
-    enriched["budget"] = series_from_candidates(enriched, ["?덉궛", "budget"]).fillna("").astype(str).apply(extract_budget_summary)
+    enriched["rfp_score"] = to_numeric_column(series_from_candidates(enriched, ["점수", "rfp_score"]))
+    enriched["budget"] = series_from_candidates(enriched, ["예산", "budget"]).fillna("").astype(str).apply(extract_budget_summary)
 
-    enriched["怨듦퀬?쇱옄"] = series_from_candidates(enriched, ["怨듦퀬?쇱옄", "registered_at", "ancm_de"])
-    enriched["怨듦퀬踰덊샇"] = series_from_candidates(enriched, ["怨듦퀬踰덊샇", "notice_no", "ancm_no"])
-    enriched["?꾨Ц湲곌?紐?] = series_from_candidates(enriched, ["?꾨Ц湲곌?紐?, "?꾨Ц湲곌?", "agency"])
-    enriched["怨듦퀬紐?] = series_from_candidates(enriched, ["怨듦퀬紐?, "notice_title"])
-    enriched["異붿쿇?щ?"] = series_from_candidates(enriched, ["異붿쿇?щ?", "recommendation"])
-    enriched["怨듦퀬?곹깭"] = series_from_candidates(enriched, ["怨듦퀬?곹깭", "status", "rcve_status"])
-    enriched["?묒닔湲곌컙"] = series_from_candidates(enriched, ["?묒닔湲곌컙", "period"])
-    enriched["寃?좎뿬遺"] = series_from_candidates(enriched, ["寃?좎뿬遺", "寃??щ?", "review_status"])
-    enriched["?곸꽭留곹겕"] = series_from_candidates(enriched, ["?곸꽭留곹겕", "detail_link"])
-    enriched["?대떦 怨쇱젣紐?] = series_from_candidates(enriched, ["?대떦 怨쇱젣紐?, "怨쇱젣紐?, "project_name", "llm_project_name"])
-    enriched["?먯닔"] = series_from_candidates(enriched, ["?먯닔", "rfp_score", "llm_fit_score"])
-    enriched["?덉궛"] = series_from_candidates(
+    enriched["공고일자"] = series_from_candidates(enriched, ["공고일자", "registered_at", "ancm_de"])
+    enriched["공고번호"] = series_from_candidates(enriched, ["공고번호", "notice_no", "ancm_no"])
+    enriched["전문기관명"] = series_from_candidates(enriched, ["전문기관명", "전문기관", "agency"])
+    enriched["공고명"] = series_from_candidates(enriched, ["공고명", "notice_title"])
+    enriched["추천여부"] = series_from_candidates(enriched, ["추천여부", "recommendation"])
+    enriched["공고상태"] = series_from_candidates(enriched, ["공고상태", "status", "rcve_status"])
+    enriched["접수기간"] = series_from_candidates(enriched, ["접수기간", "period"])
+    enriched["검토여부"] = series_from_candidates(enriched, ["검토여부", "검토 여부", "review_status"])
+    enriched["상세링크"] = series_from_candidates(enriched, ["상세링크", "detail_link"])
+    enriched["해당 과제명"] = series_from_candidates(enriched, ["해당 과제명", "과제명", "project_name", "llm_project_name"])
+    enriched["점수"] = series_from_candidates(enriched, ["점수", "rfp_score", "llm_fit_score"])
+    enriched["예산"] = series_from_candidates(
         enriched,
-        ["?덉궛", "budget", "llm_total_budget_text", "total_budget_text"],
+        ["예산", "budget", "llm_total_budget_text", "total_budget_text"],
     ).fillna("").astype(str).apply(extract_budget_summary)
 
-    enriched["notice_title"] = series_from_candidates(enriched, ["怨듦퀬紐?, "notice_title"])
-    enriched["project_name"] = series_from_candidates(enriched, ["怨쇱젣紐?, "project_name"])
-    enriched["rfp_title"] = series_from_candidates(enriched, ["RFP ?쒕ぉ", "rfp_title"])
-    enriched["recommendation"] = series_from_candidates(enriched, ["異붿쿇?щ?", "recommendation"])
-    enriched["agency"] = series_from_candidates(enriched, ["?꾨Ц湲곌?紐?, "?꾨Ц湲곌?", "agency"])
-    enriched["ministry"] = series_from_candidates(enriched, ["?뚭?遺泥?, "ministry"])
-    enriched["ancm_de"] = series_from_candidates(enriched, ["怨듦퀬?쇱옄", "registered_at", "ancm_de"])
-    enriched["ancm_no"] = series_from_candidates(enriched, ["怨듦퀬踰덊샇", "notice_no", "ancm_no"])
-    enriched["rcve_status"] = series_from_candidates(enriched, ["怨듦퀬?곹깭", "status", "rcve_status"])
-    enriched["period"] = series_from_candidates(enriched, ["?묒닔湲곌컙", "period"])
-    enriched["detail_link"] = series_from_candidates(enriched, ["?곸꽭留곹겕", "detail_link"])
-    enriched["review_status"] = series_from_candidates(enriched, ["寃?좎뿬遺", "寃??щ?", "review_status"])
-    enriched["notice_id"] = series_from_candidates(enriched, ["怨듦퀬ID", "notice_id"])
-    enriched["?곸꽭留곹겕"] = enriched.apply(resolve_external_detail_link, axis=1)
-    enriched["detail_link"] = enriched["?곸꽭留곹겕"]
-    enriched["document_id"] = series_from_candidates(enriched, ["臾몄꽌ID", "document_id"])
-    enriched["keywords"] = series_from_candidates(enriched, ["?ㅼ썙??, "keywords"])
-    enriched["reason"] = series_from_candidates(enriched, ["異붿쿇?댁쑀", "reason"])
-    enriched["concept_and_development"] = series_from_candidates(enriched, ["媛쒕뀗 諛?媛쒕컻 ?댁슜", "concept_and_development"])
-    enriched["support_necessity"] = series_from_candidates(enriched, ["吏?먰븘?붿꽦(怨쇱젣 諛곌꼍)", "support_necessity"])
-    enriched["application_field"] = series_from_candidates(enriched, ["?쒖슜遺꾩빞", "application_field"])
-    enriched["support_plan"] = series_from_candidates(enriched, ["吏?먭린媛?諛??덉궛쨌異붿쭊泥닿퀎", "support_plan"])
-    enriched["technical_background"] = series_from_candidates(enriched, ["湲곗닠媛쒕컻 諛곌꼍 諛?吏?먰븘?붿꽦", "technical_background"])
-    enriched["development_content"] = series_from_candidates(enriched, ["湲곗닠媛쒕컻 ?댁슜", "development_content"])
-    enriched["support_need"] = series_from_candidates(enriched, ["吏?먰븘?붿꽦", "support_need"])
-    enriched["document_type"] = series_from_candidates(enriched, ["臾몄꽌?좏삎", "document_type"])
-    enriched["file_type"] = series_from_candidates(enriched, ["?뚯씪?좏삎", "file_type"])
-    enriched["source_site"] = series_from_candidates(enriched, ["異쒖쿂?ъ씠??, "source_site"])
+    enriched["notice_title"] = series_from_candidates(enriched, ["공고명", "notice_title"])
+    enriched["project_name"] = series_from_candidates(enriched, ["과제명", "project_name"])
+    enriched["rfp_title"] = series_from_candidates(enriched, ["RFP 제목", "rfp_title"])
+    enriched["recommendation"] = series_from_candidates(enriched, ["추천여부", "recommendation"])
+    enriched["agency"] = series_from_candidates(enriched, ["전문기관명", "전문기관", "agency"])
+    enriched["ministry"] = series_from_candidates(enriched, ["소관부처", "ministry"])
+    enriched["ancm_de"] = series_from_candidates(enriched, ["공고일자", "registered_at", "ancm_de"])
+    enriched["ancm_no"] = series_from_candidates(enriched, ["공고번호", "notice_no", "ancm_no"])
+    enriched["rcve_status"] = series_from_candidates(enriched, ["공고상태", "status", "rcve_status"])
+    enriched["period"] = series_from_candidates(enriched, ["접수기간", "period"])
+    enriched["detail_link"] = series_from_candidates(enriched, ["상세링크", "detail_link"])
+    enriched["review_status"] = series_from_candidates(enriched, ["검토여부", "검토 여부", "review_status"])
+    enriched["notice_id"] = series_from_candidates(enriched, ["공고ID", "notice_id"])
+    enriched["상세링크"] = enriched.apply(resolve_external_detail_link, axis=1)
+    enriched["detail_link"] = enriched["상세링크"]
+    enriched["document_id"] = series_from_candidates(enriched, ["문서ID", "document_id"])
+    enriched["keywords"] = series_from_candidates(enriched, ["키워드", "keywords"])
+    enriched["reason"] = series_from_candidates(enriched, ["추천이유", "reason"])
+    enriched["concept_and_development"] = series_from_candidates(enriched, ["개념 및 개발 내용", "concept_and_development"])
+    enriched["support_necessity"] = series_from_candidates(enriched, ["지원필요성(과제 배경)", "support_necessity"])
+    enriched["application_field"] = series_from_candidates(enriched, ["활용분야", "application_field"])
+    enriched["support_plan"] = series_from_candidates(enriched, ["지원기간 및 예산·추진체계", "support_plan"])
+    enriched["technical_background"] = series_from_candidates(enriched, ["기술개발 배경 및 지원필요성", "technical_background"])
+    enriched["development_content"] = series_from_candidates(enriched, ["기술개발 내용", "development_content"])
+    enriched["support_need"] = series_from_candidates(enriched, ["지원필요성", "support_need"])
+    enriched["document_type"] = series_from_candidates(enriched, ["문서유형", "document_type"])
+    enriched["file_type"] = series_from_candidates(enriched, ["파일유형", "file_type"])
+    enriched["source_site"] = series_from_candidates(enriched, ["출처사이트", "source_site"])
     enriched["notice_is_current"] = series_from_candidates(enriched, ["notice_is_current", "is_current"])
-    enriched["notice_status"] = series_from_candidates(enriched, ["notice_status", "怨듦퀬?곹깭", "rcve_status"])
-    enriched["notice_period"] = series_from_candidates(enriched, ["notice_period", "?묒닔湲곌컙", "period"])
-    enriched["file_name"] = series_from_candidates(enriched, ["?뚯씪紐?, "file_name"])
-    enriched["file_path"] = series_from_candidates(enriched, ["?뚯씪寃쎈줈", "file_path"])
-    enriched["document_role"] = series_from_candidates(enriched, ["臾몄꽌??븷", "document_role"])
-    enriched["project_name_source"] = series_from_candidates(enriched, ["怨쇱젣紐낃렐嫄?, "project_name_source"])
-    enriched["project_name_confidence"] = series_from_candidates(enriched, ["怨쇱젣紐낆떊猶곕룄", "project_name_confidence"])
-    enriched["rfp_title_source"] = series_from_candidates(enriched, ["RFP?쒕ぉ洹쇨굅", "rfp_title_source"])
-    enriched["evidence"] = series_from_candidates(enriched, ["洹쇨굅臾몄옣", "evidence"])
-    enriched["conflict_flags"] = series_from_candidates(enriched, ["異⑸룎?뚮옒洹?, "conflict_flags"])
+    enriched["notice_status"] = series_from_candidates(enriched, ["notice_status", "공고상태", "rcve_status"])
+    enriched["notice_period"] = series_from_candidates(enriched, ["notice_period", "접수기간", "period"])
+    enriched["file_name"] = series_from_candidates(enriched, ["파일명", "file_name"])
+    enriched["file_path"] = series_from_candidates(enriched, ["파일경로", "file_path"])
+    enriched["document_role"] = series_from_candidates(enriched, ["문서역할", "document_role"])
+    enriched["project_name_source"] = series_from_candidates(enriched, ["과제명근거", "project_name_source"])
+    enriched["project_name_confidence"] = series_from_candidates(enriched, ["과제명신뢰도", "project_name_confidence"])
+    enriched["rfp_title_source"] = series_from_candidates(enriched, ["RFP제목근거", "rfp_title_source"])
+    enriched["evidence"] = series_from_candidates(enriched, ["근거문장", "evidence"])
+    enriched["conflict_flags"] = series_from_candidates(enriched, ["충돌플래그", "conflict_flags"])
 
-    if "怨듦퀬?쇱옄" in enriched.columns:
-        enriched["_sort_date"] = parse_date_column(enriched["怨듦퀬?쇱옄"])
+    if "공고일자" in enriched.columns:
+        enriched["_sort_date"] = parse_date_column(enriched["공고일자"])
     else:
         enriched["_sort_date"] = parse_date_column(enriched["ancm_de"])
     return enriched.sort_values(
@@ -5250,47 +5174,47 @@ def enrich_opportunity_with_notice_meta(opportunity_df: pd.DataFrame, notice_df:
         return opportunity_df
 
     enriched = opportunity_df.copy()
-    if notice_df.empty or "怨듦퀬ID" not in notice_df.columns:
+    if notice_df.empty or "공고ID" not in notice_df.columns:
         return enriched
 
     notice_meta = notice_df.copy()
-    notice_meta["怨듦퀬ID"] = notice_meta["怨듦퀬ID"].fillna("").astype(str).str.strip()
+    notice_meta["공고ID"] = notice_meta["공고ID"].fillna("").astype(str).str.strip()
     keep_columns = [
-        "怨듦퀬ID",
-        "怨듦퀬?쇱옄",
-        "怨듦퀬踰덊샇",
-        "?꾨Ц湲곌?",
-        "怨듦퀬紐?,
-        "怨듦퀬?곹깭",
-        "?묒닔湲곌컙",
-        "寃??щ?",
-        "?곸꽭留곹겕",
-        "?뚭?遺泥?,
-        "?곹깭??,
+        "공고ID",
+        "공고일자",
+        "공고번호",
+        "전문기관",
+        "공고명",
+        "공고상태",
+        "접수기간",
+        "검토 여부",
+        "상세링크",
+        "소관부처",
+        "상태키",
         "status_key",
         "is_current",
     ]
     available_columns = [column for column in keep_columns if column in notice_meta.columns]
-    notice_meta = notice_meta[available_columns].drop_duplicates(subset=["怨듦퀬ID"], keep="first")
+    notice_meta = notice_meta[available_columns].drop_duplicates(subset=["공고ID"], keep="first")
 
-    enriched["notice_id"] = series_from_candidates(enriched, ["notice_id", "怨듦퀬ID"])
-    merged = enriched.merge(notice_meta, left_on="notice_id", right_on="怨듦퀬ID", how="left", suffixes=("", "_notice"))
+    enriched["notice_id"] = series_from_candidates(enriched, ["notice_id", "공고ID"])
+    merged = enriched.merge(notice_meta, left_on="notice_id", right_on="공고ID", how="left", suffixes=("", "_notice"))
 
     fallback_pairs = {
-        "怨듦퀬?쇱옄": ["怨듦퀬?쇱옄", "ancm_de"],
-        "怨듦퀬踰덊샇": ["怨듦퀬踰덊샇", "ancm_no"],
-        "?꾨Ц湲곌?紐?: ["?꾨Ц湲곌?紐?, "agency", "?꾨Ц湲곌?"],
-        "怨듦퀬紐?: ["怨듦퀬紐?, "notice_title"],
-        "異붿쿇?щ?": ["異붿쿇?щ?", "recommendation"],
-        "怨듦퀬?곹깭": ["怨듦퀬?곹깭", "rcve_status"],
-        "?묒닔湲곌컙": ["?묒닔湲곌컙", "period"],
-        "寃?좎뿬遺": ["寃?좎뿬遺", "review_status", "寃??щ?"],
-        "?곸꽭留곹겕": ["?곸꽭留곹겕", "detail_link"],
-        "?뚭?遺泥?: ["?뚭?遺泥?, "ministry"],
-        "?곹깭??: ["?곹깭??, "status_key"],
+        "공고일자": ["공고일자", "ancm_de"],
+        "공고번호": ["공고번호", "ancm_no"],
+        "전문기관명": ["전문기관명", "agency", "전문기관"],
+        "공고명": ["공고명", "notice_title"],
+        "추천여부": ["추천여부", "recommendation"],
+        "공고상태": ["공고상태", "rcve_status"],
+        "접수기간": ["접수기간", "period"],
+        "검토여부": ["검토여부", "review_status", "검토 여부"],
+        "상세링크": ["상세링크", "detail_link"],
+        "소관부처": ["소관부처", "ministry"],
+        "상태키": ["상태키", "status_key"],
         "notice_is_current": ["notice_is_current", "is_current"],
-        "notice_status": ["notice_status", "怨듦퀬?곹깭", "rcve_status"],
-        "notice_period": ["notice_period", "?묒닔湲곌컙", "period"],
+        "notice_status": ["notice_status", "공고상태", "rcve_status"],
+        "notice_period": ["notice_period", "접수기간", "period"],
     }
     for target, candidates in fallback_pairs.items():
         candidate_columns = [target]
@@ -5303,20 +5227,20 @@ def enrich_opportunity_with_notice_meta(opportunity_df: pd.DataFrame, notice_df:
 
     # Keep canonical internal fields aligned with the notice-level fallback columns
     # so detail views do not show blanks when only the display alias was filled.
-    merged["notice_title"] = series_from_candidates(merged, ["notice_title", "怨듦퀬紐?])
-    merged["agency"] = series_from_candidates(merged, ["agency", "?꾨Ц湲곌?", "?꾨Ц湲곌?紐?])
-    merged["ministry"] = series_from_candidates(merged, ["ministry", "二쇨?遺泥?])
-    merged["ancm_de"] = series_from_candidates(merged, ["ancm_de", "怨듦퀬?쇱옄"])
-    merged["ancm_no"] = series_from_candidates(merged, ["ancm_no", "怨듦퀬踰덊샇"])
-    merged["rcve_status"] = series_from_candidates(merged, ["rcve_status", "怨듦퀬?곹깭"])
-    merged["period"] = series_from_candidates(merged, ["period", "?묒닔湲곌컙"])
-    merged["detail_link"] = series_from_candidates(merged, ["detail_link", "?곸꽭留곹겕"])
-    merged["?곸꽭留곹겕"] = merged.apply(resolve_external_detail_link, axis=1)
-    merged["detail_link"] = merged["?곸꽭留곹겕"]
-    merged["review_status"] = series_from_candidates(merged, ["review_status", "寃?좎뿬遺", "寃?좎셿猷뚯뿬遺"])
+    merged["notice_title"] = series_from_candidates(merged, ["notice_title", "공고명"])
+    merged["agency"] = series_from_candidates(merged, ["agency", "전문기관", "전문기관명"])
+    merged["ministry"] = series_from_candidates(merged, ["ministry", "주관부처"])
+    merged["ancm_de"] = series_from_candidates(merged, ["ancm_de", "공고일자"])
+    merged["ancm_no"] = series_from_candidates(merged, ["ancm_no", "공고번호"])
+    merged["rcve_status"] = series_from_candidates(merged, ["rcve_status", "공고상태"])
+    merged["period"] = series_from_candidates(merged, ["period", "접수기간"])
+    merged["detail_link"] = series_from_candidates(merged, ["detail_link", "상세링크"])
+    merged["상세링크"] = merged.apply(resolve_external_detail_link, axis=1)
+    merged["detail_link"] = merged["상세링크"]
+    merged["review_status"] = series_from_candidates(merged, ["review_status", "검토여부", "검토완료여부"])
     merged["notice_is_current"] = series_from_candidates(merged, ["notice_is_current", "is_current", "is_current_notice"])
-    merged["notice_status"] = series_from_candidates(merged, ["notice_status", "怨듦퀬?곹깭", "rcve_status"])
-    merged["notice_period"] = series_from_candidates(merged, ["notice_period", "?묒닔湲곌컙", "period"])
+    merged["notice_status"] = series_from_candidates(merged, ["notice_status", "공고상태", "rcve_status"])
+    merged["notice_period"] = series_from_candidates(merged, ["notice_period", "접수기간", "period"])
 
     return merged
 
@@ -5325,16 +5249,16 @@ def enrich_summary_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     enriched = df.copy()
-    if "??쒖젏?? in enriched.columns:
-        enriched["??쒖젏??] = to_numeric_column(enriched["??쒖젏??])
-    if "?덉궛" in enriched.columns:
-        enriched["?덉궛"] = enriched["?덉궛"].fillna("").astype(str).apply(extract_budget_summary)
-    if "怨듦퀬?쇱옄" in enriched.columns:
-        enriched["_sort_date"] = parse_date_column(enriched["怨듦퀬?쇱옄"])
+    if "대표점수" in enriched.columns:
+        enriched["대표점수"] = to_numeric_column(enriched["대표점수"])
+    if "예산" in enriched.columns:
+        enriched["예산"] = enriched["예산"].fillna("").astype(str).apply(extract_budget_summary)
+    if "공고일자" in enriched.columns:
+        enriched["_sort_date"] = parse_date_column(enriched["공고일자"])
     else:
         enriched["_sort_date"] = pd.NaT
     return enriched.sort_values(
-        by=["_sort_date", "??쒖젏??, "怨듦퀬紐?],
+        by=["_sort_date", "대표점수", "공고명"],
         ascending=[False, False, True],
         na_position="last",
     )
@@ -5344,14 +5268,14 @@ def enrich_error_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     enriched = df.copy()
-    enriched["source_site"] = series_from_candidates(enriched, ["source_site", "異쒖쿂?ъ씠??])
-    enriched["notice_id"] = series_from_candidates(enriched, ["notice_id", "怨듦퀬ID"])
-    enriched["notice_title"] = series_from_candidates(enriched, ["notice_title", "怨듦퀬紐?])
-    enriched["project_name"] = series_from_candidates(enriched, ["project_name", "怨쇱젣紐?])
-    enriched["rfp_title"] = series_from_candidates(enriched, ["rfp_title", "RFP ?쒕ぉ"])
-    enriched["file_name"] = series_from_candidates(enriched, ["file_name", "?뚯씪紐?])
-    enriched["validation_errors"] = series_from_candidates(enriched, ["validation_errors", "寃利앹삤瑜?])
-    enriched["updated_at"] = series_from_candidates(enriched, ["updated_at", "?섏젙?쇱떆"])
+    enriched["source_site"] = series_from_candidates(enriched, ["source_site", "출처사이트"])
+    enriched["notice_id"] = series_from_candidates(enriched, ["notice_id", "공고ID"])
+    enriched["notice_title"] = series_from_candidates(enriched, ["notice_title", "공고명"])
+    enriched["project_name"] = series_from_candidates(enriched, ["project_name", "과제명"])
+    enriched["rfp_title"] = series_from_candidates(enriched, ["rfp_title", "RFP 제목"])
+    enriched["file_name"] = series_from_candidates(enriched, ["file_name", "파일명"])
+    enriched["validation_errors"] = series_from_candidates(enriched, ["validation_errors", "검증오류"])
+    enriched["updated_at"] = series_from_candidates(enriched, ["updated_at", "수정일시"])
     return enriched
 
 
@@ -5364,8 +5288,8 @@ def is_closed_status_value(value: object) -> bool:
     return (
         text in CLOSED_STATUS_VALUES
         or compact_text in compact_closed_values
-        or compact_text.endswith("留덇컧")
-        or compact_text.endswith("醫낅즺")
+        or compact_text.endswith("마감")
+        or compact_text.endswith("종료")
     )
 
 
@@ -5374,12 +5298,12 @@ def normalize_notice_status_label(value: object) -> str:
     lowered = text.lower()
     if not text:
         return ""
-    if "?덉젙" in text or "pre" in lowered:
-        return "?덉젙"
-    if "?묒닔以? in text or "怨듦퀬以? in text or "吏꾪뻾" in text or "ing" in lowered or "open" in lowered:
-        return "?묒닔以?
-    if "留덇컧" in text or "醫낅즺" in text or "closed" in lowered or "end" in lowered:
-        return "留덇컧"
+    if "예정" in text or "pre" in lowered:
+        return "예정"
+    if "접수중" in text or "공고중" in text or "진행" in text or "ing" in lowered or "open" in lowered:
+        return "접수중"
+    if "마감" in text or "종료" in text or "closed" in lowered or "end" in lowered:
+        return "마감"
     return text
 
 
@@ -5397,10 +5321,10 @@ def is_archived_review_status_value(value: object) -> bool:
 def derive_archive_reason_for_app(row: dict[str, object] | pd.Series) -> str:
     row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
     manual_archive = clean(first_non_empty(row_dict, "manual_archive")).upper() == "Y"
-    review_status = first_non_empty(row_dict, "review_status", "寃?좎뿬遺", "寃??щ?")
+    review_status = first_non_empty(row_dict, "review_status", "검토여부", "검토 여부")
     current_value = first_non_empty(row_dict, "notice_is_current", "is_current")
-    status_text = first_non_empty(row_dict, "notice_status", "status", "rcve_status", "怨듦퀬?곹깭")
-    period_text = first_non_empty(row_dict, "notice_period", "period", "?묒닔湲곌컙", "?좎껌湲곌컙")
+    status_text = first_non_empty(row_dict, "notice_status", "status", "rcve_status", "공고상태")
+    period_text = first_non_empty(row_dict, "notice_period", "period", "접수기간", "신청기간")
     period_end = extract_period_end(period_text)
 
     if manual_archive:
@@ -5410,7 +5334,7 @@ def derive_archive_reason_for_app(row: dict[str, object] | pd.Series) -> str:
     if pd.notna(period_end):
         period_end_ts = pd.Timestamp(period_end).normalize()
         if period_end_ts < pd.Timestamp.now().normalize():
-            if clean(current_value) == "N" or normalize_notice_status_label(status_text) == "留덇컧":
+            if clean(current_value) == "N" or normalize_notice_status_label(status_text) == "마감":
                 return "notice_closed"
             return "application_closed"
     return ""
@@ -5422,10 +5346,10 @@ def derive_archive_reason_label_for_app(row: dict[str, object] | pd.Series) -> s
     if existing:
         return existing
     mapping = {
-        "notice_closed": "怨듦퀬 留덇컧",
-        "application_closed": "?묒닔 留덇컧",
-        "manual_archive": "?섎룞 蹂닿?",
-        "review_archived": "寃??蹂닿?",
+        "notice_closed": "공고 마감",
+        "application_closed": "접수 마감",
+        "manual_archive": "수동 보관",
+        "review_archived": "검토 보관",
     }
     return mapping.get(derive_archive_reason_for_app(row_dict), "")
 
@@ -5436,11 +5360,11 @@ def build_notice_archive_mask(df: pd.DataFrame) -> pd.Series:
 
     status_series = series_from_candidates(
         df,
-        ["怨듦퀬?곹깭", "?곹깭", "status", "rcve_status", "notice_status"],
+        ["공고상태", "상태", "status", "rcve_status", "notice_status"],
     )
     review_series = series_from_candidates(
         df,
-        ["寃??щ?", "寃?좎뿬遺", "review_status"],
+        ["검토 여부", "검토여부", "review_status"],
     )
     closed_mask = status_series.fillna("").astype(str).apply(is_closed_status_value)
     review_mask = review_series.fillna("").astype(str).apply(is_archived_review_status_value)
@@ -5450,12 +5374,12 @@ def build_notice_archive_mask(df: pd.DataFrame) -> pd.Series:
 def build_notice_status_scope_mask(df: pd.DataFrame, status_scope: str) -> pd.Series:
     if df.empty:
         return pd.Series(dtype="bool")
-    if status_scope == "?꾩껜":
+    if status_scope == "전체":
         return pd.Series(True, index=df.index)
 
     status_series = series_from_candidates(
         df,
-        ["怨듦퀬?곹깭", "?곹깭", "status", "rcve_status", "notice_status"],
+        ["공고상태", "상태", "status", "rcve_status", "notice_status"],
     )
     normalized = status_series.fillna("").astype(str).apply(normalize_notice_status_label)
     return normalized.eq(status_scope)
@@ -5464,12 +5388,12 @@ def build_notice_status_scope_mask(df: pd.DataFrame, status_scope: str) -> pd.Se
 def build_opportunity_status_scope_mask(df: pd.DataFrame, status_scope: str) -> pd.Series:
     if df.empty:
         return pd.Series(dtype="bool")
-    if status_scope == "?꾩껜":
+    if status_scope == "전체":
         return pd.Series(True, index=df.index)
 
     status_series = series_from_candidates(
         df,
-        ["notice_status", "怨듦퀬?곹깭", "status", "rcve_status"],
+        ["notice_status", "공고상태", "status", "rcve_status"],
     )
     normalized = status_series.fillna("").astype(str).apply(normalize_notice_status_label)
     return normalized.eq(status_scope)
@@ -5482,8 +5406,8 @@ def build_summary_current_mask(df: pd.DataFrame) -> pd.Series:
     mask = pd.Series(True, index=df.index)
     if "is_current" in df.columns:
         mask = mask & df["is_current"].fillna("").astype(str).str.strip().eq("Y")
-    if "怨듦퀬?곹깭" in df.columns:
-        mask = mask & ~df["怨듦퀬?곹깭"].apply(is_closed_status_value)
+    if "공고상태" in df.columns:
+        mask = mask & ~df["공고상태"].apply(is_closed_status_value)
     return mask
 
 
@@ -5492,19 +5416,19 @@ def build_opportunity_archive_mask(df: pd.DataFrame) -> pd.Series:
         return pd.Series(dtype="bool")
 
     archive_mask = pd.Series(False, index=df.index)
-    review_series = series_from_candidates(df, ["review_status", "寃?좎뿬遺", "寃??щ?"])
+    review_series = series_from_candidates(df, ["review_status", "검토여부", "검토 여부"])
     archive_mask = archive_mask | review_series.apply(is_archived_review_status_value)
 
-    for status_source in ["notice_status", "status", "rcve_status", "怨듦퀬?곹깭", "?⑤벀??怨밴묶"]:
+    for status_source in ["notice_status", "status", "rcve_status", "공고상태", "怨듦퀬?곹깭"]:
         if status_source in df.columns:
             archive_mask = archive_mask | df[status_source].apply(is_closed_status_value)
 
-    status_key_source = "status_key" if "status_key" in df.columns else "?곹깭??
+    status_key_source = "status_key" if "status_key" in df.columns else "상태키"
     if status_key_source in df.columns:
         status_key = df[status_key_source].fillna("").astype(str).str.strip()
         archive_mask = archive_mask | status_key.isin(["ancmCls", "ancmEnd"])
 
-    period_source = "notice_period" if "notice_period" in df.columns else "period" if "period" in df.columns else "?묒닔湲곌컙"
+    period_source = "notice_period" if "notice_period" in df.columns else "period" if "period" in df.columns else "접수기간"
     if period_source in df.columns:
         missing_period_mask = df[period_source].fillna("").astype(str).str.strip().eq("")
         archive_mask = archive_mask | missing_period_mask
@@ -5542,7 +5466,7 @@ def filter_archived_notice_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def filter_notice_status_scope(df: pd.DataFrame, status_scope: str) -> pd.DataFrame:
-    if df.empty or status_scope == "?꾩껜":
+    if df.empty or status_scope == "전체":
         return df
     scope_mask = build_notice_status_scope_mask(df, status_scope)
     return df[scope_mask].copy()
@@ -5573,10 +5497,10 @@ def _is_placeholder_opportunity_text(value: object) -> bool:
     compact = re.sub(r"\s+", " ", text).strip()
     normalized = compact.lower()
     if normalized in {
-        "?뺤씤 ??대떦 rfp??묒닔",
-        "湲곗닠 遺꾨쪟",
-        "?곌뎄媛쒕컻怨꾪쉷??묒꽦?쒖떇",
-        "r&d ?먯쑉?깊듃??,
+        "확인 후 해당 rfp에 접수",
+        "기술 분류",
+        "연구개발계획서 작성서식",
+        "r&d 자율성트랙",
     }:
         return True
     if compact.startswith("><") or compact.count("><") >= 2:
@@ -5584,15 +5508,15 @@ def _is_placeholder_opportunity_text(value: object) -> bool:
     return any(
         marker in compact
         for marker in [
-            "愿由щ쾲??,
-            "?좎젙?덉젙 怨쇱젣??,
-            "?뱁빐 ?곌뎄鍮?,
-            "?댁뿭 ?ъ뾽紐?,
-            "?遺꾨쪟",
-            "以묐텇瑜?,
-            "?뚮텇瑜?,
-            "吏?먭린媛?吏?먭퇋紐?,
-            "?묒꽦?쒖떇",
+            "관리번호",
+            "선정예정 과제수",
+            "당해 연구비",
+            "내역 사업명",
+            "대분류",
+            "중분류",
+            "소분류",
+            "지원기간 지원규모",
+            "작성서식",
         ]
     )
 
@@ -5600,8 +5524,8 @@ def _is_placeholder_opportunity_text(value: object) -> bool:
 def build_placeholder_opportunity_mask(df: pd.DataFrame) -> pd.Series:
     if df.empty:
         return pd.Series(dtype=bool)
-    project_name = series_from_candidates(df, ["llm_project_name", "project_name", "怨쇱젣紐?]).fillna("").astype(str).str.strip()
-    rfp_title = series_from_candidates(df, ["llm_rfp_title", "rfp_title", "RFP ?쒕ぉ"]).fillna("").astype(str).str.strip()
+    project_name = series_from_candidates(df, ["llm_project_name", "project_name", "과제명"]).fillna("").astype(str).str.strip()
+    rfp_title = series_from_candidates(df, ["llm_rfp_title", "rfp_title", "RFP 제목"]).fillna("").astype(str).str.strip()
     project_placeholder = project_name.apply(_is_placeholder_opportunity_text)
     rfp_placeholder = rfp_title.apply(_is_placeholder_opportunity_text)
     return project_placeholder | ((project_name == "") & rfp_placeholder)
@@ -5620,33 +5544,33 @@ def enrich_summary_with_notice_meta(summary_df: pd.DataFrame, notice_df: pd.Data
         return summary_df
 
     enriched = summary_df.copy()
-    if notice_df.empty or "怨듦퀬ID" not in enriched.columns or "怨듦퀬ID" not in notice_df.columns:
+    if notice_df.empty or "공고ID" not in enriched.columns or "공고ID" not in notice_df.columns:
         return enriched
 
     notice_meta = notice_df.copy()
-    notice_meta["怨듦퀬ID"] = notice_meta["怨듦퀬ID"].fillna("").astype(str).str.strip()
-    keep_columns = ["怨듦퀬ID", "?곸꽭留곹겕", "寃??щ?", "?꾨Ц湲곌?", "?뚭?遺泥?, "怨듦퀬?곹깭", "?묒닔湲곌컙", "怨듦퀬?쇱옄", "?곹깭??, "status_key", "is_current"]
+    notice_meta["공고ID"] = notice_meta["공고ID"].fillna("").astype(str).str.strip()
+    keep_columns = ["공고ID", "상세링크", "검토 여부", "전문기관", "소관부처", "공고상태", "접수기간", "공고일자", "상태키", "status_key", "is_current"]
     available_columns = [column for column in keep_columns if column in notice_meta.columns]
-    notice_meta = notice_meta[available_columns].drop_duplicates(subset=["怨듦퀬ID"], keep="first")
+    notice_meta = notice_meta[available_columns].drop_duplicates(subset=["공고ID"], keep="first")
 
-    enriched["怨듦퀬ID"] = enriched["怨듦퀬ID"].fillna("").astype(str).str.strip()
-    merged = enriched.merge(notice_meta, on="怨듦퀬ID", how="left", suffixes=("", "_notice"))
+    enriched["공고ID"] = enriched["공고ID"].fillna("").astype(str).str.strip()
+    merged = enriched.merge(notice_meta, on="공고ID", how="left", suffixes=("", "_notice"))
 
-    for target in ["?곸꽭留곹겕", "寃??щ?", "?꾨Ц湲곌?", "?뚭?遺泥?, "怨듦퀬?곹깭", "?묒닔湲곌컙", "怨듦퀬?쇱옄", "?곹깭??, "status_key", "is_current"]:
+    for target in ["상세링크", "검토 여부", "전문기관", "소관부처", "공고상태", "접수기간", "공고일자", "상태키", "status_key", "is_current"]:
         candidate_columns = [target]
         notice_target = f"{target}_notice"
         if notice_target in merged.columns:
             candidate_columns.append(notice_target)
         merged[target] = series_from_candidates(merged, candidate_columns)
 
-    merged["?곸꽭留곹겕"] = merged.apply(resolve_external_detail_link, axis=1)
+    merged["상세링크"] = merged.apply(resolve_external_detail_link, axis=1)
     return merged
 
 
 def build_notice_analysis_summary(opportunity_df: pd.DataFrame) -> pd.DataFrame:
     if opportunity_df.empty or "notice_id" not in opportunity_df.columns:
         return pd.DataFrame(
-            columns=["怨듦퀬ID", "??쒖텛泥쒕룄", "??쒖젏??, "??쒓낵?쒕챸", "??쒖삁??, "??쒖텛泥쒖씠??, "??쒗궎?뚮뱶"]
+            columns=["공고ID", "대표추천도", "대표점수", "대표과제명", "대표예산", "대표추천이유", "대표키워드"]
         )
 
     working = opportunity_df.copy()
@@ -5656,10 +5580,10 @@ def build_notice_analysis_summary(opportunity_df: pd.DataFrame) -> pd.DataFrame:
         working["rfp_score"] = 0
 
     recommendation_rank = {
-        "異붿쿇": 3,
-        "寃?좉텒??: 2,
-        "蹂댄넻": 1,
-        "鍮꾩텛泥?: 0,
+        "추천": 3,
+        "검토권장": 2,
+        "보통": 1,
+        "비추천": 0,
     }
     working["_recommendation_rank"] = (
         working.get("recommendation", pd.Series("", index=working.index))
@@ -5710,13 +5634,13 @@ def build_notice_analysis_summary(opportunity_df: pd.DataFrame) -> pd.DataFrame:
 
     return pd.DataFrame(
         {
-            "怨듦퀬ID": best["notice_id"].fillna("").astype(str).str.strip(),
-            "??쒖텛泥쒕룄": best.get("llm_recommendation", best.get("recommendation", "")).fillna("").astype(str).str.strip(),
-            "??쒖젏??: best.get("llm_fit_score", best["rfp_score"]),
-            "??쒓낵?쒕챸": best["_project_name"],
-            "??쒖삁??: best["_budget"],
-            "??쒖텛泥쒖씠??: best["_reason"],
-            "??쒗궎?뚮뱶": best["_keywords"],
+            "공고ID": best["notice_id"].fillna("").astype(str).str.strip(),
+            "대표추천도": best.get("llm_recommendation", best.get("recommendation", "")).fillna("").astype(str).str.strip(),
+            "대표점수": best.get("llm_fit_score", best["rfp_score"]),
+            "대표과제명": best["_project_name"],
+            "대표예산": best["_budget"],
+            "대표추천이유": best["_reason"],
+            "대표키워드": best["_keywords"],
         }
     )
 
@@ -5728,18 +5652,18 @@ def merge_notice_with_analysis(notice_df: pd.DataFrame, opportunity_df: pd.DataF
     summary_df = build_notice_analysis_summary(opportunity_df)
     merged = notice_df.copy()
 
-    if summary_df.empty or "怨듦퀬ID" not in merged.columns:
-        for column in ["??쒖텛泥쒕룄", "??쒖젏??, "??쒓낵?쒕챸", "??쒖삁??, "??쒖텛泥쒖씠??, "??쒗궎?뚮뱶"]:
+    if summary_df.empty or "공고ID" not in merged.columns:
+        for column in ["대표추천도", "대표점수", "대표과제명", "대표예산", "대표추천이유", "대표키워드"]:
             if column not in merged.columns:
                 merged[column] = ""
         return merged
 
-    merged["怨듦퀬ID"] = merged["怨듦퀬ID"].fillna("").astype(str).str.strip()
-    merged = merged.merge(summary_df, on="怨듦퀬ID", how="left", suffixes=("", "_analysis"))
+    merged["공고ID"] = merged["공고ID"].fillna("").astype(str).str.strip()
+    merged = merged.merge(summary_df, on="공고ID", how="left", suffixes=("", "_analysis"))
 
-    for column in ["??쒖텛泥쒕룄", "??쒓낵?쒕챸", "??쒖삁??, "??쒖텛泥쒖씠??, "??쒗궎?뚮뱶"]:
+    for column in ["대표추천도", "대표과제명", "대표예산", "대표추천이유", "대표키워드"]:
         merged[column] = merged[column].fillna("").astype(str).str.strip()
-    merged["??쒖젏??] = to_numeric_column(merged["??쒖젏??])
+    merged["대표점수"] = to_numeric_column(merged["대표점수"])
     return merged
 
 
@@ -5790,14 +5714,14 @@ def unified_sidebar_filter_key(key: str) -> str:
 
 def render_sidebar_search(key: str = "sidebar_search") -> str:
     st.sidebar.markdown("## Common Filters")
-    return st.sidebar.text_input("?듯빀 寃??, "", key=unified_sidebar_filter_key(key))
+    return st.sidebar.text_input("통합 검색", "", key=unified_sidebar_filter_key(key))
 
 
 def render_notice_filter_sidebar(
     key_prefix: str,
     *,
     current_only_default: bool = True,
-    status_default: str = "?꾩껜",
+    status_default: str = "전체",
     show_current_only: bool = True,
     show_status_scope: bool = True,
 ) -> tuple[str, bool, str]:
@@ -5806,17 +5730,17 @@ def render_notice_filter_sidebar(
     current_only = current_only_default
     if show_current_only:
         current_only = st.sidebar.checkbox(
-            "?꾩옱 怨듦퀬留?,
+            "현재 공고만",
             value=current_only_default,
             key=unified_sidebar_filter_key(f"{key_prefix}_current"),
         )
 
     status_scope = status_default
     if show_status_scope:
-        status_options = ["?꾩껜", "?묒닔以?, "?덉젙", "留덇컧"]
-        default_status = status_default if status_default in status_options else "?꾩껜"
+        status_options = ["전체", "접수중", "예정", "마감"]
+        default_status = status_default if status_default in status_options else "전체"
         status_scope = st.sidebar.selectbox(
-            "怨듦퀬 ?곹깭",
+            "공고 상태",
             status_options,
             index=status_options.index(default_status),
             key=unified_sidebar_filter_key(f"{key_prefix}_scope"),
@@ -6084,13 +6008,13 @@ def render_workspace_header(mode_config: AppModeConfig) -> None:
         st.text_input(
             "workspace_top_search",
             key=f"{mode_config.mode}_workspace_top_search",
-            placeholder="怨듦퀬紐?/ 怨쇱젣紐?/ 湲곌?紐?寃??,
+            placeholder="공고명 / 과제명 / 기관명 검색",
             label_visibility="collapsed",
         )
     with header_cols[2]:
         st.markdown('<div class="workspace-toolbar">', unsafe_allow_html=True)
-        st.markdown('<div class="workspace-toolbar-note">?뵒</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="workspace-user-chip">?뫀 {escape(user_label or user_id or "User")}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="workspace-toolbar-note">🔔</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="workspace-user-chip">👤 {escape(user_label or user_id or "User")}</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -6121,10 +6045,79 @@ def render_metrics(items: list[tuple[str, str]]) -> None:
 
 
 def inject_page_styles() -> None:
-    css_path = BASE_DIR.parent / "assets" / "styles.css"
-    st.markdown(f"<style>{css_path.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
-    return
-    '''
+    st.markdown(
+        """
+        <style>
+        :root {
+          --linear-bg: #f8fafc;
+          --linear-panel: #ffffff;
+          --linear-surface: #ffffff;
+          --linear-surface-hover: #f1f5f9;
+          --linear-border-subtle: rgba(15, 23, 42, 0.06);
+          --linear-border: rgba(15, 23, 42, 0.10);
+          --linear-text: #15233b;
+          --linear-text-secondary: #21314d;
+          --linear-text-muted: #6c7f9d;
+          --linear-text-faint: #94a3b8;
+          --linear-accent: #2563eb;
+          --linear-accent-bg: #2563eb;
+          --linear-accent-hover: #1d4ed8;
+          --linear-success: #10b981;
+          --linear-danger: #f87171;
+          --linear-shadow: rgba(15, 23, 42, 0.04) 0px 10px 24px;
+          --linear-radius-sm: 6px;
+          --linear-radius-md: 14px;
+          --linear-radius-lg: 16px;
+        }
+        html, body, [class*="css"], .stApp {
+          font-family: "Segoe UI", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+          font-feature-settings: "cv01", "ss03";
+        }
+        body {
+          background: var(--linear-bg);
+          color: var(--linear-text);
+        }
+        .stApp,
+        [data-testid="stAppViewContainer"],
+        [data-testid="stAppViewBlockContainer"] {
+          background: var(--linear-bg);
+          color: var(--linear-text);
+        }
+        .main .block-container {
+          max-width: 1440px;
+          padding-top: 1.15rem;
+          padding-bottom: 3rem;
+          padding-left: clamp(1.2rem, 2vw, 2rem);
+          padding-right: clamp(1.2rem, 2vw, 2rem);
+        }
+        h1 {
+          color: var(--linear-text) !important;
+          font-size: 2.55rem !important;
+          font-weight: 510 !important;
+          line-height: 1.02 !important;
+          letter-spacing: -0.065rem !important;
+          margin-bottom: 0.15rem !important;
+        }
+        h2, h3 {
+          color: var(--linear-text) !important;
+          letter-spacing: -0.02em;
+        }
+        [data-testid="stCaptionContainer"] p,
+        .stCaption p {
+          color: var(--linear-text-muted) !important;
+          font-size: 0.95rem !important;
+        }
+        [data-testid="stSidebar"] {
+          background: var(--linear-panel);
+          border-right: 1px solid var(--linear-border-subtle);
+        }
+        [data-testid="stHeader"] {
+          background: rgba(255, 255, 255, 0.92);
+          border-bottom: 1px solid var(--linear-border-subtle);
+        }
+        [data-testid="stToolbar"] {
+          right: 1rem;
+        }
         [data-testid="stMetric"] {
           background: rgba(15, 23, 42, 0.02);
           border: 1px solid var(--linear-border);
@@ -7430,7 +7423,6 @@ def inject_page_styles() -> None:
         """,
         unsafe_allow_html=True,
     )
-    '''
 
 
 def render_detail_header(title: str, kicker: str, chips: list[tuple[str, str]]) -> None:
@@ -7458,7 +7450,7 @@ def extract_period_start(value: object) -> pd.Timestamp:
     text = clean(value)
     if not text:
         return pd.NaT
-    start_text = re.split(r"\s*[~??]\s*", text, maxsplit=1)[0].strip()
+    start_text = re.split(r"\s*[~〜-]\s*", text, maxsplit=1)[0].strip()
     return pd.to_datetime(start_text.replace(".", "-"), errors="coerce")
 
 
@@ -7468,7 +7460,7 @@ def build_public_d_day(period_value: object) -> str:
         return ""
     days = int((period_end.normalize() - pd.Timestamp.now().normalize()).days)
     if days < 0:
-        return "留덇컧"
+        return "마감"
     if days == 0:
         return "D-DAY"
     return f"D-{days}"
@@ -7511,13 +7503,13 @@ def public_first_non_empty(row: dict, *keys: str) -> str:
 def render_public_notice_card(row: dict, *, top_related: dict | None = None, kind: str = "notice") -> None:
     top_related = top_related or {}
     merged = {**top_related, **(row or {})}
-    period = public_first_non_empty(merged, "?묒닔湲곌컙", "notice_period", "period", "?좎껌湲곌컙")
+    period = public_first_non_empty(merged, "접수기간", "notice_period", "period", "신청기간")
     budget = extract_budget_summary(
         public_first_non_empty(
             merged,
-            "??쒖삁??,
-            "?ъ뾽鍮?,
-            "?덉궛",
+            "대표예산",
+            "사업비",
+            "예산",
             "llm_total_budget_text",
             "total_budget_text",
             "budget",
@@ -7527,56 +7519,56 @@ def render_public_notice_card(row: dict, *, top_related: dict | None = None, kin
     )
     title = public_first_non_empty(
         merged,
-        "llm_project_name" if kind == "opportunity" else "怨듦퀬紐?,
+        "llm_project_name" if kind == "opportunity" else "공고명",
         "project_name",
-        "怨듦퀬紐?,
+        "공고명",
         "notice_title",
         "llm_rfp_title",
         "rfp_title",
     )
-    notice_title = public_first_non_empty(merged, "怨듦퀬紐?, "notice_title")
+    notice_title = public_first_non_empty(merged, "공고명", "notice_title")
     subtitle_parts = [
-        public_first_non_empty(merged, "怨듦퀬?곹깭", "rcve_status"),
-        public_first_non_empty(merged, "?ъ뾽紐?, "notice_title") if kind != "opportunity" else notice_title,
+        public_first_non_empty(merged, "공고상태", "rcve_status"),
+        public_first_non_empty(merged, "사업명", "notice_title") if kind != "opportunity" else notice_title,
     ]
     subtitle = " | ".join(part for part in subtitle_parts if part and part != title)
-    notice_date = public_first_non_empty(merged, "怨듦퀬?쇱옄", "ancm_de", "registered_at")
-    ministry = public_first_non_empty(merged, "?뚭?遺泥?, "ministry", "二쇨?遺泥?)
-    agency = public_first_non_empty(merged, "?꾨Ц湲곌?紐?, "?꾨Ц湲곌?", "agency", "?대떦遺??)
+    notice_date = public_first_non_empty(merged, "공고일자", "ancm_de", "registered_at")
+    ministry = public_first_non_empty(merged, "소관부처", "ministry", "주관부처")
+    agency = public_first_non_empty(merged, "전문기관명", "전문기관", "agency", "담당부서")
     org_type = public_first_non_empty(
         merged,
-        "吏??媛??湲곌? ?좏삎",
-        "吏?먭??κ린愿?좏삎",
+        "지원 가능 기관 유형",
+        "지원가능기관유형",
         "eligible_org_type",
         "llm_eligible_org_type",
         "applicant_type",
     )
     region = public_first_non_empty(
         merged,
-        "吏??媛??뚯옱吏",
-        "吏?먭??μ냼?ъ?",
+        "지원 가능 소재지",
+        "지원가능소재지",
         "eligible_region",
         "llm_eligible_region",
         "region",
     )
     sales = public_first_non_empty(
         merged,
-        "吏??媛??留ㅼ텧??/ ?ъ뾽?곗닔",
-        "留ㅼ텧??,
-        "?ъ뾽?곗닔",
+        "지원 가능 매출액 / 사업연수",
+        "매출액",
+        "사업연수",
         "eligible_sales",
         "llm_eligible_sales",
     )
     lab = public_first_non_empty(
         merged,
-        "遺??곌뎄??꾩슂 ?좊Т",
-        "遺?ㅼ뿰援ъ냼",
+        "부설 연구소 필요 유무",
+        "부설연구소",
         "lab_required",
         "llm_lab_required",
     )
     requirement_values = [org_type, region, sales, lab]
     requirement_count = sum(1 for value in requirement_values if value and value not in {"-", "-/-"})
-    score = clean(public_first_non_empty(merged, "llm_fit_score", "rfp_score", "??쒖젏??))
+    score = clean(public_first_non_empty(merged, "llm_fit_score", "rfp_score", "대표점수"))
     if score:
         try:
             requirement_count = max(requirement_count, min(4, round(float(score) / 25)))
@@ -7585,24 +7577,24 @@ def render_public_notice_card(row: dict, *, top_related: dict | None = None, kin
     display_requirement_count = max(0, min(4, requirement_count))
     progress = max(1, display_requirement_count) * 25
     d_day = build_public_d_day(period)
-    tags = split_public_tags(public_first_non_empty(merged, "??쒗궎?뚮뱶", "llm_keywords", "keywords", "keyword"), limit=3)
+    tags = split_public_tags(public_first_non_empty(merged, "대표키워드", "llm_keywords", "keywords", "keyword"), limit=3)
 
     info_rows = [
-        ("?좎껌 湲곌컙", period),
-        ("吏?먭툑", budget),
-        ("遺泥?, ministry),
-        ("?꾨Ц湲곌?紐?, agency),
-        ("怨듦퀬?깅줉??, notice_date),
+        ("신청 기간", period),
+        ("지원금", budget),
+        ("부처", ministry),
+        ("전문기관명", agency),
+        ("공고등록일", notice_date),
     ]
     fit_rows = [
-        ("吏??媛??湲곌? ?좏삎", org_type or "-"),
-        ("吏??媛??뚯옱吏", region or "?꾧뎅"),
-        ("吏??媛??留ㅼ텧??/ ?ъ뾽?곗닔", sales or "-/-"),
-        ("遺??곌뎄??꾩슂 ?좊Т", lab or "-"),
+        ("지원 가능 기관 유형", org_type or "-"),
+        ("지원 가능 소재지", region or "전국"),
+        ("지원 가능 매출액 / 사업연수", sales or "-/-"),
+        ("부설 연구소 필요 유무", lab or "-"),
     ]
     info_html = []
     for label, value in info_rows:
-        if label == "吏?먭툑" and value:
+        if label == "지원금" and value:
             value_html = f'<span class="public-budget-highlight">{escape(value)}</span>'
             value_class = "public-info-value budget"
         else:
@@ -7624,7 +7616,7 @@ def render_public_notice_card(row: dict, *, top_related: dict | None = None, kin
               <div class="public-notice-title">{escape(sanitize_display_title(title))}</div>
               <div class="public-notice-subtitle">{escape(subtitle)}</div>
             </div>
-            <div class="public-save-button"><span class="public-save-icon">??/span><span>??ν븯湲?/span></div>
+            <div class="public-save-button"><span class="public-save-icon">♡</span><span>저장하기</span></div>
           </div>
           <div class="public-notice-divider"></div>
           <div class="public-notice-body">
@@ -7642,24 +7634,24 @@ def render_public_notice_card(row: dict, *, top_related: dict | None = None, kin
 def render_rndcircle_like_sections(row: dict, *, top_related: dict | None = None, kind: str = "notice") -> None:
     top_related = top_related or {}
     merged = {**top_related, **(row or {})}
-    period = public_first_non_empty(merged, "?묒닔湲곌컙", "notice_period", "period", "?좎껌湲곌컙")
+    period = public_first_non_empty(merged, "접수기간", "notice_period", "period", "신청기간")
     d_day = build_public_d_day(period)
-    support_type = public_first_non_empty(merged, "吏??좏삎", "怨듬え?좏삎", "pbofr_type", "project_type") or "?곌뎄媛쒕컻"
-    keywords = split_public_tags(public_first_non_empty(merged, "??쒗궎?뚮뱶", "llm_keywords", "keywords", "keyword"), limit=8)
-    org_type = public_first_non_empty(merged, "吏??媛??湲곌? ?좏삎", "吏?먭??κ린愿?좏삎", "eligible_org_type", "llm_eligible_org_type", "applicant_type")
-    region = public_first_non_empty(merged, "吏??媛??뚯옱吏", "吏?먭??μ냼?ъ?", "eligible_region", "llm_eligible_region", "region") or "?꾧뎅"
-    sales = public_first_non_empty(merged, "吏??媛??留ㅼ텧??/ ?ъ뾽?곗닔", "留ㅼ텧??, "?ъ뾽?곗닔", "eligible_sales", "llm_eligible_sales") or "-/-"
-    lab = public_first_non_empty(merged, "遺??곌뎄??꾩슂 ?좊Т", "遺?ㅼ뿰援ъ냼", "lab_required", "llm_lab_required") or "-"
-    total_budget = extract_budget_summary(public_first_non_empty(merged, "?ъ뾽 洹쒕え", "?ъ뾽鍮?, "??쒖삁??, "llm_total_budget_text", "total_budget_text", "budget"))
-    grant = extract_budget_summary(public_first_non_empty(merged, "吏?먭툑", "怨쇱젣蹂??덉궛", "llm_per_project_budget_text", "per_project_budget_text")) or total_budget
+    support_type = public_first_non_empty(merged, "지원 유형", "공모유형", "pbofr_type", "project_type") or "연구개발"
+    keywords = split_public_tags(public_first_non_empty(merged, "대표키워드", "llm_keywords", "keywords", "keyword"), limit=8)
+    org_type = public_first_non_empty(merged, "지원 가능 기관 유형", "지원가능기관유형", "eligible_org_type", "llm_eligible_org_type", "applicant_type")
+    region = public_first_non_empty(merged, "지원 가능 소재지", "지원가능소재지", "eligible_region", "llm_eligible_region", "region") or "전국"
+    sales = public_first_non_empty(merged, "지원 가능 매출액 / 사업연수", "매출액", "사업연수", "eligible_sales", "llm_eligible_sales") or "-/-"
+    lab = public_first_non_empty(merged, "부설 연구소 필요 유무", "부설연구소", "lab_required", "llm_lab_required") or "-"
+    total_budget = extract_budget_summary(public_first_non_empty(merged, "사업 규모", "사업비", "대표예산", "llm_total_budget_text", "total_budget_text", "budget"))
+    grant = extract_budget_summary(public_first_non_empty(merged, "지원금", "과제별 예산", "llm_per_project_budget_text", "per_project_budget_text")) or total_budget
     deadline = extract_period_end(period)
     deadline_text = deadline.strftime("%Y-%m-%d") if pd.notna(deadline) else ""
     summary = public_first_non_empty(
         merged,
-        "怨쇱젣 遺꾩꽍",
+        "과제 분석",
         "llm_summary",
         "summary",
-        "??쒖텛泥쒖씠??,
+        "대표추천이유",
         "llm_reason",
         "reason",
         "text_preview",
@@ -7667,76 +7659,76 @@ def render_rndcircle_like_sections(row: dict, *, top_related: dict | None = None
     summary = build_project_analysis_text(merged) if clean(summary) else summary
     overview = public_first_non_empty(
         merged,
-        "?ъ뾽 媛쒖슂 諛?諛곌꼍",
-        "怨쇱젣 媛쒖슂",
+        "사업 개요 및 배경",
+        "과제 개요",
         "llm_concept_and_development",
         "concept_and_development",
-        "吏?먰븘?붿꽦(怨쇱젣 諛곌꼍)",
+        "지원필요성(과제 배경)",
         "support_necessity",
         "technical_background",
     )
     objective = public_first_non_empty(
         merged,
-        "怨쇱젣 紐⑺몴",
+        "과제 목표",
         "llm_application_field",
         "application_field",
-        "?쒖슜遺꾩빞",
+        "활용분야",
     )
     detail = public_first_non_empty(
         merged,
-        "怨쇱젣 ?댁슜",
-        "吏??댁슜",
+        "과제 내용",
+        "지원 내용",
         "llm_support_plan",
         "support_plan",
-        "吏?먭린媛?諛??덉궛쨌異붿쭊泥닿퀎",
-        "?띿뒪??誘몃━蹂닿린",
+        "지원기간 및 예산·추진체계",
+        "텍스트 미리보기",
         "text_preview",
     )
     requirement_history = public_first_non_empty(
         merged,
-        "怨쇱젣 ?섑뻾 ?대젰 ?붽굔",
-        "湲고? 吏??議곌굔",
+        "과제 수행 이력 요건",
+        "기타 지원 조건",
         "other_requirements",
         "llm_other_requirements",
     )
     contribution = public_first_non_empty(
         merged,
-        "湲곌? 遺꾨떞瑜?,
+        "기관 분담률",
         "matching_fund",
         "llm_matching_fund",
     )
     extra_detail = public_first_non_empty(
         merged,
-        "湲고? ?몃? ?ы빆",
-        "湲고? 吏??議곌굔",
+        "기타 세부 사항",
+        "기타 지원 조건",
         "llm_requirements",
         "requirements",
     )
 
     info_items = [
-        ("吏??좏삎", support_type),
-        ("?듭떖 ?ㅼ썙??, " ".join(keywords)),
-        ("?ъ뾽 洹쒕え", total_budget),
-        ("吏?먭툑", grant),
-        ("吏??媛??湲곌?", org_type),
-        ("怨듦퀬 ?깅줉??, public_first_non_empty(merged, "怨듦퀬?쇱옄", "ancm_de", "registered_at")),
-        ("怨듦퀬 留덇컧??, deadline_text),
-        ("?좎껌 湲곌컙", f"{d_day}\n{period}" if d_day else period),
+        ("지원 유형", support_type),
+        ("핵심 키워드", " ".join(keywords)),
+        ("사업 규모", total_budget),
+        ("지원금", grant),
+        ("지원 가능 기관", org_type),
+        ("공고 등록일", public_first_non_empty(merged, "공고일자", "ancm_de", "registered_at")),
+        ("공고 마감일", deadline_text),
+        ("신청 기간", f"{d_day}\n{period}" if d_day else period),
     ]
     requirements = [
-        ("吏??媛??湲곌? ?좏삎", org_type or "-"),
-        ("吏??媛??뚯옱吏", region),
-        ("吏??媛??留ㅼ텧??/ ?ъ뾽?곗닔", sales),
-        ("遺??곌뎄??꾩슂 ?좊Т", lab),
+        ("지원 가능 기관 유형", org_type or "-"),
+        ("지원 가능 소재지", region),
+        ("지원 가능 매출액 / 사업연수", sales),
+        ("부설 연구소 필요 유무", lab),
     ]
     detail_items = [
-        ("怨듬え ?좏삎", public_first_non_empty(merged, "怨듬え?좏삎", "pbofr_type")),
-        ("怨쇱젣 湲곌컙", public_first_non_empty(merged, "怨쇱젣 湲곌컙", "project_period", "support_period")),
-        ("?ъ뾽 洹쒕え", total_budget),
-        ("吏?먭툑", grant),
-        ("吏??댁슜", detail),
-        ("湲곌? 遺꾨떞瑜?, contribution),
-        ("湲고? ?몃? ?ы빆", extra_detail),
+        ("공모 유형", public_first_non_empty(merged, "공모유형", "pbofr_type")),
+        ("과제 기간", public_first_non_empty(merged, "과제 기간", "project_period", "support_period")),
+        ("사업 규모", total_budget),
+        ("지원금", grant),
+        ("지원 내용", detail),
+        ("기관 분담률", contribution),
+        ("기타 세부 사항", extra_detail),
     ]
 
     def info_grid(items: list[tuple[str, str]]) -> str:
@@ -7751,17 +7743,17 @@ def render_rndcircle_like_sections(row: dict, *, top_related: dict | None = None
         for label, value in requirements
     )
     sections = [
-        f'<div class="rnd-section"><div class="rnd-section-title">二쇱슂 ?뺣낫</div><div class="rnd-info-grid">{info_grid(info_items)}</div></div>',
+        f'<div class="rnd-section"><div class="rnd-section-title">주요 정보</div><div class="rnd-info-grid">{info_grid(info_items)}</div></div>',
     ]
     if summary:
-        sections.append(f'<div class="rnd-section"><div class="rnd-section-title">怨쇱젣 遺꾩꽍</div><div class="rnd-section-body">{escape(summary)}</div></div>')
-    sections.append(f'<div class="rnd-section"><div class="rnd-section-title">?붽굔 異⑹”??/div><div class="rnd-requirement-list">{requirement_html}</div></div>')
-    support_requirements = [("湲곗뾽遺?ㅼ뿰援ъ냼 ?붽굔", lab), ("怨쇱젣 ?섑뻾 ?대젰 ?붽굔", requirement_history)]
-    sections.append(f'<div class="rnd-section"><div class="rnd-section-title">吏??붽굔</div><div class="rnd-info-grid">{info_grid(support_requirements)}</div></div>')
+        sections.append(f'<div class="rnd-section"><div class="rnd-section-title">과제 분석</div><div class="rnd-section-body">{escape(summary)}</div></div>')
+    sections.append(f'<div class="rnd-section"><div class="rnd-section-title">요건 충족도</div><div class="rnd-requirement-list">{requirement_html}</div></div>')
+    support_requirements = [("기업부설연구소 요건", lab), ("과제 수행 이력 요건", requirement_history)]
+    sections.append(f'<div class="rnd-section"><div class="rnd-section-title">지원 요건</div><div class="rnd-info-grid">{info_grid(support_requirements)}</div></div>')
     overview_body = "\n\n".join(part for part in [overview, objective] if clean(part))
     if overview_body:
-        sections.append(f'<div class="rnd-section"><div class="rnd-section-title">怨쇱젣 媛쒖슂</div><div class="rnd-section-body">{escape(overview_body)}</div></div>')
-    sections.append(f'<div class="rnd-section"><div class="rnd-section-title">怨쇱젣 ?몃? ?댁슜</div><div class="rnd-info-grid">{info_grid(detail_items)}</div></div>')
+        sections.append(f'<div class="rnd-section"><div class="rnd-section-title">과제 개요</div><div class="rnd-section-body">{escape(overview_body)}</div></div>')
+    sections.append(f'<div class="rnd-section"><div class="rnd-section-title">과제 세부 내용</div><div class="rnd-info-grid">{info_grid(detail_items)}</div></div>')
 
     st.markdown(f'<div class="rnd-detail-stack">{"".join(sections)}</div>', unsafe_allow_html=True)
 
@@ -7779,7 +7771,7 @@ def render_detail_card(title: str, fields: list[tuple[str, str]]) -> None:
                 raw_value,
                 max_chars=preview_max_chars_for_label(label),
             )
-            if "?덉궛" in clean(label):
+            if "예산" in clean(label):
                 preview_text = display_value
             items.append(
                 (
@@ -7788,7 +7780,7 @@ def render_detail_card(title: str, fields: list[tuple[str, str]]) -> None:
                     f'<details class="detail-more">'
                     f'<summary>'
                     f'<span class="detail-preview-text">{escape(preview_text)}</span>'
-                    f'<span class="detail-toggle-text">?붾낫湲?/span>'
+                    f'<span class="detail-toggle-text">더보기</span>'
                     f'</summary>'
                     f'<div class="detail-more-body">{escape(raw_value)}</div>'
                     f"</details>"
@@ -7808,7 +7800,7 @@ def render_detail_card(title: str, fields: list[tuple[str, str]]) -> None:
 
     if not items:
         items.append(
-            '<div class="detail-field"><div class="detail-value">?쒖떆??뺣낫媛 ?놁뒿?덈떎.</div></div>'
+            '<div class="detail-field"><div class="detail-value">표시할 정보가 없습니다.</div></div>'
         )
 
     st.markdown(
@@ -7827,7 +7819,7 @@ def _analysis_clause(value: object, *, max_chars: int = 120) -> str:
     text = text.replace("|", " ")
     text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(
-        r"^(?꾨왂?곹빀??꾨왂 ?곹빀??湲곗닠?곹빀??湲곗닠 愿?⑤룄|湲곗닠愿?⑤룄|?쒖옣?뺣젹|?쒖옣 ?뺣젹|?쒖옣?뺥빀??쒖옣 ?뺥빀??湲닿툒??湲닿툒??뚰봽?몄썾?댁쟻?⑸룄|?뚰봽?몄썾??곹빀??섎뱶?⑥뼱?섏〈??섎뱶?⑥뼱 ?섏〈??\s*:\s*",
+        r"^(전략적합도|전략 적합도|기술적합도|기술 관련도|기술관련도|시장정렬|시장 정렬|시장정합성|시장 정합성|긴급도|긴급성|소프트웨어적합도|소프트웨어 적합도|하드웨어의존도|하드웨어 의존도)\s*:\s*",
         "",
         text,
     )
@@ -7913,10 +7905,10 @@ def build_project_analysis_text(*rows: dict | None) -> str:
         max_chars=140,
     )
     total_budget = extract_budget_summary(
-        first_non_empty(merged, "llm_total_budget_text", "total_budget_text", "budget", "??쒖삁??, "?ъ뾽鍮?)
+        first_non_empty(merged, "llm_total_budget_text", "total_budget_text", "budget", "대표예산", "사업비")
     )
     period_text = _analysis_clause(
-        first_non_empty(merged, "rfp_period", "project_period", "support_period", "notice_period", "period", "?묒닔湲곌컙"),
+        first_non_empty(merged, "rfp_period", "project_period", "support_period", "notice_period", "period", "접수기간"),
         max_chars=60,
     )
     merged_blob = " ".join(
@@ -7940,61 +7932,61 @@ def build_project_analysis_text(*rows: dict | None) -> str:
         if clean(part)
     )
 
-    software_markers = ["ai", "?곗씠??, "platform", "?뚮옯??, "api", "cloud", "saas", "?뚭퀬由ъ쬁", "遺꾩꽍", "?쒕퉬??, "?쒕??덉씠??]
-    hardware_markers = ["?쇱꽌", "遺??, "?λ퉬", "?붾컮?댁뒪", "紐⑤뱢", "?쒖“", "諛섎룄泥?, "諛고꽣由?, "?뚯옱", "濡쒕큸", "?쒖젣??, "?묒궛"]
+    software_markers = ["ai", "데이터", "platform", "플랫폼", "api", "cloud", "saas", "알고리즘", "분석", "서비스", "시뮬레이션"]
+    hardware_markers = ["센서", "부품", "장비", "디바이스", "모듈", "제조", "반도체", "배터리", "소재", "로봇", "시제품", "양산"]
     sw_hits = sum(1 for marker in software_markers if marker in merged_blob.lower())
     hw_hits = sum(1 for marker in hardware_markers if marker in merged_blob.lower())
 
     paragraphs: list[str] = []
     if objective:
-        _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(f"??怨쇱젣??{objective}??紐⑺몴濡??쒕떎"))
+        _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(f"이 과제는 {objective}을 목표로 한다"))
     elif reason_text:
         _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(reason_text))
 
     if development:
-        _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(f"?듭떖 媛쒕컻 踰붿쐞??{development} 以묒떖?쇰줈 援ъ꽦?쒕떎"))
+        _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(f"핵심 개발 범위는 {development} 중심으로 구성된다"))
     elif keywords:
         _append_analysis_paragraph(
             paragraphs,
-            _ensure_analysis_sentence(f"?듭떖 湲곗닠 ?붿냼??{', '.join(keywords[:4])} 以묒떖?쇰줈 ?댁꽍?쒕떎"),
+            _ensure_analysis_sentence(f"핵심 기술 요소는 {', '.join(keywords[:4])} 중심으로 해석된다"),
         )
 
     if market_fields:
         _append_analysis_paragraph(
             paragraphs,
             _ensure_analysis_sentence(
-                f"?뱁엳 {', '.join(market_fields[:3])} 遺꾩빞???곌껐?깆씠 ?믪븘 ?ㅼ젣 ?ъ뾽?붿? ?몄젒 ?쒖옣 ?뺤옣 媛?μ꽦??④퍡 寃?좏븷 留뚰븯??
+                f"특히 {', '.join(market_fields[:3])} 분야와의 연결성이 높아 실제 사업화와 인접 시장 확장 가능성을 함께 검토할 만하다"
             ),
         )
     elif support_need:
         _append_analysis_paragraph(
             paragraphs,
-            _ensure_analysis_sentence(f"{support_need} ?섏슂? 吏곸젒 ?곌껐??媛?μ꽦??덉뼱 ?ъ뾽 湲고쉶 愿?먯뿉??寃??媛移섍? ?덈떎"),
+            _ensure_analysis_sentence(f"{support_need} 수요와 직접 연결될 가능성이 있어 사업 기회 관점에서 검토 가치가 있다"),
         )
 
     if sw_hits >= max(2, hw_hits + 1):
         _append_analysis_paragraph(
             paragraphs,
-            "?곗씠?걔텮I쨌?뚮옯??곌퀎 鍮꾩쨷??믪븘 ?뚰봽?몄썾?는룻뵆?ロ뤌 以묒떖 湲곗뾽??곹빀??Opportunity濡??먮떒?쒕떎.",
+            "데이터·AI·플랫폼 연계 비중이 높아 소프트웨어·플랫폼 중심 기업에 적합한 Opportunity로 판단된다.",
         )
     elif hw_hits >= max(2, sw_hits + 1):
         _append_analysis_paragraph(
             paragraphs,
-            "?λ퉬쨌遺?댟룹젣議??곌퀎 鍮꾩쨷??믪븘 ?섎뱶?⑥뼱 ?듯빀怨??ㅼ쬆 ?섑뻾 ??웾??以묒슂??怨쇱젣濡??먮떒?쒕떎.",
+            "장비·부품·제조 연계 비중이 높아 하드웨어 통합과 실증 수행 역량이 중요한 과제로 판단된다.",
         )
     else:
         _append_analysis_paragraph(
             paragraphs,
-            "?뚰봽?몄썾?댁? ?꾩옣 ?ㅼ쬆 ?붿냼媛 ?④퍡 ?붽뎄?섎뒗 ?듯빀??怨쇱젣濡? ?쒕퉬??댁쁺 ??웾怨?湲곗닠 援ы쁽 ??웾??④퍡 媛뽰텣 議곗쭅??곹빀?섎떎.",
+            "소프트웨어와 현장 실증 요소가 함께 요구되는 융합형 과제로, 서비스 운영 역량과 기술 구현 역량을 함께 갖춘 조직에 적합하다.",
         )
 
     execution_bits: list[str] = []
     if period_text:
-        execution_bits.append(f"?ъ뾽湲곌컙? {period_text} ?섏??대떎")
+        execution_bits.append(f"사업기간은 {period_text} 수준이다")
     if total_budget:
-        execution_bits.append(f"?덉궛 洹쒕え??{total_budget}濡??뺤씤?쒕떎")
+        execution_bits.append(f"예산 규모는 {total_budget}로 확인된다")
     if support_plan:
-        execution_bits.append(f"{support_plan} ?깆쓣 怨좊젮?섎㈃ ?ㅼ쬆 諛??댁쁺 ?곌퀎 媛?μ꽦??寃?좏븷 留뚰븯??)
+        execution_bits.append(f"{support_plan} 등을 고려하면 실증 및 운영 연계 가능성을 검토할 만하다")
     if execution_bits:
         _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(". ".join(execution_bits)))
 
@@ -8002,7 +7994,7 @@ def build_project_analysis_text(*rows: dict | None) -> str:
         _append_analysis_paragraph(paragraphs, _ensure_analysis_sentence(reason_text))
 
     if not paragraphs:
-        return "?곌껐??RFP 遺꾩꽍??꾩쭅 ?놁뒿?덈떎.\n\n怨듦퀬 ?먮Ц怨??곌껐 Opportunity瑜??④퍡 ?뺤씤?댁＜?몄슂."
+        return "연결된 RFP 분석이 아직 없습니다.\n\n공고 원문과 연결 Opportunity를 함께 확인해주세요."
     return "\n\n".join(paragraphs[:5])
 
 
@@ -8165,10 +8157,10 @@ def build_favorite_toggle_href(
 
 
 NOTICE_QUEUE_DETAIL_PAGE_KEY = "notice_queue"
-UNFAVORITE_REVIEW_STATUS = "??"
+UNFAVORITE_REVIEW_STATUS = "???"
 STATUS_FILTER_OPTIONS: list[tuple[str, str]] = [
     ("??", "??"),
-    ("??", "??"),
+    ("???", "???"),
     ("??", "??"),
     ("??", "??"),
 ]
@@ -8180,13 +8172,13 @@ TOP_TAB_OPTIONS: list[tuple[str, str]] = [
     ("IRIS", "iris"),
     ("MSS", "tipa"),
     ("NIPA", "nipa"),
-    ("???", "favorite"),
+    ("????", "favorite"),
     ("??/??", "archive"),
 ]
 RECOMMENDATION_RANK = {
     "??": 3,
     "??": 1,
-    "??": 0,
+    "???": 0,
     "": -1,
 }
 
@@ -8236,7 +8228,7 @@ def _truncate_queue_text(value: object, max_chars: int = 170) -> str:
 
 def _compose_queue_analysis(row: dict | pd.Series | None) -> str:
     row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
-    title_text = _normalize_key_text(first_non_empty(row_dict, "notice_title", "怨듦퀬紐?))
+    title_text = _normalize_key_text(first_non_empty(row_dict, "notice_title", "공고명"))
     project_text = clean(first_non_empty(row_dict, "_queue_project_name"))
     reason_text = clean(first_non_empty(row_dict, "_queue_reason"))
     field_text = clean(first_non_empty(row_dict, "_queue_application_field"))
@@ -8261,24 +8253,24 @@ def _compose_queue_analysis(row: dict | pd.Series | None) -> str:
         return _truncate_queue_text(reason_text)
     if project_text and _normalize_key_text(project_text) != title_text:
         if field_text:
-            return _truncate_queue_text(f"{project_text}. {field_text} 遺꾩빞? ?곌껐??怨쇱젣濡?寃?좏븷 ??덉뒿?덈떎.")
+            return _truncate_queue_text(f"{project_text}. {field_text} 분야와 연결된 과제로 검토할 수 있습니다.")
         return _truncate_queue_text(project_text)
     if market_text and field_text:
-        return _truncate_queue_text(f"{market_text}怨?{field_text} 遺꾩빞 ?뺤옣 媛?μ꽦??덈뒗 怨쇱젣濡?蹂댁엯?덈떎.")
+        return _truncate_queue_text(f"{market_text}과 {field_text} 분야 확장 가능성이 있는 과제로 보입니다.")
     if field_text:
-        return _truncate_queue_text(f"{field_text} 遺꾩빞 以묒떖??怨쇱젣濡??먮떒?⑸땲??")
+        return _truncate_queue_text(f"{field_text} 분야 중심의 과제로 판단됩니다.")
     if market_text:
-        return _truncate_queue_text(f"{market_text} ?쒖옣怨쇱쓽 ?곌껐?깆씠 ?믪? 怨쇱젣濡?蹂댁엯?덈떎.")
+        return _truncate_queue_text(f"{market_text} 시장과의 연결성이 높은 과제로 보입니다.")
     if keyword_text:
-        return _truncate_queue_text(f"{keyword_text} 以묒떖??湲곗닠 Opportunity濡?寃?좏븷 ??덉뒿?덈떎.")
+        return _truncate_queue_text(f"{keyword_text} 중심의 기술 Opportunity로 검토할 수 있습니다.")
     return ""
 
 def _review_value(row: dict | pd.Series | None) -> str:
     row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
-    return clean(first_non_empty(row_dict, "review_status", "寃??щ?", "寃?좎뿬遺"))
+    return clean(first_non_empty(row_dict, "review_status", "검토 여부", "검토여부"))
 
 def _review_series(rows: pd.DataFrame) -> pd.Series:
-    return _safe_series(rows, ["review_status", "寃??щ?", "寃?좎뿬遺"])
+    return _safe_series(rows, ["review_status", "검토 여부", "검토여부"])
 
 def _is_favorite(row_or_value: dict | pd.Series | str | None) -> bool:
     value = _review_value(row_or_value) if isinstance(row_or_value, (dict, pd.Series)) else clean(row_or_value)
@@ -8289,7 +8281,7 @@ def _favorite_button_label(current_value: str) -> tuple[bool, str]:
     return is_favorite, "해제" if is_favorite else "등록"
 
 def _favorite_badge_html() -> str:
-    return '<span class="notice-chip notice-chip-favorite">愿??/span>'
+    return '<span class="notice-chip notice-chip-favorite">관심</span>'
 
 def _sync_user_scoped_review(*, notice_id: str, source_key: str, notice_title: str, review_status: str) -> None:
     if not callable(is_user_scoped_operations_enabled) or not callable(upsert_user_review_status):
@@ -8352,7 +8344,7 @@ def render_favorite_scrap_button(
         return
     is_favorite, button_label, _ = favorite_button_props(current_value)
     if icon_only:
-        button_label = "?? if is_favorite else "??
+        button_label = "★" if is_favorite else "☆"
     next_value = UNFAVORITE_REVIEW_STATUS if is_favorite else FAVORITE_REVIEW_STATUS
     safe_key = _css_safe_key(button_key)
     if compact:
@@ -8403,33 +8395,33 @@ def favorite_button_props(current_value: str) -> tuple[bool, str, str]:
 def _normalize_status_filter(value: str) -> str:
     normalized = clean(value).lower()
     alias_map = {
-        "all": "?꾩껜",
-        "?꾩껜": "?꾩껜",
-        "current": "吏꾪뻾以?,
-        "吏꾪뻾以?: "吏꾪뻾以?,
-        "scheduled": "?덉젙",
-        "?덉젙": "?덉젙",
-        "archive": "留덇컧",
-        "closed": "留덇컧",
-        "留덇컧": "留덇컧",
+        "all": "전체",
+        "전체": "전체",
+        "current": "진행중",
+        "진행중": "진행중",
+        "scheduled": "예정",
+        "예정": "예정",
+        "archive": "마감",
+        "closed": "마감",
+        "마감": "마감",
     }
-    return alias_map.get(normalized, "?꾩껜")
+    return alias_map.get(normalized, "전체")
 
 def _normalize_recommendation_value(value: object) -> str:
     text = clean(value)
     lowered = text.lower()
     if not text:
         return ""
-    if any(marker in lowered for marker in ("鍮꾩텛泥?, "誘몄텛泥?, "not recommend", "reject")):
-        return "鍮꾩텛泥?
-    if "寃?좉텒?? in text:
-        return "蹂댄넻"
-    if "蹂댄넻" in text:
-        return "蹂댄넻"
-    if "異붿쿇" in text or "recommend" in lowered:
-        return "異붿쿇"
-    if "寃?? in text or "蹂대쪟" in text or "hold" in lowered:
-        return "蹂댄넻"
+    if any(marker in lowered for marker in ("비추천", "미추천", "not recommend", "reject")):
+        return "비추천"
+    if "검토권장" in text:
+        return "보통"
+    if "보통" in text:
+        return "보통"
+    if "추천" in text or "recommend" in lowered:
+        return "추천"
+    if "검토" in text or "보류" in text or "hold" in lowered:
+        return "보통"
     return text
 
 def _normalize_recommendation_filter(value: str) -> str:
@@ -8489,13 +8481,13 @@ def _css_safe_key(value: str) -> str:
 def _resolve_notice_id(row: dict | pd.Series | None) -> str:
     if row is None:
         return ""
-    return clean(first_non_empty(row, "?⑤벀?촇D", "notice_id"))
+    return clean(first_non_empty(row, "怨듦퀬ID", "notice_id"))
 
 def _get_notice_row_by_id(rows: pd.DataFrame, notice_id: str) -> dict | pd.Series | None:
     selected_notice_id = clean(notice_id)
     if rows is None or rows.empty or not selected_notice_id:
         return None
-    selected_row = get_row_by_column_value(rows, "?⑤벀?촇D", selected_notice_id)
+    selected_row = get_row_by_column_value(rows, "怨듦퀬ID", selected_notice_id)
     if selected_row:
         return selected_row
     return get_row_by_column_value(rows, "notice_id", selected_notice_id)
@@ -8608,7 +8600,7 @@ def _build_notice_analysis_summary(opportunity_df: pd.DataFrame) -> pd.DataFrame
         )
 
     working = opportunity_df.copy()
-    working["notice_id"] = _safe_series(working, ["notice_id", "怨듦퀬ID", "Notice ID", "source_notice_id"])
+    working["notice_id"] = _safe_series(working, ["notice_id", "공고ID", "Notice ID", "source_notice_id"])
     working = working[working["notice_id"].ne("")].copy()
     if working.empty:
         return pd.DataFrame(
@@ -8630,7 +8622,7 @@ def _build_notice_analysis_summary(opportunity_df: pd.DataFrame) -> pd.DataFrame
 
     working["_queue_recommendation"] = _safe_series(
         working,
-        ["llm_recommendation", "recommendation", "異붿쿇?щ?", "Recommendation"],
+        ["llm_recommendation", "recommendation", "추천여부", "Recommendation"],
     ).apply(_normalize_recommendation_value)
     working["_queue_project_name"] = _safe_series(
         working,
@@ -8655,23 +8647,23 @@ def _build_notice_analysis_summary(opportunity_df: pd.DataFrame) -> pd.DataFrame
     )
     working["_queue_target_market"] = _safe_series(
         working,
-        ["target_market", "??쒓??ъ쁺??, "llm_score_target_markets"],
+        ["target_market", "대표관심영역", "llm_score_target_markets"],
     )
     working["_queue_support_type"] = _safe_series(
         working,
-        ["pbofr_type", "怨듬え?좏삎", "support_type", "project_type"],
+        ["pbofr_type", "공모유형", "support_type", "project_type"],
     )
     working["_queue_notice_period"] = _safe_series(
         working,
-        ["notice_period", "period", "?묒닔湲곌컙", "?좎껌湲곌컙", "?붿껌湲곌컙"],
+        ["notice_period", "period", "접수기간", "신청기간", "요청기간"],
     )
     working["_queue_notice_no"] = _safe_series(
         working,
-        ["notice_no", "ancm_no", "怨듦퀬踰덊샇"],
+        ["notice_no", "ancm_no", "공고번호"],
     )
     working["_queue_notice_date"] = _safe_series(
         working,
-        ["registered_at", "ancm_de", "怨듦퀬?쇱옄", "?깅줉??],
+        ["registered_at", "ancm_de", "공고일자", "등록일"],
     )
     working["_queue_score"] = pd.to_numeric(
         series_from_candidates(working, ["llm_fit_score", "rfp_score", "Score"]),
@@ -8709,7 +8701,7 @@ def _enrich_notice_rows(rows: pd.DataFrame, opportunity_df: pd.DataFrame) -> pd.
         return pd.DataFrame()
 
     enriched = rows.copy()
-    enriched["_notice_id"] = _safe_series(enriched, ["怨듦퀬ID", "notice_id"])
+    enriched["_notice_id"] = _safe_series(enriched, ["공고ID", "notice_id"])
     summary_df = _build_notice_analysis_summary(opportunity_df)
     if not summary_df.empty:
         enriched = enriched.merge(
@@ -8735,10 +8727,10 @@ def _enrich_notice_rows(rows: pd.DataFrame, opportunity_df: pd.DataFrame) -> pd.
         if column not in enriched.columns:
             enriched[column] = ""
         enriched[column] = enriched[column].fillna("").astype(str).str.strip()
-    enriched["notice_no"] = _safe_series(enriched, ["notice_no", "怨듦퀬踰덊샇", "ancm_no", "_queue_notice_no"])
-    enriched["registered_at"] = _safe_series(enriched, ["registered_at", "怨듦퀬?쇱옄", "ancm_de", "_queue_notice_date"])
-    enriched["pbofr_type"] = _safe_series(enriched, ["pbofr_type", "怨듬え?좏삎", "support_type", "_queue_support_type"])
-    enriched["notice_period"] = _safe_series(enriched, ["notice_period", "?묒닔湲곌컙", "period", "?좎껌湲곌컙", "_queue_notice_period"])
+    enriched["notice_no"] = _safe_series(enriched, ["notice_no", "공고번호", "ancm_no", "_queue_notice_no"])
+    enriched["registered_at"] = _safe_series(enriched, ["registered_at", "공고일자", "ancm_de", "_queue_notice_date"])
+    enriched["pbofr_type"] = _safe_series(enriched, ["pbofr_type", "공모유형", "support_type", "_queue_support_type"])
+    enriched["notice_period"] = _safe_series(enriched, ["notice_period", "접수기간", "period", "신청기간", "_queue_notice_period"])
     enriched["_queue_analysis"] = enriched.apply(_compose_queue_analysis, axis=1)
     return enriched
 
@@ -8748,17 +8740,17 @@ def _matches_search(rows: pd.DataFrame, search_text: str) -> pd.Series:
         return pd.Series(True, index=rows.index)
 
     columns = [
-        "怨듦퀬紐?,
+        "공고명",
         "notice_title",
         "_queue_project_name",
-        "?꾨Ц湲곌?",
+        "전문기관",
         "agency",
-        "?뚭?遺泥?,
-        "二쇨?遺泥?,
+        "소관부처",
+        "주관부처",
         "ministry",
-        "留ㅼ껜",
+        "매체",
         "source_label",
-        "怨듦퀬踰덊샇",
+        "공고번호",
         "notice_no",
     ]
     stacked = pd.Series("", index=rows.index, dtype="object")
@@ -8768,7 +8760,7 @@ def _matches_search(rows: pd.DataFrame, search_text: str) -> pd.Series:
     return stacked.str.lower().str.contains(query, na=False)
 
 def _normalize_status_filter_values(value: object) -> list[str]:
-    allowed_values = [option for option, _ in STATUS_FILTER_OPTIONS if clean(option) and option != "?꾩껜"]
+    allowed_values = [option for option, _ in STATUS_FILTER_OPTIONS if clean(option) and option != "전체"]
     if isinstance(value, (list, tuple, set)):
         normalized: list[str] = []
         for item in value:
@@ -8780,7 +8772,7 @@ def _normalize_status_filter_values(value: object) -> list[str]:
     return [normalized_value] if normalized_value in allowed_values else []
 
 def _normalize_recommendation_filter_values(value: object) -> list[str]:
-    allowed_values = [option for option, _ in RECOMMENDATION_FILTER_OPTIONS if clean(option) and option != "?꾩껜"]
+    allowed_values = [option for option, _ in RECOMMENDATION_FILTER_OPTIONS if clean(option) and option != "전체"]
     if isinstance(value, (list, tuple, set)):
         normalized: list[str] = []
         for item in value:
@@ -8809,9 +8801,9 @@ def _apply_notice_filters(
 
     if normalized_statuses:
         scope_map = {
-            "吏꾪뻾以?: "current",
-            "?덉젙": "scheduled",
-            "留덇컧": "archive",
+            "진행중": "current",
+            "예정": "scheduled",
+            "마감": "archive",
         }
         allowed_scopes = [scope_map[value] for value in normalized_statuses if value in scope_map]
         if allowed_scopes:
@@ -8825,13 +8817,13 @@ def _apply_notice_filters(
     if normalized_recommendations:
         filtered = filtered[filtered["_queue_recommendation"].isin(normalized_recommendations)].copy()
     if dday_max and dday_max > 0:
-        period_series = series_from_candidates(filtered, ["notice_period", "?묒닔湲곌컙", "period"]).fillna("").astype(str)
-        status_series = series_from_candidates(filtered, ["status", "rcve_status", "怨듦퀬?곹깭"]).fillna("").astype(str)
+        period_series = series_from_candidates(filtered, ["notice_period", "접수기간", "period"]).fillna("").astype(str)
+        status_series = series_from_candidates(filtered, ["status", "rcve_status", "공고상태"]).fillna("").astype(str)
         today = pd.Timestamp.now().normalize()
 
         def _within_deadline_limit(period_text: str, status_text: str) -> bool:
             normalized_status = normalize_notice_status_label(status_text)
-            if "留덇컧" in normalized_status:
+            if "마감" in normalized_status:
                 return False
             period_end = extract_period_end(clean(period_text))
             if pd.isna(period_end):
@@ -9286,17 +9278,17 @@ def _inject_notice_queue_dashboard_styles() -> None:
     )
 
 def _status_badge_class(status: str) -> str:
-    if status == "留덇컧":
+    if status == "마감":
         return "notice-chip notice-chip-status is-archive"
-    if status == "?덉젙":
+    if status == "예정":
         return "notice-chip notice-chip-status is-scheduled"
     return "notice-chip notice-chip-status"
 
 def _recommendation_badge_html(value: str) -> str:
     normalized = _normalize_recommendation_value(value)
     if not normalized:
-        return '<span class="notice-chip notice-chip-neutral">遺꾩꽍?湲?/span>'
-    if normalized == "異붿쿇":
+        return '<span class="notice-chip notice-chip-neutral">분석대기</span>'
+    if normalized == "추천":
         class_name = "notice-chip notice-chip-recommend"
     else:
         class_name = "notice-chip notice-chip-neutral"
@@ -9343,7 +9335,7 @@ def render_crawled_notice_rows(
     key_prefix: str,
     limit: int = 30,
     page_key: str = NOTICE_QUEUE_DETAIL_PAGE_KEY,
-    empty_message: str = "?? ?? ???.",
+    empty_message: str = "??? ??? ????.",
     selected_notice_id: str = "",
     on_select=None,
 ) -> None:
@@ -9390,7 +9382,7 @@ def render_crawled_notice_rows(
         review_value = _review_value(row)
         source_label = clean(first_non_empty(row, "source_label", "source_site", "??")) or (source_key or "IRIS").upper()
         scope = clean(first_non_empty(row, "_notice_scope"))
-        status = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "???"))
+        status = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "????"))
         if not status:
             if scope == "archive":
                 status = "마감"
@@ -9453,418 +9445,6 @@ def render_crawled_notice_rows(
         unsafe_allow_html=True,
     )
 
-
-def _inject_public_notice_queue_saas_styles() -> None:
-    st.markdown(
-        """
-        <style>
-        .stApp,
-        [data-testid="stAppViewContainer"],
-        .main {
-          background: #ffffff;
-        }
-        .notice-saas-shell {
-          margin: 0.2rem 0 1rem;
-        }
-        .notice-saas-header {
-          display: flex;
-          align-items: flex-end;
-          justify-content: space-between;
-          gap: 1rem;
-          margin-bottom: 1rem;
-        }
-        .notice-saas-title-row {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          flex-wrap: wrap;
-        }
-        .notice-saas-title {
-          color: #0f172a;
-          font-size: 2rem;
-          font-weight: 900;
-          letter-spacing: -0.04em;
-          line-height: 1.08;
-          margin: 0;
-        }
-        .notice-saas-count {
-          display: inline-flex;
-          align-items: center;
-          min-height: 34px;
-          padding: 0 0.95rem;
-          border-radius: 999px;
-          background: #e8f0ff;
-          color: #2563eb;
-          font-size: 0.9rem;
-          font-weight: 900;
-        }
-        .notice-saas-copy {
-          margin-top: 0.45rem;
-          color: #64748b;
-          font-size: 0.94rem;
-          line-height: 1.6;
-          max-width: 900px;
-        }
-        .notice-saas-layout {
-          display: grid;
-          grid-template-columns: minmax(240px, 278px) minmax(0, 1fr);
-          gap: 1rem;
-          align-items: start;
-        }
-        .notice-saas-filter-card,
-        .notice-saas-table-card {
-          border: 1px solid #dbe4f0;
-          border-radius: 24px;
-          background: #ffffff;
-          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
-        }
-        .notice-saas-filter-card {
-          padding: 1rem 1rem 1.1rem;
-          position: sticky;
-          top: 1rem;
-        }
-        .notice-saas-table-card {
-          padding: 1rem;
-        }
-        .notice-saas-card-head {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 0.8rem;
-          margin-bottom: 0.9rem;
-        }
-        .notice-saas-card-title {
-          color: #0f172a;
-          font-size: 1rem;
-          font-weight: 900;
-          margin: 0;
-        }
-        .notice-saas-card-note {
-          color: #64748b;
-          font-size: 0.8rem;
-          font-weight: 700;
-        }
-        .notice-saas-table-head {
-          display: grid;
-          grid-template-columns: 0.92fr 3.45fr 1.1fr 1.15fr 1fr 1.4fr 0.9fr 1fr 0.7fr;
-          gap: 0.75rem;
-          align-items: center;
-          padding: 0.78rem 0.95rem;
-          border: 1px solid #e6edf7;
-          border-radius: 18px;
-          background: #f8fbff;
-          color: #64748b;
-          font-size: 0.76rem;
-          font-weight: 900;
-          letter-spacing: 0.04em;
-          text-transform: uppercase;
-        }
-        .notice-saas-row {
-          display: grid;
-          grid-template-columns: 0.92fr 3.45fr 1.1fr 1.15fr 1fr 1.4fr 0.9fr 1fr 0.7fr;
-          gap: 0.75rem;
-          align-items: center;
-          padding: 0.95rem 0.95rem;
-          border-bottom: 1px solid #edf2f9;
-        }
-        .notice-saas-row:last-child {
-          border-bottom: none;
-        }
-        .notice-saas-pill,
-        .notice-saas-tag {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          min-height: 24px;
-          padding: 0 0.68rem;
-          border-radius: 999px;
-          font-size: 0.74rem;
-          font-weight: 800;
-          white-space: nowrap;
-        }
-        .notice-saas-pill.is-open {
-          color: #2563eb;
-          background: #eaf1ff;
-        }
-        .notice-saas-pill.is-scheduled {
-          color: #475569;
-          background: #edf2f7;
-        }
-        .notice-saas-pill.is-closed {
-          color: #dc2626;
-          background: #fee2e2;
-        }
-        .notice-saas-tag {
-          color: #475569;
-          background: #f8fafc;
-        }
-        .notice-saas-title-cell {
-          min-width: 0;
-        }
-        .notice-saas-title-link {
-          color: #0f172a !important;
-          text-decoration: none !important;
-          font-size: 0.96rem;
-          font-weight: 850;
-          line-height: 1.45;
-        }
-        .notice-saas-title-link:hover {
-          color: #2563eb !important;
-        }
-        .notice-saas-subline {
-          margin-top: 0.24rem;
-          color: #64748b;
-          font-size: 0.79rem;
-          line-height: 1.45;
-        }
-        .notice-saas-tags {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 0.35rem;
-          margin-top: 0.48rem;
-        }
-        .notice-saas-cell {
-          color: #1e293b;
-          font-size: 0.84rem;
-          line-height: 1.45;
-        }
-        .notice-saas-cell.is-strong {
-          font-weight: 800;
-        }
-        .notice-saas-cell.is-deadline {
-          color: #2563eb;
-          font-weight: 900;
-        }
-        .notice-saas-favorite {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 34px;
-          height: 34px;
-          border-radius: 999px;
-          border: 1px solid #dbe4f0;
-          background: #ffffff;
-          color: #94a3b8 !important;
-          text-decoration: none !important;
-          font-size: 1rem;
-          font-weight: 900;
-        }
-        .notice-saas-favorite.is-active {
-          color: #f59e0b !important;
-          background: #fff7db;
-          border-color: #fde68a;
-        }
-        .notice-saas-footer-meta {
-          color: #64748b;
-          font-size: 0.84rem;
-          font-weight: 700;
-        }
-        @media (max-width: 1180px) {
-          .notice-saas-layout {
-            grid-template-columns: 1fr;
-          }
-          .notice-saas-filter-card {
-            position: static;
-          }
-        }
-        @media (max-width: 960px) {
-          .notice-saas-header {
-            flex-direction: column;
-            align-items: flex-start;
-          }
-          .notice-saas-table-head,
-          .notice-saas-row {
-            grid-template-columns: 1fr;
-          }
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _normalize_public_notice_queue_rows(rows: pd.DataFrame) -> pd.DataFrame:
-    if rows is None or rows.empty:
-        return pd.DataFrame(
-            columns=[
-                "Notice ID",
-                "source_key",
-                "Source",
-                "Title",
-                "Notice No",
-                "Status",
-                "Period",
-                "Agency",
-                "Ministry",
-                "Date",
-                "Recommendation",
-                "Budget",
-                "Summary",
-                "Project",
-                "Review",
-                "D-Day",
-                "_sort_date",
-            ]
-        )
-
-    working = rows.copy()
-    normalized = pd.DataFrame(index=working.index.copy())
-    normalized["Notice ID"] = working.apply(lambda row: _resolve_notice_id(row), axis=1)
-    normalized["source_key"] = working.apply(
-        lambda row: resolve_route_source_key_for_row(row, source_key=row.get("source_key")) or "iris",
-        axis=1,
-    )
-    normalized["Source"] = working.apply(
-        lambda row: clean(first_non_empty(row, "source_label", "source_site", "source_key")) or "IRIS",
-        axis=1,
-    )
-    normalized["Title"] = series_from_candidates(working, ["notice_title", "怨듦퀬紐?])
-    normalized["Notice No"] = series_from_candidates(working, ["notice_no", "怨듦퀬踰덊샇", "ancm_no"])
-    normalized["Status"] = series_from_candidates(working, ["status", "rcve_status", "怨듦퀬?곹깭"])
-    normalized["Period"] = series_from_candidates(working, ["notice_period", "?묒닔湲곌컙", "period"])
-    normalized["Agency"] = series_from_candidates(working, ["agency", "?꾨Ц湲곌?", "?대떦遺??])
-    normalized["Ministry"] = series_from_candidates(working, ["ministry", "?뚭?遺泥?, "二쇨?遺泥?])
-    normalized["Date"] = series_from_candidates(working, ["registered_at", "怨듦퀬?쇱옄", "ancm_de"])
-    normalized["Recommendation"] = series_from_candidates(working, ["_queue_recommendation", "??쒖텛泥쒕룄", "recommendation"])
-    normalized["Budget"] = series_from_candidates(working, ["_queue_budget", "budget", "??쒖삁??])
-    normalized["Summary"] = series_from_candidates(working, ["_queue_analysis", "_queue_reason", "??쒖텛泥쒖씠??])
-    normalized["Project"] = series_from_candidates(working, ["_queue_project_name", "??쒓낵?쒕챸"])
-    normalized["Review"] = series_from_candidates(working, ["review_status", "寃?좎뿬遺", "寃??щ?"])
-    normalized["D-Day"] = working.apply(
-        lambda row: format_dashboard_deadline_badge(
-            first_non_empty(row, "notice_period", "?묒닔湲곌컙", "period"),
-            first_non_empty(row, "status", "rcve_status", "怨듦퀬?곹깭"),
-        ),
-        axis=1,
-    )
-    normalized["_sort_date"] = parse_date_column(normalized["Date"])
-    return normalized
-
-
-def _public_notice_queue_deadline_rank(value: object) -> int:
-    text = clean(value)
-    if not text or text == "-":
-        return 9998
-    if text.startswith("D-"):
-        try:
-            return int(text[2:])
-        except ValueError:
-            return 9998
-    if text.startswith("D+"):
-        try:
-            return 5000 + int(text[2:])
-        except ValueError:
-            return 9999
-    return 9997
-
-
-def _public_notice_queue_sort_label(sort_key: str) -> str:
-    labels = {
-        "latest": "?뺣젹: 理쒖떊 ?깅줉??,
-        "deadline": "?뺣젹: 留덇컧 ?꾨컯",
-        "recommend": "?뺣젹: 異붿쿇 ?곗꽑",
-        "agency": "?뺣젹: 湲곌??,
-    }
-    return labels.get(clean(sort_key), labels["latest"])
-
-
-def _sort_public_notice_queue_rows(rows: pd.DataFrame, sort_key: str) -> pd.DataFrame:
-    if rows.empty:
-        return rows.copy()
-
-    working = rows.copy()
-    normalized_sort = clean(sort_key) or "latest"
-    if normalized_sort == "deadline":
-        working["_deadline_rank"] = working["D-Day"].apply(_public_notice_queue_deadline_rank)
-        return working.sort_values(
-            by=["_deadline_rank", "_sort_date", "Title"],
-            ascending=[True, False, True],
-            na_position="last",
-        )
-    if normalized_sort == "recommend":
-        working["_recommend_rank"] = working["Recommendation"].apply(
-            lambda value: 0 if is_positive_recommendation(clean(value)) else 1
-        )
-        return working.sort_values(
-            by=["_recommend_rank", "_sort_date", "Title"],
-            ascending=[True, False, True],
-            na_position="last",
-        )
-    if normalized_sort == "agency":
-        return working.sort_values(
-            by=["Ministry", "Agency", "_sort_date", "Title"],
-            ascending=[True, True, False, True],
-            na_position="last",
-        )
-    return working.sort_values(
-        by=["_sort_date", "Source", "Title"],
-        ascending=[False, True, True],
-        na_position="last",
-    )
-
-
-def _render_public_notice_queue_saas_table(rows: pd.DataFrame) -> None:
-    if rows.empty:
-        st.info("?쒖떆??怨듦퀬媛 ?놁뒿?덈떎.")
-        return
-
-    st.markdown(
-        (
-            '<div class="notice-saas-table-head">'
-            '<div>?곹깭</div><div>怨듦퀬紐?/div><div>二쇨?遺泥?/div><div>二쇨?湲곌?</div><div>?깅줉??/div><div>?묒닔湲곌컙</div><div>D-day</div><div>?덉궛</div><div>愿??/div>'
-            '</div>'
-        ),
-        unsafe_allow_html=True,
-    )
-
-    row_markup: list[str] = []
-    for _, row in rows.iterrows():
-        status_text = normalize_notice_status_label(row.get("Status")) or clean(row.get("Status")) or "-"
-        status_class = "is-open"
-        if "?덉젙" in status_text:
-            status_class = "is-scheduled"
-        elif "留덇컧" in status_text:
-            status_class = "is-closed"
-        notice_id = clean(row.get("Notice ID"))
-        source_key = clean(row.get("source_key")) or "iris"
-        detail_href = build_route_href(NOTICE_QUEUE_DETAIL_PAGE_KEY, notice_id, source_key=source_key) if notice_id else "#"
-        favorite_href = build_favorite_toggle_href(
-            page_key=NOTICE_QUEUE_DETAIL_PAGE_KEY,
-            notice_id=notice_id,
-            current_value=clean(row.get("Review")),
-            source_key=source_key,
-        ) if notice_id else "#"
-        favorite_active = clean(row.get("Review")) == FAVORITE_REVIEW_STATUS
-        favorite_class = " is-active" if favorite_active else ""
-        favorite_label = "?? if favorite_active else "??
-        tags = [
-            f'<span class="notice-saas-tag">{escape(clean(row.get("Source")) or "-")}</span>',
-        ]
-        subtitle_parts = [part for part in [clean(row.get("Agency")), clean(row.get("Notice No"))] if clean(part)]
-        subtitle_text = " / ".join(subtitle_parts) if subtitle_parts else "-"
-        row_markup.append(
-            (
-                '<div class="notice-saas-row">'
-                f'<div><span class="notice-saas-pill {status_class}">{escape(status_text)}</span></div>'
-                '<div class="notice-saas-title-cell">'
-                f'<a class="notice-saas-title-link" href="{escape(detail_href, quote=True)}" target="_self">{escape(truncate_text(row.get("Title"), max_chars=84))}</a>'
-                f'<div class="notice-saas-subline">{escape(truncate_text(subtitle_text, max_chars=62))}</div>'
-                f'<div class="notice-saas-tags">{"".join(tags)}</div>'
-                '</div>'
-                f'<div class="notice-saas-cell">{escape(truncate_text(clean(row.get("Ministry")) or "-", max_chars=18))}</div>'
-                f'<div class="notice-saas-cell">{escape(truncate_text(clean(row.get("Agency")) or "-", max_chars=18))}</div>'
-                f'<div class="notice-saas-cell">{escape(clean(row.get("Date")) or "-")}</div>'
-                f'<div class="notice-saas-cell">{escape(truncate_text(clean(row.get("Period")) or "-", max_chars=28))}</div>'
-                f'<div class="notice-saas-cell is-deadline">{escape(clean(row.get("D-Day")) or "-")}</div>'
-                f'<div class="notice-saas-cell is-strong">{escape(truncate_text(clean(row.get("Budget")) or "-", max_chars=16))}</div>'
-                f'<div><a class="notice-saas-favorite{favorite_class}" href="{escape(favorite_href, quote=True)}" target="_self">{favorite_label}</a></div>'
-                '</div>'
-            )
-        )
-
-    st.markdown("".join(row_markup), unsafe_allow_html=True)
-
-
 def _render_notice_queue_screen(
     source_df: pd.DataFrame,
     opportunity_df: pd.DataFrame,
@@ -9877,121 +9457,104 @@ def _render_notice_queue_screen(
         selected_row = _get_notice_row_by_id(source_df, clean(current_route.get("item_id")))
         back_col, info_col = st.columns([1.9, 4.1])
         with back_col:
-            if st.button("??Notice Queue濡??뚯븘媛湲?, key=f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_back_to_table", use_container_width=False, type="secondary"):
+            if st.button("← Notice Queue로 돌아가기", key=f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_back_to_table", use_container_width=False, type="secondary"):
                 go_back_route(route_core.build_notice_queue_route())
                 st.rerun()
         with info_col:
             st.markdown('<div class="page-note">Notice Queue / Notice Detail</div>', unsafe_allow_html=True)
         if not selected_row:
-            st.info("?쒖떆??怨듦퀬媛 ?놁뒿?덈떎.")
+            st.info("표시할 공고가 없습니다.")
             return
         render_notice_detail_from_row(selected_row, detail_opportunity_df)
         return
 
+    render_page_header(
+        "Notice Browser",
+        "추천 Opportunity를 검토한 뒤, 원문 공고를 빠르게 훑고 상세 검토로 이어지는 compact browser입니다.",
+        eyebrow="Notices",
+    )
+    _inject_opportunity_workspace_styles()
     render_notice_queue_ui_styles()
-    _inject_public_notice_queue_saas_styles()
+    _inject_notice_queue_dashboard_styles()
     if source_df is None or source_df.empty:
-        st.info("?쒖떆??怨듦퀬媛 ?놁뒿?덈떎.")
+        st.info("??? ??? ????.")
         return
 
     filters = _get_notice_filters()
     status_widget_key = _notice_filter_widget_key("status")
+    recommendation_widget_key = _notice_filter_widget_key("recommendation")
     search_widget_key = _notice_filter_widget_key("search")
+    st.session_state.setdefault(status_widget_key, filters["status"])
+    st.session_state.setdefault(recommendation_widget_key, filters["recommendation"])
+    st.session_state.setdefault(search_widget_key, filters["search"])
+
+    st.markdown(
+        '<div class="queue-shell-note">공고상태, 추천여부, 출처, 검색만 남겨 빠르게 스캔하고 필요한 공고만 Notice 상세로 들어갈 수 있게 구성했습니다.</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="queue-filter-label">Filter / Search</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="queue-filter-help">최근 공고와 아카이브를 빠르게 좁혀보고, 필요한 공고만 상세 검토로 이어집니다.</div>',
+        unsafe_allow_html=True,
+    )
     source_widget_key = _notice_filter_widget_key("source")
     page_size_widget_key = _notice_filter_widget_key("page_size")
     page_index_state_key = f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_page_index"
-    sort_widget_key = f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_saas_sort"
-    ministry_widget_key = f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_saas_ministry"
-    agency_widget_key = f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_saas_agency"
-    st.session_state.setdefault(status_widget_key, filters["status"])
-    st.session_state.setdefault(search_widget_key, filters["search"])
     st.session_state.setdefault(source_widget_key, filters.get("source", []))
     st.session_state.setdefault(page_size_widget_key, int(filters.get("page_size") or 20))
     st.session_state.setdefault(page_index_state_key, int(current_route.get("page_no") or 1))
-    st.session_state.setdefault(sort_widget_key, "latest")
 
-    base_view_rows = _normalize_public_notice_queue_rows(source_df)
-    ministry_options = ["?꾩껜"] + sorted([value for value in base_view_rows["Ministry"].dropna().astype(str).unique().tolist() if clean(value)])
-    agency_options = ["?꾩껜"] + sorted([value for value in base_view_rows["Agency"].dropna().astype(str).unique().tolist() if clean(value)])
-    st.session_state.setdefault(ministry_widget_key, "?꾩껜")
-    st.session_state.setdefault(agency_widget_key, "?꾩껜")
+    display_col, summary_col = st.columns([5.4, 2.15], gap="large")
+    with display_col:
+        filter_cols = st.columns(3)
+        with filter_cols[0]:
+            st.multiselect(
+                "추천여부",
+                options=[value for value, _ in RECOMMENDATION_FILTER_OPTIONS if value != "??"],
+                key=recommendation_widget_key,
+                placeholder="전체",
+            )
+        with filter_cols[1]:
+            st.multiselect(
+                "공고상태",
+                options=[value for value, _ in STATUS_FILTER_OPTIONS if value != "??"],
+                key=status_widget_key,
+                placeholder="전체",
+            )
+        with filter_cols[2]:
+            source_options = [label for label, _ in TOP_TAB_OPTIONS if label not in {"관심공고", "보관/마감"}]
+            st.multiselect(
+                "출처",
+                options=source_options,
+                key=source_widget_key,
+                placeholder="전체",
+            )
 
-    st.markdown(
-        (
-            '<div class="notice-saas-shell">'
-            '<div class="notice-saas-header">'
-            '<div>'
-            '<div class="notice-saas-title-row">'
-            '<h1 class="notice-saas-title">Notice Queue</h1>'
-            f'<span class="notice-saas-count">珥?{len(base_view_rows):,}嫄?/span>'
-            '</div>'
-            '<div class="notice-saas-copy">?먮Ц 怨듦퀬瑜?怨듦퀬 ?⑥쐞 mailbox ?붾㈃?쇰줈 ?뺣━?덉뒿?덈떎. ?곌껐??RFP 遺꾩꽍 ???怨듦퀬 硫뷀??곗씠??먯껜瑜?鍮좊Ⅴ寃??묎퀬 ?곸꽭濡??댁뼱??寃?좏븷 ??덉뒿?덈떎.</div>'
-            '</div>'
-            '</div>'
-            '</div>'
-        ),
-        unsafe_allow_html=True,
-    )
-
-    layout_cols = st.columns([1.2, 5.2], gap="large")
-    with layout_cols[0]:
-        st.markdown('<div class="notice-saas-filter-card">', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="notice-saas-card-head"><div class="notice-saas-card-title">?꾪꽣</div><div class="notice-saas-card-note">?먮룞 ?곸슜</div></div>',
-            unsafe_allow_html=True,
-        )
-        st.multiselect(
-            "怨듦퀬?곹깭",
-            options=[value for value, _ in STATUS_FILTER_OPTIONS if value != "?꾩껜"],
-            key=status_widget_key,
-            placeholder="?꾩껜",
-        )
-        st.multiselect(
-            "異쒖쿂",
-            options=[label for label, _ in TOP_TAB_OPTIONS if label not in {"愿?ш났怨?, "蹂닿?/留덇컧"}],
-            key=source_widget_key,
-            placeholder="?꾩껜",
-        )
-        st.selectbox("二쇨?遺泥?, options=ministry_options, key=ministry_widget_key)
-        st.selectbox("二쇨?湲곌?", options=agency_options, key=agency_widget_key)
-        if st.button("?꾪꽣 珥덇린??, key=f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_saas_reset", use_container_width=True):
-            _reset_notice_filters()
-            st.session_state[ministry_widget_key] = "?꾩껜"
-            st.session_state[agency_widget_key] = "?꾩껜"
-            st.session_state[sort_widget_key] = "latest"
-            st.session_state[page_index_state_key] = 1
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with layout_cols[1]:
-        st.markdown('<div class="notice-saas-table-card">', unsafe_allow_html=True)
-        toolbar_cols = st.columns([4.2, 1.35, 1.2, 1.15], gap="small")
-        with toolbar_cols[0]:
+        st.markdown('<div class="queue-search-label">검색</div>', unsafe_allow_html=True)
+        search_col, page_size_col, reset_col = st.columns([5, 1, 1])
+        with search_col:
             st.text_input(
                 "search-filter",
                 key=search_widget_key,
-                placeholder="怨듦퀬紐?/ 怨듦퀬踰덊샇 / 湲곌? 寃??,
+                placeholder="공고명 / 과제명 / 기관명 검색",
                 label_visibility="collapsed",
             )
-        with toolbar_cols[1]:
-            st.selectbox(
-                "?뺣젹",
-                options=["latest", "deadline", "recommend", "agency"],
-                key=sort_widget_key,
-                format_func=_public_notice_queue_sort_label,
-                label_visibility="collapsed",
-            )
-        with toolbar_cols[2]:
+        with page_size_col:
             st.selectbox(
                 "Page size",
                 options=[20, 50, 100],
                 key=page_size_widget_key,
                 label_visibility="collapsed",
             )
+        with reset_col:
+            st.markdown('<div style="height: 1.9rem;"></div>', unsafe_allow_html=True)
+            if st.button("초기화", key=f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_search_reset", use_container_width=True):
+                _reset_notice_filters()
+                st.rerun()
 
         filters = {
             "status": st.session_state.get(status_widget_key, []),
-            "recommendation": [],
+            "recommendation": st.session_state.get(recommendation_widget_key, []),
             "search": clean(st.session_state.get(search_widget_key, "")),
             "source": st.session_state.get(source_widget_key, []),
             "page_size": int(st.session_state.get(page_size_widget_key, 20) or 20),
@@ -10018,42 +9581,13 @@ def _render_notice_queue_screen(
                 filtered_source_df["source_key"].fillna("").astype(str).str.strip().isin(allowed_values)
             ].copy()
 
-        filtered_view_rows = _normalize_public_notice_queue_rows(filtered_source_df)
-        selected_ministry = clean(st.session_state.get(ministry_widget_key, "?꾩껜"))
-        if selected_ministry and selected_ministry != "?꾩껜":
-            filtered_view_rows = filtered_view_rows[
-                filtered_view_rows["Ministry"].fillna("").astype(str).str.strip().eq(selected_ministry)
-            ].copy()
-        selected_agency = clean(st.session_state.get(agency_widget_key, "?꾩껜"))
-        if selected_agency and selected_agency != "?꾩껜":
-            filtered_view_rows = filtered_view_rows[
-                filtered_view_rows["Agency"].fillna("").astype(str).str.strip().eq(selected_agency)
-            ].copy()
-
-        sort_key_value = clean(st.session_state.get(sort_widget_key, "latest")) or "latest"
-        filtered_view_rows = _sort_public_notice_queue_rows(filtered_view_rows, sort_key_value)
-        export_df = filtered_view_rows[
-            ["Source", "Status", "Title", "Ministry", "Agency", "Date", "Period", "D-Day", "Budget", "Notice ID"]
-        ].copy() if not filtered_view_rows.empty else pd.DataFrame(
-            columns=["Source", "Status", "Title", "Ministry", "Agency", "Date", "Period", "D-Day", "Budget", "Notice ID"]
-        )
-        with toolbar_cols[3]:
-            st.download_button(
-                "?대낫?닿린",
-                data=export_df.to_csv(index=False, encoding="utf-8-sig"),
-                file_name="notice_queue_export.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-
         page_size = int(filters["page_size"] or 20)
-        total_rows = len(filtered_view_rows)
+        total_rows = len(filtered_source_df)
         total_pages = max(1, math.ceil(total_rows / page_size)) if page_size else 1
         current_page = int(current_route.get("page_no") or st.session_state.get(page_index_state_key, 1) or 1)
         current_page = max(1, min(current_page, total_pages))
         st.session_state[page_index_state_key] = current_page
-        start_idx = (current_page - 1) * page_size
-        page_rows = filtered_view_rows.iloc[start_idx:start_idx + page_size].copy()
+        selected_notice_id = clean(current_route.get("item_id")) if clean(current_route.get("view")) == "summary" else ""
 
         start_idx = (current_page - 1) * page_size
         page_rows = filtered_source_df.iloc[start_idx:start_idx + page_size].copy()
@@ -10122,8 +9656,8 @@ def _render_notice_queue_screen(
         filters=filters,
         page_no=int(st.session_state.get(page_index_state_key, 1) or 1),
         page_size=int(st.session_state.get(page_size_widget_key, 20) or 20),
-        view="list",
-        item_id="",
+        view="summary" if clean(current_route.get("item_id")) and clean(current_route.get("view")) == "summary" else "list",
+        item_id=clean(current_route.get("item_id")) if clean(current_route.get("view")) == "summary" else "",
         source_key=clean(current_route.get("source_key")) or "iris",
     )
     route_core.set_current_route(route_snapshot)
@@ -10141,7 +9675,7 @@ def render_favorite_notice_page(
         selected_row = _get_notice_row_by_id(source_df, clean(current_route.get("item_id")))
         back_col, info_col = st.columns([1.8, 4.2])
         with back_col:
-            if st.button("??Favorites濡??뚯븘媛湲?, key="favorites_back_to_table", use_container_width=False, type="secondary"):
+            if st.button("← Favorites로 돌아가기", key="favorites_back_to_table", use_container_width=False, type="secondary"):
                 go_back_route(route_core.build_favorites_route())
                 st.rerun()
         with info_col:
@@ -10151,21 +9685,21 @@ def render_favorite_notice_page(
 
     _inject_opportunity_workspace_styles()
     st.subheader("Favorites")
-    st.caption("愿??怨듦퀬瑜?由ъ뒪?몄? Summary Panel濡??섎닠 寃?좏빀?덈떎.")
+    st.caption("관심 공고를 리스트와 Summary Panel로 나눠 검토합니다.")
     if source_df is None or source_df.empty:
-        st.info("?쒖떆??愿??怨듦퀬媛 ?놁뒿?덈떎.")
+        st.info("표시할 관심 공고가 없습니다.")
         return
     favorite_rows = source_df[_review_series(source_df).eq(FAVORITE_REVIEW_STATUS)].copy()
     if favorite_rows.empty:
-        st.info("?쒖떆??愿??怨듦퀬媛 ?놁뒿?덈떎.")
+        st.info("표시할 관심 공고가 없습니다.")
         return
     favorite_rows["_favorite_type"] = favorite_rows["_queue_project_name"].fillna("").astype(str).str.strip().apply(
-        lambda value: "RFP ?곌껐" if clean(value) else "Notice"
+        lambda value: "RFP 연결" if clean(value) else "Notice"
     )
     favorite_rows["_favorite_deadline"] = favorite_rows.apply(
         lambda row: format_dashboard_deadline_badge(
-            clean(first_non_empty(row, "notice_period", "?묒닔湲곌컙", "period")),
-            normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "怨듦퀬?곹깭")) or "-",
+            clean(first_non_empty(row, "notice_period", "접수기간", "period")),
+            normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태")) or "-",
         ),
         axis=1,
     )
@@ -10185,7 +9719,7 @@ def render_favorite_notice_page(
     with display_col:
         filter_cols = st.columns(4)
         with filter_cols[0]:
-            st.multiselect("???, options=["Notice", "RFP ?곌껐"], key=type_key, placeholder="?꾩껜")
+            st.multiselect("타입", options=["Notice", "RFP 연결"], key=type_key, placeholder="전체")
         with filter_cols[1]:
             review_options = sorted(
                 {
@@ -10194,9 +9728,9 @@ def render_favorite_notice_page(
                     if clean(value)
                 }
             )
-            st.multiselect("寃?좎긽??, options=review_options, key=review_key, placeholder="?꾩껜")
+            st.multiselect("검토상태", options=review_options, key=review_key, placeholder="전체")
         with filter_cols[2]:
-            st.multiselect("D-day", options=["吏꾪뻾以?, "7??대궡", "30??대궡", "?덉젙", "留덇컧"], key=deadline_key, placeholder="?꾩껜")
+            st.multiselect("D-day", options=["진행중", "7일 이내", "30일 이내", "예정", "마감"], key=deadline_key, placeholder="전체")
         with filter_cols[3]:
             st.selectbox("Page size", options=[20, 50, 100], key=page_size_key)
 
@@ -10214,23 +9748,23 @@ def render_favorite_notice_page(
         if filters["deadline"]:
             def _favorite_deadline_match(row: pd.Series) -> bool:
                 deadline_text = clean(row.get("_favorite_deadline"))
-                status_text = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "怨듦퀬?곹깭")) or "-"
+                status_text = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태")) or "-"
                 buckets: set[str] = set()
-                if "留덇컧" in status_text:
-                    buckets.add("留덇컧")
-                elif "?덉젙" in status_text:
-                    buckets.add("?덉젙")
+                if "마감" in status_text:
+                    buckets.add("마감")
+                elif "예정" in status_text:
+                    buckets.add("예정")
                 else:
-                    buckets.add("吏꾪뻾以?)
-                period_end = extract_period_end(clean(first_non_empty(row, "notice_period", "?묒닔湲곌컙", "period")))
+                    buckets.add("진행중")
+                period_end = extract_period_end(clean(first_non_empty(row, "notice_period", "접수기간", "period")))
                 if pd.notna(period_end):
                     days_left = int((period_end.normalize() - pd.Timestamp.now().normalize()).days)
                     if days_left <= 7:
-                        buckets.add("7??대궡")
+                        buckets.add("7일 이내")
                     if days_left <= 30:
-                        buckets.add("30??대궡")
+                        buckets.add("30일 이내")
                 if deadline_text == "-":
-                    buckets.add("留덇컧")
+                    buckets.add("마감")
                 return any(option in buckets for option in filters["deadline"])
             filtered_rows = filtered_rows[filtered_rows.apply(_favorite_deadline_match, axis=1)].copy()
 
@@ -10260,7 +9794,7 @@ def render_favorite_notice_page(
             page_rows,
             key_prefix=f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_favorite_page",
             page_key="favorites",
-            empty_message="?쒖떆??愿??怨듦퀬媛 ?놁뒿?덈떎.",
+            empty_message="표시할 관심 공고가 없습니다.",
             selected_notice_id=selected_notice_id,
             on_select=_select_favorite_preview,
         )
@@ -10285,8 +9819,8 @@ def render_favorite_notice_page(
         _render_notice_preview_panel(
             selected_row,
             panel_key="favorites_preview",
-            empty_title="愿??怨듦퀬瑜??좏깮?섎㈃ Summary Panel??대┰?덈떎.",
-            empty_copy="Favorites 由ъ뒪?몃뒗 洹몃?濡??먭퀬, ?꾩슂??寃쎌슦?먮쭔 ?⑤꼸??곸꽭 踰꾪듉?쇰줈 ?대룞?⑸땲??",
+            empty_title="관심 공고를 선택하면 Summary Panel이 열립니다.",
+            empty_copy="Favorites 리스트는 그대로 두고, 필요한 경우에만 패널의 상세 버튼으로 이동합니다.",
             close_callback=lambda: (
                 route_core.set_current_route(
                     route_core.build_favorites_route(
@@ -10313,11 +9847,11 @@ def render_favorite_notice_page(
     replace_query_params(with_auth_params(route_core.serialize_route(route_snapshot)))
 
 def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
-    render_notice_queue_page_module(
-        st,
-        datasets,
-        source_datasets,
-        api=sys.modules[__name__],
+    source_df = build_crawled_notice_collection(datasets, source_datasets)
+    _render_notice_queue_screen(
+        source_df,
+        datasets.get("opportunity", pd.DataFrame()),
+        datasets["opportunity_all"],
     )
 
 def render_notices_source(
@@ -10328,14 +9862,12 @@ def render_notices_source(
     *,
     show_internal_tabs: bool = True,
 ) -> None:
-    render_notice_queue_source_module(
-        st,
-        source_config,
-        mode_config,
-        datasets,
-        source_datasets,
-        show_internal_tabs=show_internal_tabs,
-        api=sys.modules[__name__],
+    del source_config, mode_config, show_internal_tabs
+    source_df = build_crawled_notice_collection(datasets, source_datasets)
+    _render_notice_queue_screen(
+        source_df,
+        datasets.get("opportunity", pd.DataFrame()),
+        datasets["opportunity_all"],
     )
 
 def resolve_route_source_key_for_row(row: dict | pd.Series | None, source_key: str | None = None) -> str:
@@ -10384,42 +9916,42 @@ def render_clickable_table(
         display_columns = [col for col in df.columns if not col.startswith("_")]
 
     if df.empty:
-        st.info("?쒖떆??곗씠?곌? ?놁뒿?덈떎.")
+        st.info("표시할 데이터가 없습니다.")
         return
 
     column_widths = {
-        "怨듦퀬?쇱옄": "92px",
-        "怨듦퀬踰덊샇": "132px",
-        "?꾨Ц湲곌?": "126px",
-        "?꾨Ц湲곌?紐?: "126px",
-        "怨듦퀬紐?: "280px",
+        "공고일자": "92px",
+        "공고번호": "132px",
+        "전문기관": "126px",
+        "전문기관명": "126px",
+        "공고명": "280px",
         "notice_title": "280px",
-        "?대떦 怨쇱젣紐?: "280px",
+        "해당 과제명": "280px",
         "project_name": "280px",
-        "怨듦퀬?곹깭": "92px",
-        "?묒닔湲곌컙": "156px",
-        "異붿쿇?щ?": "84px",
-        "異붿쿇??: "84px",
-        "異붿쿇??諛??먯닔": "96px",
-        "?먯닔": "84px",
-        "?덉궛": "122px",
+        "공고상태": "92px",
+        "접수기간": "156px",
+        "추천여부": "84px",
+        "추천도": "84px",
+        "추천도 및 점수": "96px",
+        "점수": "84px",
+        "예산": "122px",
         "budget": "122px",
-        "寃??щ?": "84px",
-        "寃?좎뿬遺": "84px",
-        "?곸꽭留곹겕": "76px",
+        "검토 여부": "84px",
+        "검토여부": "84px",
+        "상세링크": "76px",
         "detail_link": "76px",
     }
     compact_limits = {
-        "怨듦퀬紐?: 56,
+        "공고명": 56,
         "notice_title": 56,
-        "?대떦 怨쇱젣紐?: 52,
+        "해당 과제명": 52,
         "project_name": 52,
-        "?묒닔湲곌컙": 26,
-        "?덉궛": 24,
+        "접수기간": 26,
+        "예산": 24,
         "budget": 24,
     }
 
-    internal_link_columns = {"怨듦퀬紐?, "notice_title", "?대떦 怨쇱젣紐?, "?곌껐 怨쇱젣紐?, "project_name"}
+    internal_link_columns = {"공고명", "notice_title", "해당 과제명", "연결 과제명", "project_name"}
 
     header_cells = [f"<th>{escape(column)}</th>" for column in display_columns]
     header_html = "".join(header_cells)
@@ -10443,11 +9975,11 @@ def render_clickable_table(
                     f" style=\"width:{column_widths[column]};max-width:{column_widths[column]};\""
                 )
             full_value = escape(sanitize_display_text(column, row.get(column)))
-            if column in {"?곸꽭留곹겕", "detail_link"}:
+            if column in {"상세링크", "detail_link"}:
                 raw_link = clean(row.get(column))
                 if raw_link:
                     cell_html.append(
-                        '<td class="list-link-cell"{style}><a class="list-link-out" href="{href}" title="{title}" target="_blank" rel="noopener noreferrer">?먮Ц</a></td>'.format(
+                        '<td class="list-link-cell"{style}><a class="list-link-out" href="{href}" title="{title}" target="_blank" rel="noopener noreferrer">원문</a></td>'.format(
                             style=width_style,
                             href=escape(raw_link, quote=True),
                             title=full_value,
@@ -10526,7 +10058,7 @@ def _is_bad_display_project_title(value: object, *, notice_title: object = "", f
     normalized = _normalize_display_title_key(text)
     file_normalized = _normalize_display_title_key(file_name)
     notice_normalized = _normalize_display_title_key(notice_title)
-    generic_titles = {"", "?ъ뾽紐?, "怨쇱젣紐?, "rfp", "rfp?쒕ぉ", "?ъ뾽紐꿹fp紐낃낵?쒖닔"}
+    generic_titles = {"", "사업명", "과제명", "rfp", "rfp제목", "사업명rfp명과제수"}
     if normalized in generic_titles:
         return True
     if re.search(r"\.(pdf|hwpx|hwp|zip|docx?)$", lowered, flags=re.IGNORECASE):
@@ -10535,23 +10067,23 @@ def _is_bad_display_project_title(value: object, *, notice_title: object = "", f
         return True
     if notice_normalized and normalized == notice_normalized:
         return True
-    if "遺숈엫" in text and re.search(r"\.(pdf|hwpx|hwp|zip|docx?)", lowered, flags=re.IGNORECASE):
+    if "붙임" in text and re.search(r"\.(pdf|hwpx|hwp|zip|docx?)", lowered, flags=re.IGNORECASE):
         return True
     return False
 
 
 def choose_display_project_title(row: dict) -> str:
-    notice_title = first_non_empty(row, "Notice Title", "notice_title", "怨듦퀬紐?)
-    file_name = first_non_empty(row, "file_name", "File Name", "?뚯씪紐?)
+    notice_title = first_non_empty(row, "Notice Title", "notice_title", "공고명")
+    file_name = first_non_empty(row, "file_name", "File Name", "파일명")
     candidates = [
         "llm_project_name",
         "project_name",
         "Project",
-        "?대떦 怨쇱젣紐?,
-        "怨쇱젣紐?,
+        "해당 과제명",
+        "과제명",
         "llm_rfp_title",
         "rfp_title",
-        "RFP ?쒕ぉ",
+        "RFP 제목",
     ]
     for key in candidates:
         value = clean(row.get(key))
@@ -10569,7 +10101,7 @@ def format_dashboard_deadline_badge(period_text: object, fallback: object = "") 
             return f"D-{d_day}"
         if d_day == 0:
             return "D-Day"
-        return "留덇컧"
+        return "마감"
     return clean(fallback) or "-"
 
 
@@ -10577,7 +10109,7 @@ def resolve_local_file_path(row: dict) -> Path | None:
     if not row:
         return None
 
-    for key in ["file_path", "?뚯씪寃쎈줈"]:
+    for key in ["file_path", "파일경로"]:
         candidate = clean(row.get(key))
         if not candidate:
             continue
@@ -10595,12 +10127,12 @@ def ensure_notice_analysis_fallback(row: dict, top_related: dict) -> dict:
         return merged
 
     fallback_map = {
-        "??쒓낵?쒕챸": ["llm_project_name", "project_name", "rfp_title"],
-        "??쒖텛泥쒕룄": ["llm_recommendation", "recommendation"],
-        "??쒖젏??: ["llm_fit_score", "rfp_score"],
-        "??쒖삁??: ["llm_total_budget_text", "total_budget_text", "llm_per_project_budget_text", "per_project_budget_text", "budget"],
-        "??쒖텛泥쒖씠??: ["llm_reason", "reason"],
-        "??쒗궎?뚮뱶": ["llm_keywords", "keywords"],
+        "대표과제명": ["llm_project_name", "project_name", "rfp_title"],
+        "대표추천도": ["llm_recommendation", "recommendation"],
+        "대표점수": ["llm_fit_score", "rfp_score"],
+        "대표예산": ["llm_total_budget_text", "total_budget_text", "llm_per_project_budget_text", "per_project_budget_text", "budget"],
+        "대표추천이유": ["llm_reason", "reason"],
+        "대표키워드": ["llm_keywords", "keywords"],
     }
 
     for target_key, source_keys in fallback_map.items():
@@ -10623,7 +10155,7 @@ def find_related_opportunities_for_notice(row: dict, opportunity_df: pd.DataFram
         return pd.DataFrame()
 
     working = opportunity_df.copy()
-    notice_id = clean(row.get("怨듦퀬ID"))
+    notice_id = clean(row.get("공고ID"))
     if notice_id and "notice_id" in working.columns:
         notice_key = normalize_notice_id_for_match(notice_id)
         matched = working[
@@ -10632,9 +10164,9 @@ def find_related_opportunities_for_notice(row: dict, opportunity_df: pd.DataFram
         if not matched.empty:
             return matched
 
-    notice_title = clean(row.get("怨듦퀬紐?))
-    if notice_title and "怨듦퀬紐? in working.columns:
-        matched = working[working["怨듦퀬紐?].fillna("").astype(str).str.strip().eq(notice_title)].copy()
+    notice_title = clean(row.get("공고명"))
+    if notice_title and "공고명" in working.columns:
+        matched = working[working["공고명"].fillna("").astype(str).str.strip().eq(notice_title)].copy()
         if not matched.empty:
             return matched
     if notice_title and "notice_title" in working.columns:
@@ -10642,9 +10174,9 @@ def find_related_opportunities_for_notice(row: dict, opportunity_df: pd.DataFram
         if not matched.empty:
             return matched
 
-    ancm_no = clean(row.get("怨듦퀬踰덊샇"))
-    if ancm_no and "怨듦퀬踰덊샇" in working.columns:
-        matched = working[working["怨듦퀬踰덊샇"].fillna("").astype(str).str.strip().eq(ancm_no)].copy()
+    ancm_no = clean(row.get("공고번호"))
+    if ancm_no and "공고번호" in working.columns:
+        matched = working[working["공고번호"].fillna("").astype(str).str.strip().eq(ancm_no)].copy()
         if not matched.empty:
             return matched
     if ancm_no and "ancm_no" in working.columns:
@@ -10663,10 +10195,10 @@ def render_review_editor(
     notice_title: str = "",
 ) -> None:
     if not get_bool_env("ENABLE_REVIEW_EDIT", default=True):
-        st.info("怨듦컻 諛고룷?먯꽌??寃??щ? ?섏젙??鍮꾪솢?깊솕?섏뼱 ?덉뒿?덈떎.")
+        st.info("공개 배포에서는 검토 여부 수정이 비활성화되어 있습니다.")
         return
 
-    st.markdown("### 寃??щ? ?섏젙")
+    st.markdown("### 검토 여부 수정")
     normalized_value = clean(current_value)
     options = REVIEW_OPTIONS.copy()
     if normalized_value and normalized_value not in options:
@@ -10675,8 +10207,8 @@ def render_review_editor(
     default_index = options.index(normalized_value) if normalized_value in options else 0
 
     with st.form(form_key):
-        review_value = st.selectbox("寃??щ?", options=options, index=default_index)
-        submitted = st.form_submit_button("???)
+        review_value = st.selectbox("검토 여부", options=options, index=default_index)
+        submitted = st.form_submit_button("저장")
 
         if submitted:
             try:
@@ -10694,10 +10226,10 @@ def render_review_editor(
                     update_nipa_review_status(notice_id, review_value)
                 else:
                     update_notice_review_status(notice_id, review_value)
-                st.success("寃??щ?瑜???ν뻽?듬땲??")
+                st.success("검토 여부를 저장했습니다.")
                 st.rerun()
             except Exception as exc:
-                st.error(f"???ㅽ뙣: {exc}")
+                st.error(f"저장 실패: {exc}")
 
 
 def save_review_status(
@@ -10726,20 +10258,20 @@ def save_review_status(
 
 
 def render_notice_comments(row: dict, section_key: str) -> None:
-    notice_id = clean(row.get("怨듦퀬ID") or row.get("notice_id"))
-    notice_title = clean(row.get("怨듦퀬紐?) or row.get("notice_title"))
+    notice_id = clean(row.get("공고ID") or row.get("notice_id"))
+    notice_title = clean(row.get("공고명") or row.get("notice_title"))
     source_key = resolve_notice_source_key(row)
-    author_id = clean(get_current_user_label()) or clean(get_current_user_id()) or clean(get_env("DEFAULT_COMMENT_AUTHOR")) or "익명"
-    save_feedback = ""
 
     st.markdown('<div class="detail-section-title">댓글</div>', unsafe_allow_html=True)
     if not notice_id:
-        st.caption("공고ID가 없어 댓글을 연결할 수 없습니다.")
+        st.info("공고ID가 없어 댓글을 연결할 수 없습니다.")
         return
 
-    with st.form(f"{section_key}_comment_form", clear_on_submit=True):
-        st.caption(f"작성자: {author_id}")
-        comment = st.text_area("댓글", key=f"{section_key}_comment_text", height=120, placeholder="이 공고에 대한 메모나 검토 의견을 남겨주세요.")
+    saved_comment = False
+    with st.form(f"{section_key}_comment_form"):
+        default_author = get_current_user_label() if is_user_scoped_operations_enabled() else get_env("DEFAULT_COMMENT_AUTHOR", "")
+        author = st.text_input("작성자", value=default_author, key=f"{section_key}_comment_author")
+        comment = st.text_area("의견", key=f"{section_key}_comment_text", height=110)
         submitted = st.form_submit_button("댓글 저장")
         if submitted:
             try:
@@ -10747,10 +10279,11 @@ def render_notice_comments(row: dict, section_key: str) -> None:
                     source_key=source_key,
                     notice_id=notice_id,
                     notice_title=notice_title,
-                    author=author_id,
+                    author=author,
                     comment=comment,
                 )
-                save_feedback = "댓글을 저장했습니다."
+                saved_comment = True
+                st.success("댓글을 저장했습니다.")
             except Exception as exc:
                 st.error(f"댓글 저장 실패: {exc}")
 
@@ -10758,29 +10291,28 @@ def render_notice_comments(row: dict, section_key: str) -> None:
         comments_df = load_notice_comments()
     except Exception as exc:
         st.warning(f"댓글 이력을 불러오지 못했습니다: {exc}")
-        comments_df = _empty_comment_dataframe()
+        comments_df = pd.DataFrame(columns=COMMENT_COLUMNS)
 
     matched = filter_notice_comments(comments_df, source_key=source_key, notice_id=notice_id)
-    if save_feedback:
-        st.success(save_feedback)
 
     if matched.empty:
-        st.caption("아직 등록된 댓글이 없습니다.")
+        if not saved_comment:
+            st.info("아직 등록된 댓글이 없습니다.")
         return
 
     st.caption(f"댓글 이력 {len(matched)}건")
     for _, comment_row in matched.iterrows():
         comment_id = clean(comment_row.get("comment_id"))
         created_at = clean(comment_row.get("created_at"))
-        author = clean(comment_row.get("nickname")) or clean(comment_row.get("author")) or "익명"
-        comment_text = clean(comment_row.get("content")) or clean(comment_row.get("comment"))
+        author = clean(comment_row.get("author")) or "익명"
+        comment_text = clean(comment_row.get("comment"))
         delete_key = f"{section_key}_delete_comment_{comment_id}"
         with st.container(border=True):
             st.caption(" · ".join([value for value in [created_at, author] if value]))
             st.write(comment_text)
-            if comment_id and can_delete_comment(comment_row, get_current_user_id()) and st.button("댓글 삭제", key=delete_key):
+            if comment_id and st.button("댓글 삭제", key=delete_key):
                 try:
-                    delete_notice_comment(comment_id, get_current_user_id())
+                    delete_notice_comment(comment_id)
                     st.success("댓글을 삭제했습니다.")
                     st.rerun()
                 except Exception as exc:
@@ -10788,46 +10320,239 @@ def render_notice_comments(row: dict, section_key: str) -> None:
 
 
 def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
-    render_notice_detail_page_module(st, row, opportunity_df, api=sys.modules[__name__])
+    if not row:
+        st.info("표시할 공고가 없습니다.")
+        return
+
+    current_source = get_query_param("source") or "iris"
+    source_key = resolve_notice_source_key(row)
+    is_mss = source_key == "tipa" or current_source == "tipa"
+    is_nipa = source_key == "nipa" or current_source == "nipa"
+    if is_mss:
+        detail_kicker = "중소기업벤처부 Notice Detail"
+        detail_button_label = "중소기업벤처부 상세 바로가기"
+        review_caption = "공고 검토 상태를 바꾸면 중소기업벤처부 시트에 즉시 반영됩니다."
+    elif is_nipa:
+        detail_kicker = "NIPA Notice Detail"
+        detail_button_label = "NIPA 상세 바로가기"
+        review_caption = "공고 검토 상태를 바꾸면 NIPA 시트에 즉시 반영됩니다."
+    else:
+        detail_kicker = "Notice Master Detail"
+        detail_button_label = "IRIS 상세 바로가기"
+        review_caption = "공고 검토 상태를 바꾸면 IRIS_NOTICE_MASTER에 즉시 반영됩니다."
+    if is_user_scoped_operations_enabled():
+        review_caption = "검토 상태는 로그인한 사용자 전용 운영관리 데이터로 저장됩니다."
+
+    related = find_related_opportunities_for_notice(row, opportunity_df)
+    top_related = {}
+    if not related.empty:
+        related = related.sort_values(
+            by=["rfp_score", "project_name"],
+            ascending=[False, True],
+            na_position="last",
+        )
+        top_related = related.iloc[0].to_dict()
+        row = ensure_notice_analysis_fallback(row, top_related)
+
+    render_public_notice_card(row, top_related=top_related, kind="notice")
+
+    top_left, top_right = st.columns([2, 1])
+    with top_left:
+        render_detail_card(
+            "공고/과제 핵심 정보",
+            [
+                ("공고명", row.get("공고명")),
+                ("공고번호", row.get("공고번호")),
+                ("사업명", row.get("사업명")),
+                ("전문기관", row.get("전문기관") or row.get("담당부서")),
+                ("소관부처", row.get("소관부처")),
+                ("해당 과제명", first_non_empty(top_related, "llm_project_name", "project_name", "대표과제명")),
+                ("RFP 제목", first_non_empty(top_related, "llm_rfp_title", "rfp_title")),
+                ("추천도", first_non_empty(top_related, "llm_recommendation", "recommendation", "대표추천도")),
+                ("점수", clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("대표점수"))),
+                ("총예산", first_non_empty(top_related, "llm_total_budget_text", "total_budget_text", "budget", "대표예산")),
+                ("과제별 예산", first_non_empty(top_related, "llm_per_project_budget_text", "per_project_budget_text")),
+            ],
+        )
+    with top_right:
+        render_detail_card(
+            "연결 정보",
+            [
+                ("공고ID", row.get("공고ID")),
+                ("공고번호", row.get("공고번호")),
+                ("전문기관", row.get("전문기관") or row.get("담당부서")),
+                ("소관부처", row.get("소관부처")),
+                ("공고상태", row.get("공고상태")),
+                ("검토 여부", row.get("검토 여부")),
+                ("공모유형", first_non_empty(top_related, "pbofr_type")),
+            ],
+        )
+
+    action_favorite, action_left, action_right = st.columns([1.15, 1, 1.85])
+    with action_favorite:
+        render_favorite_scrap_button(
+            notice_id=clean(row.get("怨듦퀬ID") or row.get("notice_id")),
+            current_value=clean(row.get("寃???щ?") or row.get("review_status")),
+            source_key=source_key,
+            notice_title=clean(row.get("怨듦퀬紐?") or row.get("notice_title")),
+            button_key=f"favorite_notice_{clean(row.get('怨듦퀬ID') or row.get('notice_id'))}",
+        )
+    with action_left:
+        detail_link = resolve_external_detail_link(row, source_key=source_key)
+        if detail_link:
+            st.link_button(detail_button_label, detail_link, use_container_width=True)
+    with action_right:
+        st.caption(review_caption)
+
+    st.markdown('<div class="detail-section-title">검토 상태</div>', unsafe_allow_html=True)
+    left, right = st.columns(2)
+    with left:
+        render_detail_card(
+            "과제 분석",
+            [
+                ("추천 이유", first_non_empty(top_related, "llm_reason", "reason", "대표추천이유")),
+                (
+                    "개념 및 개발 내용",
+                    first_non_empty(
+                        top_related,
+                        "llm_concept_and_development",
+                        "concept_and_development",
+                        "개념 및 개발 내용",
+                    ),
+                ),
+                (
+                    "지원필요성(과제 배경)",
+                    first_non_empty(
+                        top_related,
+                        "llm_support_necessity",
+                        "support_necessity",
+                        "지원필요성(과제 배경)",
+                        "llm_technical_background",
+                        "technical_background",
+                        "기술개발 배경 및 지원필요성",
+                    ),
+                ),
+                (
+                    "활용분야",
+                    first_non_empty(
+                        top_related,
+                        "llm_application_field",
+                        "application_field",
+                        "활용분야",
+                    ),
+                ),
+                (
+                    "지원기간 및 예산·추진체계",
+                    first_non_empty(
+                        top_related,
+                        "llm_support_plan",
+                        "support_plan",
+                        "지원기간 및 예산·추진체계",
+                    ),
+                ),
+                ("키워드", first_non_empty(top_related, "llm_keywords", "keywords", "대표키워드")),
+                ("텍스트 미리보기", first_non_empty(top_related, "text_preview")),
+            ],
+        )
+    with right:
+        render_detail_card(
+            "공고 정보",
+            [
+                ("공고일자", row.get("공고일자")),
+                ("접수기간", row.get("접수기간")),
+                ("현재공고 여부", row.get("is_current")),
+                ("연결 과제 수", str(len(related)) if not related.empty else ""),
+            ],
+        )
+
+    st.markdown('<div class="detail-section-title">검토 여부</div>', unsafe_allow_html=True)
+    review_left, review_right = st.columns([1, 1])
+    with review_left:
+        render_detail_card(
+            "현재 상태",
+            [
+                ("검토 여부", row.get("검토 여부")),
+                ("현재 공고상태", row.get("공고상태")),
+                ("추천여부", first_non_empty(top_related, "llm_recommendation", "recommendation", "대표추천도")),
+            ],
+        )
+    with review_right:
+        render_review_editor(
+            notice_id=clean(row.get("공고ID")),
+            current_value=clean(row.get("검토 여부")),
+            form_key=f"notice_review_form_{clean(row.get('공고ID'))}",
+            source_key=source_key,
+            notice_title=clean(row.get("공고명")),
+        )
+
+    render_notice_comments(row, section_key=f"notice_{clean(row.get('공고ID'))}")
+
+    st.markdown('<div class="detail-section-title">연결된 Opportunity</div>', unsafe_allow_html=True)
+    if related.empty:
+        st.info("이 공고에 연결된 Opportunity가 아직 없습니다.")
+        return
+
+    related_view = ensure_opportunity_row_ids(related)
+    related_view["해당 과제명"] = series_from_candidates(related_view, ["llm_project_name", "project_name"])
+    related_view["추천도"] = series_from_candidates(related_view, ["llm_recommendation", "recommendation", "추천여부"])
+    related_view["점수"] = series_from_candidates(related_view, ["llm_fit_score", "rfp_score"])
+    related_view["예산"] = series_from_candidates(related_view, ["llm_total_budget_text", "total_budget_text", "budget"])
+    related_view["파일명"] = series_from_candidates(related_view, ["file_name"])
+    render_clickable_table(
+        related_view,
+        [
+            "공고명",
+            "notice_title",
+            "해당 과제명",
+            "추천도",
+            "점수",
+            "예산",
+            "파일명",
+        ],
+        page_key="rfp_queue",
+        id_column="_row_id",
+        source_key_column="source_key",
+    )
+
 
 def render_pending_detail_from_row(row: dict) -> None:
     if not row:
-        st.info("?쒖떆??묒닔?덉젙 怨듦퀬媛 ?놁뒿?덈떎.")
+        st.info("표시할 접수예정 공고가 없습니다.")
         return
 
     render_detail_header(
-        title=clean(row.get("怨듦퀬紐?)),
+        title=clean(row.get("공고명")),
         kicker="Pending Notice Detail",
         chips=[
-            (clean(row.get("怨듦퀬?곹깭")), "accent"),
-            (clean(row.get("?꾨Ц湲곌?")), "neutral"),
-            (clean(row.get("怨듦퀬?쇱옄")), "neutral"),
-            (f"寃?? {clean(row.get('寃??щ?') or '誘몄??)}", "neutral"),
+            (clean(row.get("공고상태")), "accent"),
+            (clean(row.get("전문기관")), "neutral"),
+            (clean(row.get("공고일자")), "neutral"),
+            (f"검토: {clean(row.get('검토 여부') or '미지정')}", "neutral"),
         ],
     )
 
     top_left, top_right = st.columns([2, 1])
     with top_left:
         render_detail_card(
-            "?묒닔?덉젙 怨듦퀬 ?뺣낫",
+            "접수예정 공고 정보",
             [
-                ("怨듦퀬紐?, row.get("怨듦퀬紐?)),
-                ("?묒닔湲곌컙", row.get("?묒닔湲곌컙")),
-                ("怨듦퀬?쇱옄", row.get("怨듦퀬?쇱옄")),
-                ("?꾨Ц湲곌?", row.get("?꾨Ц湲곌?")),
-                ("?뚭?遺泥?, row.get("?뚭?遺泥?)),
-                ("怨듦퀬踰덊샇", row.get("怨듦퀬踰덊샇")),
+                ("공고명", row.get("공고명")),
+                ("접수기간", row.get("접수기간")),
+                ("공고일자", row.get("공고일자")),
+                ("전문기관", row.get("전문기관")),
+                ("소관부처", row.get("소관부처")),
+                ("공고번호", row.get("공고번호")),
             ],
         )
     with top_right:
         render_detail_card(
-            "?앸퀎 ?뺣낫",
+            "식별 정보",
             [
-                ("怨듦퀬ID", row.get("怨듦퀬ID")),
-                ("?곹깭??, row.get("?곹깭??)),
-                ("怨듦퀬?곹깭", row.get("怨듦퀬?곹깭")),
-                ("?꾩옱 怨듦퀬?щ?", row.get("is_current")),
-                ("寃??щ?", row.get("寃??щ?")),
+                ("공고ID", row.get("공고ID")),
+                ("상태키", row.get("상태키")),
+                ("공고상태", row.get("공고상태")),
+                ("현재 공고여부", row.get("is_current")),
+                ("검토 여부", row.get("검토 여부")),
             ],
         )
 
@@ -10835,20 +10560,20 @@ def render_pending_detail_from_row(row: dict) -> None:
     with action_left:
         detail_link = resolve_external_detail_link(row)
         if detail_link:
-            st.link_button("IRIS ?곸꽭 諛붾줈媛湲?, detail_link, use_container_width=True)
+            st.link_button("IRIS 상세 바로가기", detail_link, use_container_width=True)
     with action_right:
-        st.caption("?묒닔?덉젙 怨듦퀬??蹂꾨룄 master ?쒗듃 湲곗??쇰줈 議고쉶?⑸땲??")
+        st.caption("접수예정 공고는 별도 master 시트 기준으로 조회합니다.")
 
-    st.markdown('<div class="detail-section-title">怨듦퀬 硫붾え</div>', unsafe_allow_html=True)
+    st.markdown('<div class="detail-section-title">공고 메모</div>', unsafe_allow_html=True)
     render_detail_card(
-        "?댁쁺 ?뺣낫",
+        "운영 정보",
         [
-            ("寃??щ?", row.get("寃??щ?")),
-            ("怨듦퀬?곹깭", row.get("怨듦퀬?곹깭")),
-            ("?묒닔湲곌컙", row.get("?묒닔湲곌컙")),
+            ("검토 여부", row.get("검토 여부")),
+            ("공고상태", row.get("공고상태")),
+            ("접수기간", row.get("접수기간")),
         ],
     )
-    render_notice_comments(row, section_key=f"pending_{clean(row.get('怨듦퀬ID'))}")
+    render_notice_comments(row, section_key=f"pending_{clean(row.get('공고ID'))}")
 
 
 def _score_value(value: object) -> int:
@@ -10864,13 +10589,13 @@ def _badge_class(value: object, *, kind: str = "recommendation") -> str:
         return "badge-blue"
     if kind == "deadline":
         return "badge-rose"
-    if any(marker in text for marker in ["鍮꾩텛泥?, "誘몄텛泥?, "not recommend", "not recommended", "reject"]):
+    if any(marker in text for marker in ["비추천", "미추천", "not recommend", "not recommended", "reject"]):
         return "badge-slate"
-    if "異붿쿇" in text or "recommend" in text:
+    if "추천" in text or "recommend" in text:
         return "badge-green"
-    if "寃?? in text or "hold" in text or "蹂대쪟" in text:
+    if "검토" in text or "hold" in text or "보류" in text:
         return "badge-amber"
-    if "留덇컧" in text or "closed" in text:
+    if "마감" in text or "closed" in text:
         return "badge-rose"
     return "badge-slate"
 
@@ -10884,21 +10609,21 @@ def _pill_html(text: object, *, kind: str = "recommendation", base_class: str = 
 
 def _queue_row_context(row: dict[str, object] | pd.Series) -> dict[str, str]:
     row_dict = row.to_dict() if isinstance(row, pd.Series) else dict(row or {})
-    recommendation = first_non_empty(row_dict, "recommendation", "llm_recommendation", "Recommendation") or "寃??
-    score = _score_value(first_non_empty(row_dict, "llm_fit_score", "rfp_score", "?먯닔", "Score"))
-    period = first_non_empty(row_dict, "notice_period", "period", "Period", "?묒닔湲곌컙", "?붿껌湲곌컙")
+    recommendation = first_non_empty(row_dict, "recommendation", "llm_recommendation", "Recommendation") or "검토"
+    score = _score_value(first_non_empty(row_dict, "llm_fit_score", "rfp_score", "점수", "Score"))
+    period = first_non_empty(row_dict, "notice_period", "period", "Period", "접수기간", "요청기간")
     deadline = format_dashboard_deadline_badge(period, first_non_empty(row_dict, "status", "Status"))
     budget = extract_budget_summary(first_non_empty(row_dict, "budget", "Budget", "llm_total_budget_text", "total_budget_text")) or "-"
-    agency = first_non_empty(row_dict, "agency", "Agency", "?꾨Ц湲곌?", "?꾨Ц湲곌?紐?) or "-"
-    ministry = first_non_empty(row_dict, "ministry", "Ministry", "遺泥?, "二쇰Т遺泥?) or "-"
+    agency = first_non_empty(row_dict, "agency", "Agency", "전문기관", "전문기관명") or "-"
+    ministry = first_non_empty(row_dict, "ministry", "Ministry", "부처", "주무부처") or "-"
     project = choose_display_project_title(row_dict)
-    notice = first_non_empty(row_dict, "notice_title", "Notice Title", "怨듦퀬紐?)
+    notice = first_non_empty(row_dict, "notice_title", "Notice Title", "공고명")
     reason = first_non_empty(row_dict, "llm_reason", "reason", "Reason", "llm_concept_and_development", "concept_and_development")
     risk = first_non_empty(row_dict, "llm_support_need", "support_need", "Support Need", "llm_eligibility", "eligibility", "Eligibility", "evidence")
     source_label = first_non_empty(row_dict, "Source", "source_site") or "-"
-    status = first_non_empty(row_dict, "Status", "status", "rcve_status", "怨듦퀬?곹깭") or "-"
-    review = first_non_empty(row_dict, "Review", "review_status", "寃?좎뿬遺") or "誘멸??
-    registered_at = first_non_empty(row_dict, "Date", "ancm_de", "怨듦퀬?쇱옄", "registered_at") or "-"
+    status = first_non_empty(row_dict, "Status", "status", "rcve_status", "공고상태") or "-"
+    review = first_non_empty(row_dict, "Review", "review_status", "검토여부") or "미검토"
+    registered_at = first_non_empty(row_dict, "Date", "ancm_de", "공고일자", "registered_at") or "-"
     file_name = first_non_empty(row_dict, "file_name", "File Name", "rfp_title") or "-"
     archive_reason_label = derive_archive_reason_label_for_app(row_dict)
     return {
@@ -10926,7 +10651,7 @@ def build_queue_recommendation_options(values: pd.Series) -> list[str]:
     options = []
     for value in values.dropna().astype(str).tolist():
         normalized = clean(value)
-        if not normalized or normalized == "-" or "寃?? in normalized:
+        if not normalized or normalized == "-" or "검토" in normalized:
             continue
         options.append(normalized)
     return sorted(set(options))
@@ -10940,8 +10665,8 @@ def build_queue_status_options(values: pd.Series) -> list[str]:
             continue
         options.append(normalized)
     unique_options = sorted(set(options))
-    if "留덇컧" not in unique_options:
-        unique_options.append("留덇컧")
+    if "마감" not in unique_options:
+        unique_options.append("마감")
     return unique_options
 
 
@@ -10981,13 +10706,13 @@ def _build_queue_filter_frame(rows: pd.DataFrame) -> pd.DataFrame:
         ctx = _queue_row_context(row)
         contexts.append(ctx)
         deadline_value = extract_period_end(
-            first_non_empty(row, "notice_period", "period", "?묒닔湲곌컙", "?붿껌湲곌컙")
+            first_non_empty(row, "notice_period", "period", "접수기간", "요청기간")
         )
         deadline_sorts.append(deadline_value)
         status_text = clean(ctx["status"])
         is_open = False
         if status_text:
-            is_open = "留덇컧" not in status_text and ("?묒닔" in status_text or "吏꾪뻾" in status_text or "?덉젙" in status_text)
+            is_open = "마감" not in status_text and ("접수" in status_text or "진행" in status_text or "예정" in status_text)
         if not is_open and pd.notna(deadline_value):
             is_open = deadline_value >= today
         open_flags.append(bool(is_open))
@@ -10995,7 +10720,7 @@ def _build_queue_filter_frame(rows: pd.DataFrame) -> pd.DataFrame:
     working["_queue_recommendation"] = [clean(ctx["recommendation"]) or "-" for ctx in contexts]
     working["_queue_score"] = [clean(ctx["score"]) or "-" for ctx in contexts]
     working["_queue_sort_score"] = to_numeric_column(
-        series_from_candidates(working, ["llm_fit_score", "rfp_score", "?먯닔", "Score"])
+        series_from_candidates(working, ["llm_fit_score", "rfp_score", "점수", "Score"])
     )
     working["_queue_deadline"] = [clean(ctx["deadline"]) or "-" for ctx in contexts]
     working["_queue_budget"] = [clean(ctx["budget"]) or "-" for ctx in contexts]
@@ -11014,14 +10739,14 @@ def _build_queue_filter_frame(rows: pd.DataFrame) -> pd.DataFrame:
     working["_queue_is_closed"] = build_opportunity_archive_mask(working)
     working["_queue_project_sort"] = series_from_candidates(
         working,
-        ["project_name", "llm_project_name", "????⑥눘?ｏ쭗?"],
+        ["project_name", "llm_project_name", "?대떦 怨쇱젣紐?"],
     ).fillna("").astype(str).str.strip()
     return working
 
 
 def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
     if rows.empty:
-        st.info("?쒖떆??RFP媛 ?놁뒿?덈떎.")
+        st.info("표시할 RFP가 없습니다.")
         return
 
     items: list[str] = []
@@ -11037,7 +10762,7 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
             ]
         )
         archive_reason_html = (
-            f'<div class="queue-list-card-reason muted">蹂닿? ?ъ쑀: {escape(ctx["archive_reason_label"])}</div>'
+            f'<div class="queue-list-card-reason muted">보관 사유: {escape(ctx["archive_reason_label"])}</div>'
             if archive_mode and clean(ctx["archive_reason_label"])
             else ""
         )
@@ -11048,9 +10773,9 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
                 f'<div class="queue-list-card-title">{escape(truncate_text(ctx["project"], max_chars=96))}</div>'
                 f'<div class="queue-list-card-subtitle">{escape(truncate_text(ctx["notice"], max_chars=120))}</div>'
                 '<div class="queue-list-card-meta">'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">?꾨Ц湲곌?</div><div class="queue-list-card-meta-value">{escape(ctx["agency"])}</div></div>'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">吏?먭툑</div><div class="queue-list-card-meta-value">{escape(ctx["budget"])}</div></div>'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">怨듦퀬 ?곹깭</div><div class="queue-list-card-meta-value">{escape(ctx["status"])}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">전문기관</div><div class="queue-list-card-meta-value">{escape(ctx["agency"])}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">지원금</div><div class="queue-list-card-meta-value">{escape(ctx["budget"])}</div></div>'
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">공고 상태</div><div class="queue-list-card-meta-value">{escape(ctx["status"])}</div></div>'
                 '</div>'
                 f'<div class="queue-list-card-reason">{escape(ctx["reason"])}</div>'
                 f'{archive_reason_html}'
@@ -11062,45 +10787,213 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
 
 
 def render_opportunity_detail_from_row(row: dict) -> None:
-    render_rfp_detail_page_module(st, row, api=sys.modules[__name__])
+    if not row:
+        st.info("표시할 Opportunity가 없습니다.")
+        return
+
+    source_key = resolve_notice_source_key(row)
+    if source_key == "tipa":
+        detail_button_label = "중소기업벤처부 상세 바로가기"
+    elif source_key == "nipa":
+        detail_button_label = "NIPA 상세 바로가기"
+    else:
+        detail_button_label = "IRIS 상세 바로가기"
+
+    render_public_notice_card(row, kind="opportunity")
+
+    top_left, top_right = st.columns([2, 1])
+    with top_left:
+        render_detail_card(
+            "과제 핵심 정보",
+            [
+                ("해당 과제명", first_non_empty(row, "llm_project_name", "project_name")),
+                ("공고명", first_non_empty(row, "notice_title", "\uacf5\uace0\uba85")),
+                ("RFP 제목", first_non_empty(row, "llm_rfp_title", "rfp_title")),
+                ("추천도", first_non_empty(row, "llm_recommendation", "recommendation")),
+                ("점수", clean(row.get("llm_fit_score") or row.get("rfp_score"))),
+                ("총예산", first_non_empty(row, "llm_total_budget_text", "total_budget_text", "budget")),
+                ("과제별 예산", first_non_empty(row, "llm_per_project_budget_text", "per_project_budget_text")),
+            ],
+        )
+    with top_right:
+        render_detail_card(
+            "연결 정보",
+            [
+                ("공고ID", row.get("notice_id")),
+                ("공고번호", row.get("ancm_no")),
+                ("전문기관", row.get("agency")),
+                ("소관부처", row.get("ministry")),
+                ("공고상태", row.get("rcve_status")),
+                ("검토 여부", row.get("review_status")),
+                ("공모유형", row.get("pbofr_type")),
+            ],
+        )
+
+    action_favorite, action_left, action_right = st.columns([1.15, 1, 1.85])
+    with action_favorite:
+        render_favorite_scrap_button(
+            notice_id=clean(row.get("notice_id")),
+            current_value=clean(row.get("review_status")),
+            source_key=source_key,
+            notice_title=clean(row.get("notice_title")),
+            button_key=f"favorite_opportunity_{clean(row.get('notice_id'))}",
+        )
+    with action_left:
+        detail_link = resolve_external_detail_link(row, source_key=source_key)
+        if detail_link:
+            st.link_button(detail_button_label, detail_link, use_container_width=True)
+    with action_right:
+        st.caption("이 Opportunity는 notice_id 기준으로 공고와 연결됩니다.")
+
+    download_path = resolve_local_file_path(row)
+    if download_path:
+        with open(download_path, "rb") as f:
+            st.download_button(
+                "추천 RFP 다운로드",
+                data=f.read(),
+                file_name=download_path.name,
+                mime="application/octet-stream",
+                use_container_width=True,
+            )
+
+    st.markdown('<div class="detail-section-title">검토 상태</div>', unsafe_allow_html=True)
+    left, right = st.columns(2)
+
+    with left:
+        render_detail_card(
+            "과제 분석",
+            [
+                ("추천 이유", first_non_empty(row, "llm_reason", "reason")),
+                (
+                    "개념 및 개발 내용",
+                    first_non_empty(
+                        row,
+                        "llm_concept_and_development",
+                        "concept_and_development",
+                        "개념 및 개발 내용",
+                    ),
+                ),
+                (
+                    "지원필요성(과제 배경)",
+                    first_non_empty(
+                        row,
+                        "llm_support_necessity",
+                        "support_necessity",
+                        "지원필요성(과제 배경)",
+                        "llm_technical_background",
+                        "technical_background",
+                        "기술개발 배경 및 지원필요성",
+                    ),
+                ),
+                (
+                    "활용분야",
+                    first_non_empty(
+                        row,
+                        "llm_application_field",
+                        "application_field",
+                        "활용분야",
+                    ),
+                ),
+                (
+                    "지원기간 및 예산·추진체계",
+                    first_non_empty(
+                        row,
+                        "llm_support_plan",
+                        "support_plan",
+                        "지원기간 및 예산·추진체계",
+                    ),
+                ),
+                ("키워드", first_non_empty(row, "llm_keywords", "keywords")),
+                ("텍스트 미리보기", row.get("text_preview")),
+            ],
+        )
+    with right:
+        render_detail_card(
+            "문서 및 판별 정보",
+            [
+                ("파일명", row.get("file_name")),
+                ("문서유형", row.get("document_type")),
+                ("문서역할", first_non_empty(row, "문서역할", "llm_document_role")),
+                ("과제명 근거", first_non_empty(row, "과제명근거", "llm_project_name_source")),
+                ("과제명 신뢰도", first_non_empty(row, "과제명신뢰도", "llm_project_name_confidence")),
+                ("RFP 제목 근거", first_non_empty(row, "RFP제목근거", "llm_rfp_title_source")),
+                ("근거 문장", first_non_empty(row, "근거문장", "llm_evidence")),
+                ("충돌 플래그", first_non_empty(row, "충돌플래그", "llm_conflict_flags")),
+                ("파일유형", row.get("file_type")),
+                ("원천사이트", row.get("source_site")),
+            ],
+        )
+
+    st.markdown('<div class="detail-section-title">검토 여부</div>', unsafe_allow_html=True)
+    review_left, review_right = st.columns([1, 1])
+    with review_left:
+        render_detail_card(
+            "현재 상태",
+            [
+                ("검토 여부", row.get("review_status")),
+                ("현재 공고상태", row.get("rcve_status")),
+            ],
+        )
+    with review_right:
+        render_review_editor(
+            notice_id=clean(row.get("notice_id")),
+            current_value=clean(row.get("review_status")),
+            form_key=f"opportunity_review_form_{clean(row.get('notice_id'))}",
+            source_key=source_key,
+            notice_title=clean(row.get("notice_title")),
+        )
+
+    comment_row = {
+        **row,
+        "공고ID": first_non_empty(row, "notice_id", "공고ID"),
+        "공고명": first_non_empty(row, "notice_title", "공고명"),
+        "검토 여부": first_non_empty(row, "review_status", "검토 여부"),
+        "_source_key": source_key,
+    }
+    render_notice_comments(
+        comment_row,
+        section_key=f"opportunity_{source_key}_{clean(row.get('notice_id'))}",
+    )
+
+
 
 def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
     if not row:
-        st.info("?쒖떆??붿빟 怨듦퀬媛 ?놁뒿?덈떎.")
+        st.info("표시할 요약 공고가 없습니다.")
         return
 
     render_detail_header(
-        title=clean(row.get("怨듦퀬紐?)),
+        title=clean(row.get("공고명")),
         kicker="Summary Detail",
         chips=[
-            (clean(row.get("??쒖텛泥쒕룄")), "accent"),
-            (clean(row.get("異붿쿇??諛??먯닔")), "neutral"),
-            (clean(row.get("?꾨Ц湲곌?")), "neutral"),
-            (clean(row.get("怨듦퀬?쇱옄")), "neutral"),
+            (clean(row.get("대표추천도")), "accent"),
+            (clean(row.get("추천도 및 점수")), "neutral"),
+            (clean(row.get("전문기관")), "neutral"),
+            (clean(row.get("공고일자")), "neutral"),
         ],
     )
 
     top_left, top_right = st.columns([2, 1])
     with top_left:
         render_detail_card(
-            "???怨쇱젣 遺꾩꽍",
+            "대표 과제 분석",
             [
-                ("?대떦 怨쇱젣紐?, row.get("?대떦 怨쇱젣紐?)),
-                ("異붿쿇??諛??먯닔", row.get("異붿쿇??諛??먯닔")),
-                ("?덉궛", row.get("?덉궛")),
-                ("怨쇱젣??, row.get("怨쇱젣??)),
-                ("臾몄꽌??, row.get("臾몄꽌??)),
+                ("해당 과제명", row.get("해당 과제명")),
+                ("추천도 및 점수", row.get("추천도 및 점수")),
+                ("예산", row.get("예산")),
+                ("과제수", row.get("과제수")),
+                ("문서수", row.get("문서수")),
             ],
         )
     with top_right:
         render_detail_card(
-            "怨듦퀬 ?앸퀎 ?뺣낫",
+            "공고 식별 정보",
             [
-                ("怨듦퀬ID", row.get("怨듦퀬ID")),
-                ("怨듦퀬踰덊샇", row.get("怨듦퀬踰덊샇")),
-                ("?꾨Ц湲곌?", row.get("?꾨Ц湲곌?")),
-                ("?뚭?遺泥?, row.get("?뚭?遺泥?)),
-                ("寃??щ?", row.get("寃??щ?")),
+                ("공고ID", row.get("공고ID")),
+                ("공고번호", row.get("공고번호")),
+                ("전문기관", row.get("전문기관")),
+                ("소관부처", row.get("소관부처")),
+                ("검토 여부", row.get("검토 여부")),
             ],
         )
 
@@ -11108,13 +11001,13 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
     with action_left:
         detail_link = resolve_external_detail_link(row)
         if detail_link:
-            st.link_button("IRIS ?곸꽭 諛붾줈媛湲?, detail_link, use_container_width=True)
+            st.link_button("IRIS 상세 바로가기", detail_link, use_container_width=True)
     with action_right:
-        st.caption("Summary????怨쇱젣 湲곗??쇰줈 怨듦퀬瑜??붿빟?댁꽌 蹂댁뿬以띾땲??")
+        st.caption("Summary는 대표 과제 기준으로 공고를 요약해서 보여줍니다.")
 
     related = pd.DataFrame()
     if not opportunity_df.empty and "notice_id" in opportunity_df.columns:
-        notice_key = normalize_notice_id_for_match(row.get("怨듦퀬ID"))
+        notice_key = normalize_notice_id_for_match(row.get("공고ID"))
         related = opportunity_df[
             opportunity_df["notice_id"].apply(normalize_notice_id_for_match).eq(notice_key)
         ].copy()
@@ -11126,76 +11019,76 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
             )
     top_related = related.iloc[0].to_dict() if not related.empty else {}
 
-    st.markdown('<div class="detail-section-title">寃??곹깭</div>', unsafe_allow_html=True)
+    st.markdown('<div class="detail-section-title">검토 상태</div>', unsafe_allow_html=True)
     left, right = st.columns(2)
     with left:
         render_detail_card(
-            "怨듦퀬 ?뺣낫",
+            "공고 정보",
             [
-                ("怨듦퀬?쇱옄", row.get("怨듦퀬?쇱옄")),
-                ("怨듦퀬?곹깭", row.get("怨듦퀬?곹깭")),
-                ("?묒닔湲곌컙", row.get("?묒닔湲곌컙")),
+                ("공고일자", row.get("공고일자")),
+                ("공고상태", row.get("공고상태")),
+                ("접수기간", row.get("접수기간")),
                 ("is_current", row.get("is_current")),
             ],
         )
     with right:
         render_review_editor(
-            notice_id=clean(row.get("怨듦퀬ID")),
-            current_value=clean(row.get("寃??щ?")),
-            form_key=f"summary_review_form_{clean(row.get('怨듦퀬ID'))}",
-            notice_title=clean(row.get("怨듦퀬紐?)),
+            notice_id=clean(row.get("공고ID")),
+            current_value=clean(row.get("검토 여부")),
+            form_key=f"summary_review_form_{clean(row.get('공고ID'))}",
+            notice_title=clean(row.get("공고명")),
         )
 
-    st.markdown('<div class="detail-section-title">???遺꾩꽍 ?붿빟</div>', unsafe_allow_html=True)
+    st.markdown('<div class="detail-section-title">대표 분석 요약</div>', unsafe_allow_html=True)
     render_detail_card(
-        "怨쇱젣 遺꾩꽍",
+        "과제 분석",
         [
-            ("異붿쿇 ?댁쑀", first_non_empty(top_related, "llm_reason", "reason", "??쒖텛泥쒖씠??)),
+            ("추천 이유", first_non_empty(top_related, "llm_reason", "reason", "대표추천이유")),
             (
-                "媛쒕뀗 諛?媛쒕컻 ?댁슜",
+                "개념 및 개발 내용",
                 first_non_empty(
                     top_related,
                     "llm_concept_and_development",
                     "concept_and_development",
-                    "媛쒕뀗 諛?媛쒕컻 ?댁슜",
+                    "개념 및 개발 내용",
                 ),
             ),
             (
-                "吏?먰븘?붿꽦(怨쇱젣 諛곌꼍)",
+                "지원필요성(과제 배경)",
                 first_non_empty(
                     top_related,
                     "llm_support_necessity",
                     "support_necessity",
-                    "吏?먰븘?붿꽦(怨쇱젣 諛곌꼍)",
+                    "지원필요성(과제 배경)",
                     "llm_technical_background",
                     "technical_background",
                 ),
             ),
             (
-                "?쒖슜遺꾩빞",
+                "활용분야",
                 first_non_empty(
                     top_related,
                     "llm_application_field",
                     "application_field",
-                    "?쒖슜遺꾩빞",
+                    "활용분야",
                 ),
             ),
             (
-                "吏?먭린媛?諛??덉궛쨌異붿쭊泥닿퀎",
+                "지원기간 및 예산·추진체계",
                 first_non_empty(
                     top_related,
                     "llm_support_plan",
                     "support_plan",
-                    "吏?먭린媛?諛??덉궛쨌異붿쭊泥닿퀎",
+                    "지원기간 및 예산·추진체계",
                 ),
             ),
-            ("??쒓낵?쒕챸", first_non_empty(top_related, "llm_project_name", "project_name", "??쒓낵?쒕챸")),
-            ("??쒖삁??, first_non_empty(top_related, "llm_total_budget_text", "total_budget_text", "budget", "??쒖삁??)),
-            ("??쒗궎?뚮뱶", first_non_empty(top_related, "llm_keywords", "keywords", "??쒗궎?뚮뱶")),
+            ("대표과제명", first_non_empty(top_related, "llm_project_name", "project_name", "대표과제명")),
+            ("대표예산", first_non_empty(top_related, "llm_total_budget_text", "total_budget_text", "budget", "대표예산")),
+            ("대표키워드", first_non_empty(top_related, "llm_keywords", "keywords", "대표키워드")),
         ],
     )
 
-    render_notice_comments(row, section_key=f"summary_{clean(row.get('怨듦퀬ID'))}")
+    render_notice_comments(row, section_key=f"summary_{clean(row.get('공고ID'))}")
 
 
 def render_notice_page(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
@@ -11203,8 +11096,8 @@ def render_notice_page(notice_df: pd.DataFrame, opportunity_df: pd.DataFrame) ->
         notice_df,
         opportunity_df,
         page_key="notice",
-        title="吏꾪뻾 怨듦퀬",
-        default_status_scope="?묒닔以?,
+        title="진행 공고",
+        default_status_scope="접수중",
         current_only_default=True,
     )
 
@@ -11312,8 +11205,8 @@ def combine_notice_frames(*frames: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     combined = pd.concat(available_frames, ignore_index=True)
-    if "怨듦퀬ID" in combined.columns:
-        combined = combined.drop_duplicates(subset=["怨듦퀬ID"], keep="first")
+    if "공고ID" in combined.columns:
+        combined = combined.drop_duplicates(subset=["공고ID"], keep="first")
     elif "notice_id" in combined.columns:
         combined = combined.drop_duplicates(subset=["notice_id"], keep="first")
     return combined
@@ -11364,20 +11257,20 @@ def render_notice_page_with_scope(
     current_only_default: bool,
     archive: bool = False,
 ) -> None:
-    subtitle = "?섏쭛??怨듦퀬瑜??곹깭? 湲곌? 湲곗??쇰줈 ?뺣━??遊낅땲??"
+    subtitle = "수집된 공고를 상태와 기관 기준으로 정리해 봅니다."
     if archive:
-        subtitle = "醫낅즺?섏뿀嫄곕굹 蹂닿? ??곸쑝濡?遺꾨쪟??怨듦퀬瑜?紐⑥븘 遊낅땲??"
-    elif default_status_scope == "?덉젙":
-        subtitle = "?덉젙 怨듦퀬? ?묒닔 ?덉젙 嫄댁쓣 癒쇱? ?뺤씤?⑸땲??"
+        subtitle = "종료되었거나 보관 대상으로 분류된 공고를 모아 봅니다."
+    elif default_status_scope == "예정":
+        subtitle = "예정 공고와 접수 예정 건을 먼저 확인합니다."
     current_view, selected_notice_id = get_route_state(page_key)
     if current_view == "detail":
-        selected_row = get_row_by_column_value(source_df, "怨듦퀬ID", selected_notice_id)
+        selected_row = get_row_by_column_value(source_df, "공고ID", selected_notice_id)
         action_col, info_col = st.columns([1, 5])
         with action_col:
-            if st.button("RFP Dashboard濡?, key=f"{page_key}_back_to_dashboard", use_container_width=True):
+            if st.button("RFP Dashboard로", key=f"{page_key}_back_to_dashboard", use_container_width=True):
                 navigate_to_route("dashboard", "dashboard")
         with info_col:
-            st.markdown('<div class="page-note">RFP 異붿쿇 ?붾㈃?먯꽌 ?곌껐??怨듦퀬 ?곸꽭瑜??뺤씤?섎뒗 ?붾㈃?낅땲??</div>', unsafe_allow_html=True)
+            st.markdown('<div class="page-note">RFP 추천 화면에서 연결된 공고 상세를 확인하는 화면입니다.</div>', unsafe_allow_html=True)
         render_notice_detail_from_row(selected_row, opportunity_df)
         return
 
@@ -11385,7 +11278,7 @@ def render_notice_page_with_scope(
 
     filtered = source_df.copy()
     filtered = filter_archived_notice_rows(filtered) if archive else filter_current_notice_rows(filtered)
-    filtered["?ъ뾽鍮?] = series_from_candidates(filtered, ["?ъ뾽鍮?, "??쒖삁??]).apply(extract_budget_summary)
+    filtered["사업비"] = series_from_candidates(filtered, ["사업비", "대표예산"]).apply(extract_budget_summary)
     search_text, current_only, status_scope = render_notice_filter_sidebar(
         page_key,
         current_only_default=current_only_default,
@@ -11397,37 +11290,37 @@ def render_notice_page_with_scope(
         filtered = filtered[filtered["is_current"].fillna("").eq("Y")]
     if not archive:
         filtered = filter_notice_status_scope(filtered, status_scope)
-    filtered = apply_multiselect_filter(filtered, "?꾨Ц湲곌?", "?꾨Ц湲곌?", f"{page_key}_agency")
-    filtered = apply_multiselect_filter(filtered, "?뚭?遺泥?, "?뚭?遺泥?, f"{page_key}_ministry")
-    filtered = apply_multiselect_filter(filtered, "寃??щ?", "寃??щ?", f"{page_key}_review")
+    filtered = apply_multiselect_filter(filtered, "전문기관", "전문기관", f"{page_key}_agency")
+    filtered = apply_multiselect_filter(filtered, "소관부처", "소관부처", f"{page_key}_ministry")
+    filtered = apply_multiselect_filter(filtered, "검토 여부", "검토 여부", f"{page_key}_review")
 
     filtered = filtered[
         build_contains_mask(
             filtered,
-            ["怨듦퀬紐?, "怨듦퀬踰덊샇", "?꾨Ц湲곌?", "?뚭?遺泥?, "怨듦퀬ID", "??쒓낵?쒕챸"],
+            ["공고명", "공고번호", "전문기관", "소관부처", "공고ID", "대표과제명"],
             search_text,
         )
     ]
 
     render_metrics(
         [
-            ("怨듦퀬 ??, str(len(filtered))),
-            ("?꾩옱 怨듦퀬", str(int((filtered["is_current"] == "Y").sum()) if "is_current" in filtered.columns else 0)),
-            ("?꾨Ц湲곌? ??, str(filtered["?꾨Ц湲곌?"].nunique() if "?꾨Ц湲곌?" in filtered.columns else 0)),
-            ("寃??꾨즺", str(int(filtered["寃??щ?"].fillna("").ne("").sum()) if "寃??щ?" in filtered.columns else 0)),
+            ("공고 수", str(len(filtered))),
+            ("현재 공고", str(int((filtered["is_current"] == "Y").sum()) if "is_current" in filtered.columns else 0)),
+            ("전문기관 수", str(filtered["전문기관"].nunique() if "전문기관" in filtered.columns else 0)),
+            ("검토 완료", str(int(filtered["검토 여부"].fillna("").ne("").sum()) if "검토 여부" in filtered.columns else 0)),
         ]
     )
 
     render_section_label("Notice List")
     st.markdown(
-        f'<div class="page-note">怨듦퀬紐??먮뒗 怨쇱젣紐낆쓣 ?대┃?섎㈃ ?곸꽭 怨듦퀬? ?곌껐 RFP瑜??④퍡 ?뺤씤??덉뒿?덈떎. ?꾩옱 {len(filtered)}嫄?/div>',
+        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 공고와 연결 RFP를 함께 확인할 수 있습니다. 현재 {len(filtered)}건</div>',
         unsafe_allow_html=True,
     )
     render_clickable_table(
         filtered,
         NOTICE_PREFERRED_COLUMNS,
         page_key=page_key,
-        id_column="怨듦퀬ID",
+        id_column="공고ID",
     )
 
 
@@ -11441,9 +11334,9 @@ def render_opportunity_page_aligned(
 ) -> None:
     page_key = page_key or ("opportunity_archive" if archive else "opportunity")
     title = title or ("RFP Archive" if archive else "RFP Queue")
-    subtitle = "?ъ뾽怨듦퀬 ??吏??媛?ν븳 RFP瑜?異붿쿇?⑸땲??"
+    subtitle = "사업공고 내 지원 가능한 RFP를 추천합니다."
     if archive:
-        subtitle = "蹂닿? ??곸쑝濡?遺꾨쪟??RFP 遺꾩꽍 寃곌낵瑜?媛蹂띻쾶 ?먯깋??덉뒿?덈떎."
+        subtitle = "보관 대상으로 분류된 RFP 분석 결과를 가볍게 탐색할 수 있습니다."
     render_page_header(title, subtitle, eyebrow="RFP")
 
     source_df = ensure_opportunity_row_ids(df)
@@ -11451,7 +11344,7 @@ def render_opportunity_page_aligned(
     if archive:
         working_source_df = filter_archived_opportunity_rows(working_source_df)
     if working_source_df.empty:
-        st.info("?쒖떆??RFP媛 ?놁뒿?덈떎.")
+        st.info("표시할 RFP가 없습니다.")
         return
 
     working = _build_queue_filter_frame(working_source_df)
@@ -11461,19 +11354,19 @@ def render_opportunity_page_aligned(
     filter_cols = st.columns(2)
     with filter_cols[0]:
         selected_recommendation = st.multiselect(
-            "異붿쿇 ?곹깭",
+            "추천 상태",
             options=recommendation_options,
             default=[],
             key=f"{page_key}_filter_recommendation_aligned",
-            placeholder="?꾩껜",
+            placeholder="전체",
         )
     with filter_cols[1]:
         selected_status = st.multiselect(
-            "怨듦퀬 ?곹깭",
+            "공고 상태",
             options=status_options,
             default=[],
             key=f"{page_key}_filter_status_aligned",
-            placeholder="?꾩껜",
+            placeholder="전체",
         )
 
     filtered = filter_queue_working_frame(
@@ -11483,7 +11376,7 @@ def render_opportunity_page_aligned(
         archive=archive,
     )
     if filtered.empty:
-        st.info("寃??議곌굔??留욌뒗 RFP媛 ?놁뒿?덈떎.")
+        st.info("검색 조건에 맞는 RFP가 없습니다.")
         return
 
     filtered = filtered.sort_values(
@@ -11495,7 +11388,7 @@ def render_opportunity_page_aligned(
     render_metrics(
         [
             ("RFP Count", str(len(filtered))),
-            ("Recommended", str(int((filtered["recommendation"] == "異붿쿇").sum()) if "recommendation" in filtered.columns else 0)),
+            ("Recommended", str(int((filtered["recommendation"] == "추천").sum()) if "recommendation" in filtered.columns else 0)),
             ("Avg Score", safe_mean(filtered["rfp_score"]) if "rfp_score" in filtered.columns and len(filtered) > 0 else "-"),
             ("Notice Count", str(filtered["notice_id"].nunique() if "notice_id" in filtered.columns else 0)),
         ]
@@ -11512,16 +11405,16 @@ def render_opportunity_page_aligned(
             )
         action_col, info_col = st.columns([1, 5])
         with action_col:
-            if st.button("紐⑸줉?쇰줈", key=f"{page_key}_back_to_table_aligned", use_container_width=True):
+            if st.button("목록으로", key=f"{page_key}_back_to_table_aligned", use_container_width=True):
                 switch_to_table(page_key)
         with info_col:
-            st.markdown('<div class="page-note">釉뚮씪?곗? ?ㅻ줈媛湲곕줈??댁쟾 ?붾㈃?쇰줈 ?뚯븘媛???덉뒿?덈떎.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 이전 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
         render_opportunity_detail_from_row(selected_row)
         return
 
     render_section_label("RFP Analysis List")
     st.markdown(
-        f'<div class="page-note">怨듦퀬紐낆씠??怨쇱젣紐낆쓣 ?꾨Ⅴ硫??곸꽭 怨듦퀬? RFP 遺꾩꽍 ?섏씠吏濡??대룞?⑸땲?? ?꾩옱 {len(filtered)}嫄?/div>',
+        f'<div class="page-note">공고명이나 과제명을 누르면 상세 공고와 RFP 분석 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
         unsafe_allow_html=True,
     )
     render_clickable_table(
@@ -11561,23 +11454,23 @@ def render_opportunity_page_aligned(
 ) -> None:
     page_key = page_key or ("opportunity_archive" if archive else "opportunity")
     title = title or ("RFP Archive" if archive else "RFP Queue")
-    subtitle = "?ъ뾽怨듦퀬 ??吏??媛?ν븳 RFP瑜?異붿쿇?⑸땲??"
+    subtitle = "사업공고 내 지원 가능한 RFP를 추천합니다."
     if archive:
-        subtitle = "蹂닿? ??곸쑝濡?遺꾨쪟??RFP 遺꾩꽍 寃곌낵瑜?媛蹂띻쾶 ?먯깋??덉뒿?덈떎."
+        subtitle = "보관 대상으로 분류된 RFP 분석 결과를 가볍게 탐색할 수 있습니다."
     render_page_header(title, subtitle, eyebrow="RFP")
 
     source_df = ensure_opportunity_row_ids(df)
     filtered = filter_archived_opportunity_rows(source_df) if archive else filter_current_opportunity_rows(source_df)
     filtered = filter_rankable_opportunity_rows(filtered)
     if filtered.empty:
-        st.info("?쒖떆??RFP媛 ?놁뒿?덈떎.")
+        st.info("표시할 RFP가 없습니다.")
         return
 
     working = filtered.copy()
-    working["_queue_recommendation"] = series_from_candidates(working, ["異붿쿇?щ?", "recommendation"]).fillna("").astype(str).str.strip()
-    working["_queue_status"] = series_from_candidates(working, ["怨듦퀬?곹깭", "status", "rcve_status"]).fillna("").astype(str).apply(normalize_notice_status_label)
-    working["_queue_deadline_sort"] = series_from_candidates(working, ["?묒닔湲곌컙", "period"]).apply(extract_period_end)
-    working["_queue_project_sort"] = series_from_candidates(working, ["?대떦 怨쇱젣紐?, "project_name", "llm_project_name"]).fillna("").astype(str).str.strip()
+    working["_queue_recommendation"] = series_from_candidates(working, ["추천여부", "recommendation"]).fillna("").astype(str).str.strip()
+    working["_queue_status"] = series_from_candidates(working, ["공고상태", "status", "rcve_status"]).fillna("").astype(str).apply(normalize_notice_status_label)
+    working["_queue_deadline_sort"] = series_from_candidates(working, ["접수기간", "period"]).apply(extract_period_end)
+    working["_queue_project_sort"] = series_from_candidates(working, ["해당 과제명", "project_name", "llm_project_name"]).fillna("").astype(str).str.strip()
 
     recommendation_options = sorted(
         [value for value in working["_queue_recommendation"].unique().tolist() if clean(value)]
@@ -11586,28 +11479,28 @@ def render_opportunity_page_aligned(
         [value for value in working["_queue_status"].unique().tolist() if clean(value)]
     )
 
-    st.markdown('<div class="queue-shell-note">異붿쿇 ?곹깭? 怨듦퀬 ?곹깭留?鍮좊Ⅴ寃?醫곹엳怨? 寃곌낵 ?됱쓣 ?뚮윭 ?곸꽭 怨듦퀬? RFP ?댁슜??諛붾줈 ?뺤씤??덇쾶 援ъ꽦?덉뒿?덈떎.</div>', unsafe_allow_html=True)
-    st.markdown('<div class="queue-filter-label">?붽굔 / ?꾪꽣</div>', unsafe_allow_html=True)
+    st.markdown('<div class="queue-shell-note">추천 상태와 공고 상태만 빠르게 좁히고, 결과 행을 눌러 상세 공고와 RFP 내용을 바로 확인할 수 있게 구성했습니다.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="queue-filter-label">요건 / 필터</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="queue-filter-help">異붿쿇 ?곹깭? 怨듦퀬 ?곹깭留?鍮좊Ⅴ寃?醫곹??遺꾩꽍??RFP瑜??뺤씤?⑸땲??</div>',
+        '<div class="queue-filter-help">추천 상태와 공고 상태만 빠르게 좁혀서 분석할 RFP를 확인합니다.</div>',
         unsafe_allow_html=True,
     )
     filter_cols = st.columns(2)
     with filter_cols[0]:
         selected_recommendation = st.multiselect(
-            "異붿쿇 ?곹깭",
+            "추천 상태",
             options=recommendation_options,
             default=[],
             key=f"{page_key}_filter_recommendation_aligned",
-            placeholder="?꾩껜",
+            placeholder="전체",
         )
     with filter_cols[1]:
         selected_status = st.multiselect(
-            "怨듦퀬 ?곹깭",
+            "공고 상태",
             options=status_options,
             default=[],
             key=f"{page_key}_filter_status_aligned",
-            placeholder="?꾩껜",
+            placeholder="전체",
         )
 
     filtered = working.copy()
@@ -11624,10 +11517,10 @@ def render_opportunity_page_aligned(
 
     render_metrics(
         [
-            ("RFP 遺꾩꽍 嫄댁닔", str(len(filtered))),
-            ("異붿쿇 嫄댁닔", str(int((filtered["recommendation"] == "異붿쿇").sum()) if "recommendation" in filtered.columns else 0)),
-            ("?됯퇏 ?먯닔", safe_mean(filtered["rfp_score"]) if "rfp_score" in filtered.columns and len(filtered) > 0 else "-"),
-            ("怨듦퀬 ??, str(filtered["notice_id"].nunique() if "notice_id" in filtered.columns else 0)),
+            ("RFP 분석 건수", str(len(filtered))),
+            ("추천 건수", str(int((filtered["recommendation"] == "추천").sum()) if "recommendation" in filtered.columns else 0)),
+            ("평균 점수", safe_mean(filtered["rfp_score"]) if "rfp_score" in filtered.columns and len(filtered) > 0 else "-"),
+            ("공고 수", str(filtered["notice_id"].nunique() if "notice_id" in filtered.columns else 0)),
         ]
     )
 
@@ -11642,16 +11535,16 @@ def render_opportunity_page_aligned(
             )
         action_col, info_col = st.columns([1, 5])
         with action_col:
-            if st.button("?뚯씠釉붾줈 ?뚯븘媛湲?, key=f"{page_key}_back_to_table_aligned", use_container_width=True):
+            if st.button("테이블로 돌아가기", key=f"{page_key}_back_to_table_aligned", use_container_width=True):
                 switch_to_table(page_key)
         with info_col:
-            st.markdown('<div class="page-note">釉뚮씪?곗? ?ㅻ줈媛湲곕줈??붾㈃?쇰줈 ?뚯븘媛???덉뒿?덈떎.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
         render_opportunity_detail_from_row(selected_row)
         return
 
     render_section_label("RFP Analysis List")
     st.markdown(
-        f'<div class="page-note">怨듦퀬紐낆씠??怨쇱젣紐낆쓣 ?대┃?섎㈃ ?곸꽭 怨듦퀬? RFP 遺꾩꽍 ?섏씠吏濡??대룞?⑸땲?? ?꾩옱 {len(filtered)}嫄?/div>',
+        f'<div class="page-note">공고명이나 과제명을 클릭하면 상세 공고와 RFP 분석 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
         unsafe_allow_html=True,
     )
     render_clickable_table(
@@ -11669,7 +11562,7 @@ def prepare_notice_collection_rows(
     *,
     page_key: str,
     search_columns: list[str],
-    status_default: str = "?꾩껜",
+    status_default: str = "전체",
     current_only_default: bool = False,
     current_column: str = "is_current",
     apply_status_scope: bool = True,
@@ -11685,9 +11578,9 @@ def prepare_notice_collection_rows(
         filtered = filtered[filtered[current_column].fillna("").eq("Y")]
     if apply_status_scope:
         filtered = filter_notice_status_scope(filtered, status_scope)
-    filtered = apply_multiselect_filter(filtered, "?꾨Ц湲곌?", "?꾨Ц湲곌?", f"{page_key}_agency")
-    filtered = apply_multiselect_filter(filtered, "?뚭?遺泥?, "?뚭?遺泥?, f"{page_key}_ministry")
-    filtered = apply_multiselect_filter(filtered, "寃??щ?", "寃??щ?", f"{page_key}_review")
+    filtered = apply_multiselect_filter(filtered, "전문기관", "전문기관", f"{page_key}_agency")
+    filtered = apply_multiselect_filter(filtered, "소관부처", "소관부처", f"{page_key}_ministry")
+    filtered = apply_multiselect_filter(filtered, "검토 여부", "검토 여부", f"{page_key}_review")
     for column, label, key_suffix in extra_multiselects or []:
         filtered = apply_multiselect_filter(filtered, column, label, f"{page_key}_{key_suffix}")
     return filtered[
@@ -11700,56 +11593,56 @@ def prepare_notice_collection_rows(
 
 
 def render_pending_page(df: pd.DataFrame) -> None:
-    render_page_header("Pending Notice", "?덉젙 怨듦퀬? ?묒닔 ?덉젙 嫄댁쓣 癒쇱? ?먭??⑸땲??", eyebrow="Pending")
+    render_page_header("Pending Notice", "예정 공고와 접수 예정 건을 먼저 점검합니다.", eyebrow="Pending")
     page_key = "pending"
 
     source_df = df.copy()
     filtered = prepare_notice_collection_rows(
         source_df,
         page_key=page_key,
-        search_columns=["怨듦퀬紐?, "怨듦퀬踰덊샇", "?꾨Ц湲곌?", "?뚭?遺泥?, "怨듦퀬ID"],
-        status_default="?덉젙",
+        search_columns=["공고명", "공고번호", "전문기관", "소관부처", "공고ID"],
+        status_default="예정",
         current_only_default=True,
-        extra_multiselects=[("怨듦퀬?곹깭", "怨듦퀬?곹깭", "status")],
+        extra_multiselects=[("공고상태", "공고상태", "status")],
     )
 
     render_metrics(
         [
-            ("?묒닔?덉젙 怨듦퀬 ??, str(len(filtered))),
-            ("?꾩옱 ?쒖떆 怨듦퀬", str(int((filtered["is_current"] == "Y").sum()) if "is_current" in filtered.columns else 0)),
-            ("?꾨Ц湲곌? ??, str(filtered["?꾨Ц湲곌?"].nunique() if "?꾨Ц湲곌?" in filtered.columns else 0)),
-            ("寃??꾨즺", str(int(filtered["寃??щ?"].fillna("").ne("").sum()) if "寃??щ?" in filtered.columns else 0)),
+            ("접수예정 공고 수", str(len(filtered))),
+            ("현재 표시 공고", str(int((filtered["is_current"] == "Y").sum()) if "is_current" in filtered.columns else 0)),
+            ("전문기관 수", str(filtered["전문기관"].nunique() if "전문기관" in filtered.columns else 0)),
+            ("검토 완료", str(int(filtered["검토 여부"].fillna("").ne("").sum()) if "검토 여부" in filtered.columns else 0)),
         ]
     )
 
     current_view, selected_notice_id = get_route_state(page_key)
 
     if current_view == "detail":
-        selected_row = get_row_by_column_value(source_df, "怨듦퀬ID", selected_notice_id)
+        selected_row = get_row_by_column_value(source_df, "공고ID", selected_notice_id)
         action_col, info_col = st.columns([1, 5])
         with action_col:
-            if st.button("?뚯씠釉붾줈 ?뚯븘媛湲?, key="pending_back_to_table", use_container_width=True):
+            if st.button("테이블로 돌아가기", key="pending_back_to_table", use_container_width=True):
                 switch_to_table(page_key)
         with info_col:
-            st.markdown('<div class="page-note">釉뚮씪?곗? ?ㅻ줈媛湲곕줈??붾㈃?쇰줈 ?뚯븘媛???덉뒿?덈떎.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 표 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
         render_pending_detail_from_row(selected_row)
         return
 
     render_section_label("Pending List")
     st.markdown(
-        f'<div class="page-note">怨듦퀬紐??먮뒗 怨쇱젣紐낆쓣 ?대┃?섎㈃ ?곸꽭 ?섏씠吏濡??대룞?⑸땲?? ?꾩옱 {len(filtered)}嫄?/div>',
+        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
         unsafe_allow_html=True,
     )
     render_clickable_table(
         filtered,
         PENDING_PREFERRED_COLUMNS,
         page_key=page_key,
-        id_column="怨듦퀬ID",
+        id_column="공고ID",
     )
 
 
 def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
-    render_page_header("Summary", "怨듦퀬蹂????怨쇱젣? 異붿쿇 ?붿빟??쒕늿??遊낅땲??", eyebrow="Summary")
+    render_page_header("Summary", "공고별 대표 과제와 추천 요약을 한눈에 봅니다.", eyebrow="Summary")
     page_key = "summary"
 
     source_df = df.copy()
@@ -11757,62 +11650,62 @@ def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
     filtered = prepare_notice_collection_rows(
         filtered,
         page_key=page_key,
-        search_columns=["怨듦퀬紐?, "怨듦퀬踰덊샇", "?대떦 怨쇱젣紐?, "?덉궛", "怨듦퀬ID"],
-        status_default="?꾩껜",
+        search_columns=["공고명", "공고번호", "해당 과제명", "예산", "공고ID"],
+        status_default="전체",
         current_only_default=True,
-        extra_multiselects=[("??쒖텛泥쒕룄", "??쒖텛泥쒕룄", "recommendation")],
+        extra_multiselects=[("대표추천도", "대표추천도", "recommendation")],
     )
 
-    if "??쒖젏?? in filtered.columns and len(filtered) > 0:
-        min_score = int(filtered["??쒖젏??].min())
-        max_score = int(filtered["??쒖젏??].max())
+    if "대표점수" in filtered.columns and len(filtered) > 0:
+        min_score = int(filtered["대표점수"].min())
+        max_score = int(filtered["대표점수"].max())
         if min_score < max_score:
             score_range = st.sidebar.slider(
-                "??쒖젏??踰붿쐞",
+                "대표점수 범위",
                 min_value=min_score,
                 max_value=max_score,
                 value=(min_score, max_score),
                 key="summary_score_range",
             )
             filtered = filtered[
-                (filtered["??쒖젏??] >= score_range[0]) &
-                (filtered["??쒖젏??] <= score_range[1])
+                (filtered["대표점수"] >= score_range[0]) &
+                (filtered["대표점수"] <= score_range[1])
             ]
         else:
-            st.sidebar.caption(f"??쒖젏??怨좎젙媛? {min_score}")
+            st.sidebar.caption(f"대표점수 고정값: {min_score}")
 
     render_metrics(
         [
-            ("?붿빟 怨듦퀬 ??, str(len(filtered))),
-            ("異붿쿇 怨듦퀬", str(int((filtered["??쒖텛泥쒕룄"] == "異붿쿇").sum()) if "??쒖텛泥쒕룄" in filtered.columns else 0)),
-            ("?됯퇏 ??쒖젏??, safe_mean(filtered["??쒖젏??]) if "??쒖젏?? in filtered.columns and len(filtered) > 0 else "-"),
-            ("?됯퇏 怨쇱젣??, safe_mean(filtered["怨쇱젣??]) if "怨쇱젣?? in filtered.columns and len(filtered) > 0 else "-"),
+            ("요약 공고 수", str(len(filtered))),
+            ("추천 공고", str(int((filtered["대표추천도"] == "추천").sum()) if "대표추천도" in filtered.columns else 0)),
+            ("평균 대표점수", safe_mean(filtered["대표점수"]) if "대표점수" in filtered.columns and len(filtered) > 0 else "-"),
+            ("평균 과제수", safe_mean(filtered["과제수"]) if "과제수" in filtered.columns and len(filtered) > 0 else "-"),
         ]
     )
 
     current_view, selected_notice_id = get_route_state(page_key)
 
     if current_view == "detail":
-        selected_row = get_row_by_column_value(source_df, "怨듦퀬ID", selected_notice_id)
+        selected_row = get_row_by_column_value(source_df, "공고ID", selected_notice_id)
         action_col, info_col = st.columns([1, 5])
         with action_col:
-            if st.button("紐⑸줉?쇰줈", key="summary_back_to_table", use_container_width=True):
+            if st.button("목록으로", key="summary_back_to_table", use_container_width=True):
                 switch_to_table(page_key)
         with info_col:
-            st.markdown('<div class="page-note">釉뚮씪?곗? ?ㅻ줈媛湲곕줈??붿빟 由ъ뒪??붾㈃?쇰줈 ?뚯븘媛???덉뒿?덈떎.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="page-note">브라우저 뒤로가기로도 요약 리스트 화면으로 돌아갈 수 있습니다.</div>', unsafe_allow_html=True)
         render_summary_detail_from_row(selected_row, opportunity_df)
         return
 
     render_section_label("Summary List")
     st.markdown(
-        f'<div class="page-note">怨듦퀬紐??먮뒗 怨쇱젣紐낆쓣 ?대┃?섎㈃ ???遺꾩꽍 ?붿빟怨??곌껐??RFP ?곸꽭瑜??④퍡 ?뺤씤??덉뒿?덈떎. ?꾩옱 {len(filtered)}嫄?/div>',
+        f'<div class="page-note">공고명 또는 과제명을 클릭하면 대표 분석 요약과 연결된 RFP 상세를 함께 확인할 수 있습니다. 현재 {len(filtered)}건</div>',
         unsafe_allow_html=True,
     )
     render_clickable_table(
         filtered,
         SUMMARY_PREFERRED_COLUMNS,
         page_key=page_key,
-        id_column="怨듦퀬ID",
+        id_column="공고ID",
     )
 
 
@@ -11821,7 +11714,7 @@ def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
 
     working = ensure_opportunity_row_ids(filter_rankable_opportunity_rows(filter_current_opportunity_rows(opportunity_df.copy())))
     if working.empty:
-        st.info("??뽯뻻??브쑴苑???怨몄뵠 ??곷뮸??덈뼄.")
+        st.info("?쒖떆??遺꾩꽍 ??곸씠 ?놁뒿?덈떎.")
         return
 
     selected_row_id = clean(get_query_param("id"))
@@ -11839,11 +11732,11 @@ def render_errors_page(df: pd.DataFrame) -> None:
 
     filtered = enrich_error_df(df)
     if filtered.empty:
-        st.info("?꾩옱 ?곸옱??ㅻ쪟 ?됱씠 ?놁뒿?덈떎.")
+        st.info("현재 적재된 오류 행이 없습니다.")
         return
 
     search_text = render_sidebar_search()
-    filtered = apply_multiselect_filter(filtered, "異쒖쿂?ъ씠??, "source_site", "errors_source")
+    filtered = apply_multiselect_filter(filtered, "출처사이트", "source_site", "errors_source")
     if search_text:
         filtered = filtered[
             build_contains_mask(
@@ -11865,13 +11758,13 @@ def render_errors_page(df: pd.DataFrame) -> None:
 
     render_metrics(
         [
-            ("?ㅻ쪟 ??, str(len(filtered))),
-            ("怨듦퀬 ??, str(filtered["notice_id"].nunique() if "notice_id" in filtered.columns else 0)),
-            ("異쒖쿂 ??, str(filtered["source_site"].nunique() if "source_site" in filtered.columns else 0)),
+            ("오류 수", str(len(filtered))),
+            ("공고 수", str(filtered["notice_id"].nunique() if "notice_id" in filtered.columns else 0)),
+            ("출처 수", str(filtered["source_site"].nunique() if "source_site" in filtered.columns else 0)),
         ]
     )
 
-    st.caption(f"寃利??뚯떛/LLM ?ㅻ쪟 ?됱엯?덈떎. ?꾩옱 {len(filtered)}嫄?)
+    st.caption(f"검증/파싱/LLM 오류 행입니다. 현재 {len(filtered)}건")
     visible_columns = [column for column in ERROR_PREFERRED_COLUMNS if column in filtered.columns]
     st.dataframe(filtered[visible_columns] if visible_columns else filtered, use_container_width=True, hide_index=True)
 
@@ -11882,32 +11775,32 @@ def render_source_notice_page(
     *,
     prefix: str,
     title: str,
-    source_label: str = "以묒냼湲곗뾽踰ㅼ쿂遺",
+    source_label: str = "중소기업벤처부",
     view_columns: list[str] | None = None,
     archive: bool = False,
 ) -> None:
     st.markdown(f"### {title}")
-    st.caption(f"{source_label} ?곌퀎 怨듦퀬 紐⑸줉?낅땲?? ?곗씠??뚯뒪: {data_origin}")
+    st.caption(f"{source_label} 연계 공고 목록입니다. 데이터 소스: {data_origin}")
 
     if df.empty:
-        st.info(f"{source_label} 怨듦퀬 ?곗씠?곕? ?꾩쭅 遺덈윭?ㅼ? 紐삵뻽?듬땲??")
+        st.info(f"{source_label} 공고 데이터를 아직 불러오지 못했습니다.")
         return
 
     current_view, selected_notice_id = get_route_state(prefix)
     if current_view == "detail":
-        selected_row = get_row_by_column_value(df, "怨듦퀬ID", selected_notice_id)
+        selected_row = get_row_by_column_value(df, "공고ID", selected_notice_id)
         action_col, info_col = st.columns([1, 5])
         with action_col:
-            if st.button("紐⑸줉?쇰줈 ?뚯븘媛湲?, key=f"{prefix}_back_to_table", use_container_width=True):
+            if st.button("목록으로 돌아가기", key=f"{prefix}_back_to_table", use_container_width=True):
                 switch_to_table(prefix)
         with info_col:
-            st.caption("釉뚮씪?곗? ?ㅻ줈媛湲곕? ?뚮윭??紐⑸줉?쇰줈 ?뚯븘媛???덉뒿?덈떎.")
+            st.caption("브라우저 뒤로가기를 눌러도 목록으로 돌아갈 수 있습니다.")
         render_notice_detail_from_row(selected_row, pd.DataFrame())
         return
 
     filtered = df.copy()
     filtered = filter_archived_notice_rows(filtered) if archive else filter_current_notice_rows(filtered)
-    default_status = "?꾩껜" if archive else "?덉젙" if "scheduled" in prefix else "?묒닔以?
+    default_status = "전체" if archive else "예정" if "scheduled" in prefix else "접수중"
     search_text, current_only, status_scope = render_notice_filter_sidebar(
         prefix,
         current_only_default=False,
@@ -11919,25 +11812,25 @@ def render_source_notice_page(
         filtered = filtered[filtered["is_current"].fillna("").eq("Y")]
     if not archive:
         filtered = filter_notice_status_scope(filtered, status_scope)
-    filtered = apply_multiselect_filter(filtered, "?꾨Ц湲곌?", "?꾨Ц湲곌?", f"{prefix}_agency")
-    filtered = apply_multiselect_filter(filtered, "?뚭?遺泥?, "?뚭?遺泥?, f"{prefix}_ministry")
-    filtered = apply_multiselect_filter(filtered, "寃??щ?", "寃??щ?", f"{prefix}_review")
+    filtered = apply_multiselect_filter(filtered, "전문기관", "전문기관", f"{prefix}_agency")
+    filtered = apply_multiselect_filter(filtered, "소관부처", "소관부처", f"{prefix}_ministry")
+    filtered = apply_multiselect_filter(filtered, "검토 여부", "검토 여부", f"{prefix}_review")
 
     if search_text:
-        filtered = filtered[build_contains_mask(filtered, ["怨듦퀬紐?, "怨듦퀬踰덊샇", "?꾨Ц湲곌?", "?대떦遺??, "?뚭?遺泥?, "?ъ뾽紐?], search_text)]
+        filtered = filtered[build_contains_mask(filtered, ["공고명", "공고번호", "전문기관", "담당부서", "소관부처", "사업명"], search_text)]
 
-    open_count = int(filtered["?곹깭"].fillna("").astype(str).str.strip().eq("?묒닔以?).sum()) if "?곹깭" in filtered.columns else 0
+    open_count = int(filtered["상태"].fillna("").astype(str).str.strip().eq("접수중").sum()) if "상태" in filtered.columns else 0
     metric_cols = st.columns(3)
-    metric_cols[0].metric("怨듦퀬 ??, str(len(filtered)))
-    metric_cols[1].metric("?묒닔以?, str(open_count))
-    metric_cols[2].metric("?대떦遺???, str(filtered["?대떦遺??].nunique() if "?대떦遺?? in filtered.columns else 0))
+    metric_cols[0].metric("공고 수", str(len(filtered)))
+    metric_cols[1].metric("접수중", str(open_count))
+    metric_cols[2].metric("담당부서 수", str(filtered["담당부서"].nunique() if "담당부서" in filtered.columns else 0))
 
-    st.caption(f"怨듦퀬紐??먮뒗 怨쇱젣紐낆쓣 ?대┃?섎㈃ ?곸꽭 ?섏씠吏濡??대룞?⑸땲?? ?꾩옱 {len(filtered)}嫄?)
+    st.caption(f"공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건")
     render_clickable_table(
         filtered,
         view_columns or MSS_VIEW_COLUMNS,
         page_key=prefix,
-        id_column="怨듦퀬ID",
+        id_column="공고ID",
     )
 
 
@@ -11946,30 +11839,30 @@ def normalize_favorite_notice_df(df: pd.DataFrame, *, source_key: str, source_la
         return pd.DataFrame()
 
     working = df.copy()
-    working["留ㅼ껜"] = source_label
+    working["매체"] = source_label
     working["_source_key"] = source_key
-    working["怨듦퀬ID"] = series_from_candidates(working, ["怨듦퀬ID", "notice_id"])
-    working["怨듦퀬紐?] = series_from_candidates(working, ["怨듦퀬紐?, "notice_title", "title"])
-    working["怨듦퀬踰덊샇"] = series_from_candidates(working, ["怨듦퀬踰덊샇", "notice_no", "ancm_no"])
-    working["怨듦퀬?쇱옄"] = series_from_candidates(working, ["怨듦퀬?쇱옄", "?깅줉??, "registered_at", "ancm_de"])
-    working["?묒닔湲곌컙"] = series_from_candidates(working, ["?묒닔湲곌컙", "?좎껌湲곌컙", "period"])
-    working["?꾨Ц湲곌?"] = series_from_candidates(working, ["?꾨Ц湲곌?", "?꾨Ц湲곌?紐?, "agency"])
-    working["?대떦遺??] = series_from_candidates(working, ["?대떦遺??, "department", "agency"])
-    working["?뚭?遺泥?] = series_from_candidates(working, ["?뚭?遺泥?, "ministry"])
-    working["怨듦퀬?곹깭"] = series_from_candidates(working, ["怨듦퀬?곹깭", "?곹깭", "status", "rcve_status"])
-    working["寃??щ?"] = series_from_candidates(working, ["寃??щ?", "寃?좎뿬遺", "review_status"])
-    working["?곸꽭留곹겕"] = series_from_candidates(working, ["?곸꽭留곹겕", "detail_link"])
-    working["?곸꽭留곹겕"] = working.apply(
+    working["공고ID"] = series_from_candidates(working, ["공고ID", "notice_id"])
+    working["공고명"] = series_from_candidates(working, ["공고명", "notice_title", "title"])
+    working["공고번호"] = series_from_candidates(working, ["공고번호", "notice_no", "ancm_no"])
+    working["공고일자"] = series_from_candidates(working, ["공고일자", "등록일", "registered_at", "ancm_de"])
+    working["접수기간"] = series_from_candidates(working, ["접수기간", "신청기간", "period"])
+    working["전문기관"] = series_from_candidates(working, ["전문기관", "전문기관명", "agency"])
+    working["담당부서"] = series_from_candidates(working, ["담당부서", "department", "agency"])
+    working["소관부처"] = series_from_candidates(working, ["소관부처", "ministry"])
+    working["공고상태"] = series_from_candidates(working, ["공고상태", "상태", "status", "rcve_status"])
+    working["검토 여부"] = series_from_candidates(working, ["검토 여부", "검토여부", "review_status"])
+    working["상세링크"] = series_from_candidates(working, ["상세링크", "detail_link"])
+    working["상세링크"] = working.apply(
         lambda row: resolve_external_detail_link(row, source_key=source_key),
         axis=1,
     )
     working["_favorite_id"] = working.apply(
-        lambda row: f"{source_key}::{clean(row.get('怨듦퀬ID'))}",
+        lambda row: f"{source_key}::{clean(row.get('공고ID'))}",
         axis=1,
     )
-    if "??쒖젏?? not in working.columns:
-        working["??쒖젏??] = 0
-    working["_sort_date"] = parse_date_column(working["怨듦퀬?쇱옄"])
+    if "대표점수" not in working.columns:
+        working["대표점수"] = 0
+    working["_sort_date"] = parse_date_column(working["공고일자"])
     return working
 
 
@@ -11987,14 +11880,14 @@ def build_favorite_notice_df(notice_view_df: pd.DataFrame, source_datasets: dict
     mss_past_df = source_datasets["mss_past"]
     mss_df = pd.concat([mss_current_df, mss_past_df], ignore_index=True) if not mss_current_df.empty or not mss_past_df.empty else pd.DataFrame()
     if not mss_df.empty:
-        mss_df = mss_df.drop_duplicates(subset=["怨듦퀬ID"], keep="first")
-        frames.append(normalize_favorite_notice_df(mss_df, source_key="tipa", source_label="以묒냼湲곗뾽踰ㅼ쿂遺"))
+        mss_df = mss_df.drop_duplicates(subset=["공고ID"], keep="first")
+        frames.append(normalize_favorite_notice_df(mss_df, source_key="tipa", source_label="중소기업벤처부"))
 
     nipa_current_df = source_datasets["nipa_current"]
     nipa_past_df = source_datasets["nipa_past"]
     nipa_df = pd.concat([nipa_current_df, nipa_past_df], ignore_index=True) if not nipa_current_df.empty or not nipa_past_df.empty else pd.DataFrame()
     if not nipa_df.empty:
-        nipa_df = nipa_df.drop_duplicates(subset=["怨듦퀬ID"], keep="first")
+        nipa_df = nipa_df.drop_duplicates(subset=["공고ID"], keep="first")
         frames.append(normalize_favorite_notice_df(nipa_df, source_key="nipa", source_label="NIPA"))
 
     if not frames:
@@ -12002,12 +11895,12 @@ def build_favorite_notice_df(notice_view_df: pd.DataFrame, source_datasets: dict
 
     combined = pd.concat(frames, ignore_index=True)
     combined = combined[
-        combined["寃??щ?"].fillna("").astype(str).str.strip().eq(FAVORITE_REVIEW_STATUS)
+        combined["검토 여부"].fillna("").astype(str).str.strip().eq(FAVORITE_REVIEW_STATUS)
     ]
     if combined.empty:
         return combined
     return combined.sort_values(
-        by=["_sort_date", "留ㅼ껜", "怨듦퀬紐?],
+        by=["_sort_date", "매체", "공고명"],
         ascending=[False, True, True],
         na_position="last",
     )
@@ -12019,7 +11912,7 @@ def build_favorite_notice_df(notice_view_df: pd.DataFrame, source_datasets: dict
 
 def render_other_crawlers_source_page() -> None:
     st.subheader("Other Crawlers")
-    st.info("?ㅻⅨ ?щ·??뚯뒪??ш린??뺤옣??덉뒿?덈떎.")
+    st.info("다른 크롤러 소스는 여기에 확장할 수 있습니다.")
 
 
 VIEWER_V2_ROUTE_MAP: dict[str, tuple[str, str]] = {
@@ -12085,7 +11978,7 @@ def main_viewer_v2(app_mode: str = "viewer") -> None:
     try:
         mode_config, datasets, source_datasets = load_viewer_runtime(app_mode)
     except Exception as exc:
-        st.error(f"?쒗듃 濡쒕뵫 ?ㅽ뙣: {exc}")
+        st.error(f"시트 로딩 실패: {exc}")
         st.stop()
 
     render_workspace_header(mode_config)
@@ -12103,7 +11996,7 @@ def main_viewer_v2(app_mode: str = "viewer") -> None:
             ("notice_queue", "Notice Queue"),
             ("summary", "Summary"),
             ("notice_archive", "Archive"),
-            ("favorites", "愿?ш났怨?),
+            ("favorites", "관심공고"),
         ],
         key="viewer_v2_primary_tabs",
     )
@@ -12120,7 +12013,7 @@ def main_viewer_v2(app_mode: str = "viewer") -> None:
             datasets["opportunity_all"],
             page_key="notice_archive",
             title="Archive",
-            default_status_scope="?꾩껜",
+            default_status_scope="전체",
             current_only_default=False,
             archive=True,
         )
@@ -12148,8 +12041,6 @@ def main_viewer_v2(app_mode: str = "viewer") -> None:
 
 
 def main(app_mode: str = "viewer"):
-    _run_public_workspace_main(app_mode)
-    return
     load_dotenv()
 
     mode_config = build_app_mode_config(
@@ -12190,7 +12081,7 @@ def main(app_mode: str = "viewer"):
             sheet_names["errors"],
         )
     except Exception as exc:
-        st.error(f"?쒗듃 濡쒕뵫 ?ㅽ뙣: {exc}")
+        st.error(f"시트 로딩 실패: {exc}")
         st.stop()
 
     source_config_map = get_source_config_map(mode_config)
@@ -12239,7 +12130,7 @@ def main(app_mode: str = "viewer"):
             current_item.key,
             [(item.key, item.label) for item in selected_group.items],
             key=f"{mode_config.mode}_secondary_nav_{selected_group.key}",
-            label="?몃? ?섏씠吏",
+            label="세부 페이지",
         )
         selected_item = next((item for item in selected_group.items if item.key == selected_item_key), selected_group.items[0])
         if selected_item.key != current_item.key:
@@ -12267,6 +12158,9 @@ def main(app_mode: str = "viewer"):
         show_internal_tabs=False,
     )
 
+
+if __name__ == "__main__":
+    main()
 
 # BEGIN ADMIN ALIGNMENT OVERRIDES
 def inject_opportunity_detail_alignment_styles() -> None:
@@ -12483,7 +12377,7 @@ def parse_detail_tag_items(value: object, *, limit: int = 8) -> list[str]:
 
 def _notice_detail_scalar_text(label: str, value: object) -> str:
     raw_text = sanitize_display_text(label, value)
-    if label in {"?ъ뾽 洹쒕え", "吏?먭툑", "珥앹삁??, "怨쇱젣蹂??덉궛"}:
+    if label in {"사업 규모", "지원금", "총예산", "과제별 예산"}:
         budget_summary = extract_budget_summary(raw_text)
         if budget_summary:
             raw_text = budget_summary
@@ -12501,7 +12395,7 @@ def _notice_detail_deadline_parts(value: object) -> tuple[str, str]:
         return f"D-{d_day}", period_text
     if d_day == 0:
         return "D-Day", period_text
-    return "留덇컧", period_text
+    return "마감", period_text
 
 def _notice_detail_value_html(label: str, value: object, *, kind: str = "text") -> str:
     if kind == "chips":
@@ -12563,7 +12457,7 @@ def render_notice_detail_rows_panel(
 
     if not row_html:
         row_html.append(
-            '<div class="notice-detail-empty-block">?쒖떆??뺣낫媛 ?놁뒿?덈떎.</div>'
+            '<div class="notice-detail-empty-block">표시할 정보가 없습니다.</div>'
         )
 
     st.markdown(
@@ -12581,7 +12475,7 @@ def render_notice_detail_rows_panel(
 def render_notice_detail_text_panel(title: str, value: object, *, tone: str = "blue") -> None:
     body = sanitize_display_text(title, value)
     if not clean(body):
-        body = "?쒖떆??붿빟 ?뺣낫媛 ?놁뒿?덈떎."
+        body = "표시할 요약 정보가 없습니다."
 
     parts = [clean(chunk) for chunk in re.split(r"\n{2,}", body) if clean(chunk)]
     if not parts:
@@ -12681,31 +12575,31 @@ def render_notice_detail_sidebar_card(
     sidebar_html = (
         '<div class="notice-detail-sidebar-card">'
         f'<div class="notice-detail-sidebar-kicker">{escape(source_label)}</div>'
-        '<div class="notice-detail-sidebar-title">怨듦퀬 ?쒕늿??蹂닿린</div>'
+        '<div class="notice-detail-sidebar-title">공고 한눈에 보기</div>'
         '<div class="notice-detail-sidebar-meta">'
-        '<div class="notice-detail-sidebar-label">?듭떖 ?ㅼ썙??/div>'
+        '<div class="notice-detail-sidebar-label">핵심 키워드</div>'
         f'<div class="notice-detail-sidebar-tags">{keyword_html}</div>'
         '</div>'
         '<div class="notice-detail-sidebar-grid">'
         '<div class="notice-detail-sidebar-item">'
-        '<div class="notice-detail-sidebar-label">?ъ뾽 洹쒕え</div>'
-        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("?ъ뾽 洹쒕え", total_budget))}</div>'
+        '<div class="notice-detail-sidebar-label">사업 규모</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("사업 규모", total_budget))}</div>'
         '</div>'
         '<div class="notice-detail-sidebar-item">'
-        '<div class="notice-detail-sidebar-label">吏?먭툑</div>'
-        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("吏?먭툑", per_project_budget))}</div>'
+        '<div class="notice-detail-sidebar-label">지원금</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("지원금", per_project_budget))}</div>'
         '</div>'
         '<div class="notice-detail-sidebar-item">'
-        '<div class="notice-detail-sidebar-label">?꾨Ц湲곌?</div>'
-        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("?꾨Ц湲곌?", agency))}</div>'
+        '<div class="notice-detail-sidebar-label">전문기관</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("전문기관", agency))}</div>'
         '</div>'
         '<div class="notice-detail-sidebar-item">'
-        '<div class="notice-detail-sidebar-label">?뚭?遺泥?/div>'
-        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("?뚭?遺泥?, ministry))}</div>'
+        '<div class="notice-detail-sidebar-label">소관부처</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("소관부처", ministry))}</div>'
         '</div>'
         '</div>'
         '<div class="notice-detail-sidebar-period">'
-        '<div class="notice-detail-sidebar-label">?좎껌 湲곌컙</div>'
+        '<div class="notice-detail-sidebar-label">신청 기간</div>'
         '<div class="notice-detail-deadline-wrap">'
         f'{deadline_html}'
         f'<span class="notice-detail-period-text">{escape(period_text)}</span>'
@@ -12713,16 +12607,16 @@ def render_notice_detail_sidebar_card(
         '</div>'
         '<div class="notice-detail-sidebar-grid compact">'
         '<div class="notice-detail-sidebar-item">'
-        '<div class="notice-detail-sidebar-label">異붿쿇 ?곹깭</div>'
-        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("異붿쿇 ?곹깭", recommendation))}</div>'
+        '<div class="notice-detail-sidebar-label">추천 상태</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("추천 상태", recommendation))}</div>'
         '</div>'
         '<div class="notice-detail-sidebar-item">'
-        '<div class="notice-detail-sidebar-label">?곹빀 ?먯닔</div>'
-        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("?곹빀 ?먯닔", score))}</div>'
+        '<div class="notice-detail-sidebar-label">적합 점수</div>'
+        f'<div class="notice-detail-sidebar-value">{escape(_notice_detail_scalar_text("적합 점수", score))}</div>'
         '</div>'
         '<div class="notice-detail-sidebar-item">'
-        '<div class="notice-detail-sidebar-label">?곌껐 RFP</div>'
-        f'<div class="notice-detail-sidebar-value">{related_count}嫄?/div>'
+        '<div class="notice-detail-sidebar-label">연결 RFP</div>'
+        f'<div class="notice-detail-sidebar-value">{related_count}건</div>'
         '</div>'
         '</div>'
         f'{button_html}'
@@ -12737,7 +12631,7 @@ def _split_sentences_for_display(value: object) -> list[str]:
 
     normalized = re.sub(r"\r\n?", "\n", text)
     normalized = re.sub(r"\n{3,}", "\n\n", normalized)
-    parts = re.split(r"\n{2,}|(?<=[.!??ㅼ슂??)\s+(?=[A-Z媛-??-9?△뼚?뗢뿈])", normalized)
+    parts = re.split(r"\n{2,}|(?<=[.!?다요음])\s+(?=[A-Z가-힣0-9□■○●])", normalized)
     sentences: list[str] = []
     seen: set[str] = set()
     for part in parts:
@@ -12784,13 +12678,13 @@ def _build_benefit_text(
     support_need = clean(support_need_text)
 
     if total_budget:
-        benefit_parts.append(f"?ъ뾽鍮?洹쒕え??{total_budget}?낅땲??")
+        benefit_parts.append(f"사업비 규모는 {total_budget}입니다.")
     if per_project_budget:
-        benefit_parts.append(f"怨쇱젣蹂?吏??議곌굔? {per_project_budget} 湲곗??쇰줈 ?뺣━?⑸땲??")
+        benefit_parts.append(f"과제별 지원 조건은 {per_project_budget} 기준으로 정리됩니다.")
     if eligibility:
-        benefit_parts.append(f"吏??媛??湲곌?? {eligibility}?낅땲??")
+        benefit_parts.append(f"지원 가능 기관은 {eligibility}입니다.")
     if period:
-        benefit_parts.append(f"?ъ뾽 湲곌컙 諛??묒닔 ?쇱젙? {period} 湲곗??쇰줈 ?댁쁺?⑸땲??")
+        benefit_parts.append(f"사업 기간 및 접수 일정은 {period} 기준으로 운영됩니다.")
     if support_plan:
         benefit_parts.append(support_plan)
     elif support_need:
@@ -12816,8 +12710,8 @@ def build_analysis_story_bundle(
         "technical_background",
         "project_overview",
         "project_summary",
-        "?ъ뾽媛쒖슂",
-        "怨쇱젣媛쒖슂",
+        "사업개요",
+        "과제개요",
     )
     objective_text = first_non_empty(
         base_row,
@@ -12825,20 +12719,20 @@ def build_analysis_story_bundle(
         "concept_and_development",
         "llm_application_field",
         "application_field",
-        "?쒖슜遺꾩빞",
-        "怨쇱젣 紐⑺몴",
+        "활용분야",
+        "과제 목표",
     )
     detail_text = first_non_empty(
         base_row,
         "llm_development_content",
         "development_content",
-        "?곸꽭?댁슜",
-        "吏?먮궡??,
-        "?곸꽭 ?댁뿭",
+        "상세내용",
+        "지원내용",
+        "상세 내역",
     )
     support_need_text = first_non_empty(base_row, "llm_support_need", "support_need")
     support_plan_text = first_non_empty(base_row, "llm_support_plan", "support_plan")
-    eligibility_text = first_non_empty(base_row, "llm_eligibility", "eligibility", "吏?먮??)
+    eligibility_text = first_non_empty(base_row, "llm_eligibility", "eligibility", "지원대상")
     total_budget_text = first_non_empty(base_row, "llm_total_budget_text", "total_budget_text", "budget")
     per_project_budget_text = first_non_empty(base_row, "llm_per_project_budget_text", "per_project_budget_text")
     period_value = clean(period_text) or first_non_empty(
@@ -12848,7 +12742,7 @@ def build_analysis_story_bundle(
         "llm_project_period",
         "notice_period",
         "period",
-    ) or first_non_empty(notice_row, "?묒닔湲곌컙", "?좎껌湲곌컙", "period")
+    ) or first_non_empty(notice_row, "접수기간", "신청기간", "period")
 
     benefit_text = _build_benefit_text(
         total_budget_text=total_budget_text,
@@ -12862,10 +12756,10 @@ def build_analysis_story_bundle(
     summary_text = build_project_analysis_text(notice_row, base_row)
 
     overview_steps = [
-        {"title": "?ъ뾽 媛쒖슂 諛?諛곌꼍", "body": _join_display_blocks(background_text, support_need_text, max_items=3)},
-        {"title": "怨쇱젣 紐⑺몴", "body": objective_text},
-        {"title": "怨쇱젣 ?댁슜", "body": _join_display_blocks(detail_text, support_plan_text, max_items=3)},
-        {"title": "吏??댁슜 諛??쒗깮", "body": benefit_text},
+        {"title": "사업 개요 및 배경", "body": _join_display_blocks(background_text, support_need_text, max_items=3)},
+        {"title": "과제 목표", "body": objective_text},
+        {"title": "과제 내용", "body": _join_display_blocks(detail_text, support_plan_text, max_items=3)},
+        {"title": "지원 내용 및 혜택", "body": benefit_text},
     ]
 
     return {
@@ -12883,45 +12777,302 @@ def build_analysis_story_bundle(
     }
 
 def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
-    render_notice_detail_page_module(st, row, opportunity_df, api=sys.modules[__name__])
+    if not row:
+        st.info("표시할 공고가 없습니다.")
+        return
+
+    current_source = get_query_param("source") or "iris"
+    source_key = resolve_notice_source_key(row)
+    is_mss = source_key == "tipa" or current_source == "tipa"
+    is_nipa = source_key == "nipa" or current_source == "nipa"
+    if is_mss:
+        detail_kicker = "MSS Notice Detail"
+        detail_button_label = "MSS 상세 바로가기"
+        review_caption = "공고 검토 상태를 바꾸면 MSS 시트에 즉시 반영됩니다."
+        source_label = "MSS"
+    elif is_nipa:
+        detail_kicker = "NIPA Notice Detail"
+        detail_button_label = "NIPA 상세 바로가기"
+        review_caption = "공고 검토 상태를 바꾸면 NIPA 시트에 즉시 반영됩니다."
+        source_label = "NIPA"
+    else:
+        detail_kicker = "Notice Master Detail"
+        detail_button_label = "IRIS 상세 바로가기"
+        review_caption = "공고 검토 상태를 바꾸면 NOTICE_MASTER에 즉시 반영됩니다."
+        source_label = "IRIS"
+
+    header_col, favorite_col = st.columns([4.6, 1.15], gap="medium")
+    with header_col:
+        render_detail_header(
+            title=clean(row.get("공고명")),
+            kicker=detail_kicker,
+            chips=[
+                (clean(row.get("추천정도")), "accent"),
+                (f"점수 {clean(row.get('추천점수'))}" if clean(row.get("추천점수")) else "", "neutral"),
+                (clean(row.get("공고상태")), "accent"),
+                (clean(row.get("전문기관") or row.get("담당부처")), "neutral"),
+                (clean(row.get("공고일자")), "neutral"),
+                (f"검토 {clean(row.get('검토여부') or '미정')}", "neutral"),
+            ],
+        )
+    with favorite_col:
+        st.markdown('<div style="height: 1.1rem;"></div>', unsafe_allow_html=True)
+        render_favorite_scrap_button(
+            notice_id=clean(row.get("공고ID")),
+            current_value=clean(first_non_empty(row, "검토여부", "검토 여부", "review_status")),
+            source_key=source_key,
+            notice_title=clean(row.get("공고명")),
+            button_key=f"favorite_notice_header_{clean(row.get('공고ID'))}",
+            compact=True,
+        )
+
+    related = find_related_opportunities_for_notice(row, opportunity_df)
+    top_related: dict[str, object] = {}
+    if not related.empty:
+        related = related.sort_values(
+            by=["rfp_score", "project_name"],
+            ascending=[False, True],
+            na_position="last",
+        )
+        top_related = related.iloc[0].to_dict()
+        row = ensure_notice_analysis_fallback(row, top_related)
+
+    detail_link = resolve_external_detail_link(row, source_key=source_key)
+    keyword_text = first_non_empty(top_related, "llm_keywords", "keywords", "대표키워드")
+    target_market_text = first_non_empty(top_related, "target_market", "대표관심영역")
+    summary_text = first_non_empty(
+        top_related,
+        "llm_reason",
+        "reason",
+        "추천제안이유",
+        "llm_concept_and_development",
+        "concept_and_development",
+    )
+    if not clean(summary_text):
+        summary_text = "연결된 RFP 분석 요약이 아직 없습니다. 공고 원문 정보와 연결된 Opportunity를 함께 확인해주세요."
+
+    overview_steps = [
+        {
+            "title": "사업 개요 및 배경",
+            "body": first_non_empty(
+                top_related,
+                "llm_support_necessity",
+                "support_necessity",
+                "llm_technical_background",
+                "technical_background",
+            ),
+        },
+        {
+            "title": "과제 목표",
+            "body": first_non_empty(
+                top_related,
+                "llm_concept_and_development",
+                "concept_and_development",
+            ),
+        },
+        {
+            "title": "과제 내용",
+            "body": first_non_empty(
+                top_related,
+                "llm_development_content",
+                "development_content",
+                "llm_support_plan",
+                "support_plan",
+            ),
+        },
+    ]
+
+    total_budget_text = first_non_empty(
+        top_related,
+        "llm_total_budget_text",
+        "total_budget_text",
+        "budget",
+        "대표예산",
+    )
+    per_project_budget_text = first_non_empty(
+        top_related,
+        "llm_per_project_budget_text",
+        "per_project_budget_text",
+    )
+    eligibility_text = first_non_empty(top_related, "llm_eligibility", "eligibility")
+    application_field_text = first_non_empty(top_related, "llm_application_field", "application_field")
+    support_need_text = first_non_empty(top_related, "llm_support_need", "support_need")
+    support_plan_text = first_non_empty(top_related, "llm_support_plan", "support_plan")
+
+    content_col, sidebar_col = st.columns([1.7, 0.95], gap="large")
+
+    with content_col:
+        render_notice_detail_rows_panel(
+            "주요 정보",
+            [
+                {"label": "지원 유형", "value": first_non_empty(top_related, "pbofr_type"), "kind": "chips"},
+                {"label": "핵심 키워드", "value": keyword_text, "kind": "chips"},
+                {"label": "관심영역", "value": target_market_text, "kind": "chips"},
+                {"label": "사업 규모", "value": total_budget_text, "kind": "accent"},
+                {"label": "지원금", "value": per_project_budget_text, "kind": "success"},
+                {"label": "지원 가능 기관", "value": eligibility_text, "kind": "chips"},
+                {"label": "공고 등록일", "value": row.get("공고일자")},
+                {"label": "공고 마감일", "value": row.get("마감일자")},
+                {"label": "신청 기간", "value": row.get("접수기간"), "kind": "deadline"},
+            ],
+        )
+
+        render_notice_detail_text_panel("과제 분석", build_project_analysis_text(row, top_related), tone="blue")
+
+        render_notice_detail_rows_panel(
+            "분석 하이라이트",
+            [
+                {"label": "추천 상태", "value": first_non_empty(top_related, "llm_recommendation", "recommendation", "추천정도")},
+                {"label": "적합 점수", "value": clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("추천점수"))},
+                {"label": "활용 분야", "value": application_field_text, "kind": "multiline"},
+                {"label": "지원 필요성", "value": support_need_text, "kind": "multiline"},
+                {"label": "연결 과제명", "value": first_non_empty(top_related, "llm_project_name", "project_name", "대표과제명"), "kind": "multiline"},
+                {"label": "연결 RFP 수", "value": str(len(related)) if not related.empty else "0"},
+            ],
+            tone="green",
+        )
+
+        render_notice_detail_rows_panel(
+            "지원 요건",
+            [
+                {"label": "지원 가능 기관", "value": eligibility_text, "kind": "multiline"},
+                {"label": "지원 필요성", "value": support_need_text, "kind": "multiline"},
+                {"label": "지원기간 및 예산·추진체계", "value": support_plan_text, "kind": "multiline"},
+            ],
+            tone="amber",
+        )
+
+        render_notice_detail_steps_panel("과제 개요", overview_steps, tone="blue")
+
+        render_notice_detail_rows_panel(
+            "과제 세부 내용",
+            [
+                {"label": "공고명", "value": row.get("공고명"), "kind": "multiline"},
+                {"label": "사업명", "value": row.get("사업명"), "kind": "multiline"},
+                {"label": "공고ID", "value": row.get("공고ID")},
+                {"label": "공고번호", "value": row.get("공고번호")},
+                {"label": "현재 공고 상태", "value": row.get("공고상태")},
+                {"label": "현재공고 여부", "value": row.get("is_current")},
+                {"label": "전문기관", "value": row.get("전문기관") or row.get("담당부처")},
+                {"label": "소관부처", "value": row.get("소관부처")},
+                {"label": "RFP 제목", "value": first_non_empty(top_related, "llm_rfp_title", "rfp_title"), "kind": "multiline"},
+                {"label": "지원기간 및 예산·추진체계", "value": support_plan_text, "kind": "multiline"},
+            ],
+        )
+
+        st.markdown('<div class="detail-section-title">검토 상태</div>', unsafe_allow_html=True)
+        review_left, review_right = st.columns([1, 1])
+        with review_left:
+            render_notice_detail_rows_panel(
+                "현재 상태",
+                [
+                    {"label": "검토여부", "value": row.get("검토여부")},
+                    {"label": "추천 여부", "value": first_non_empty(top_related, "llm_recommendation", "recommendation", "추천정도")},
+                    {"label": "적합도 점수", "value": clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("추천점수"))},
+                ],
+            )
+        with review_right:
+            with st.container(border=True):
+                st.caption(review_caption)
+                render_review_editor(
+                    notice_id=clean(row.get("공고ID")),
+                    current_value=clean(row.get("검토여부")),
+                    form_key=f"notice_review_form_{clean(row.get('공고ID'))}",
+                    source_key=source_key,
+                )
+
+        render_notice_comments(row, section_key=f"notice_{clean(row.get('공고ID'))}")
+
+        st.markdown('<div class="detail-section-title">연결된 Opportunity</div>', unsafe_allow_html=True)
+
+    related_view = ensure_opportunity_row_ids(related.copy()) if not related.empty else pd.DataFrame()
+    primary_rfp_id = ""
+    if not related_view.empty:
+        primary_rfp_id = clean(first_non_empty(related_view.iloc[0].to_dict(), "_row_id", "document_id"))
+
+    with sidebar_col:
+        render_notice_detail_sidebar_card(
+            source_label=source_label,
+            keyword_text=keyword_text,
+            total_budget=total_budget_text,
+            per_project_budget=per_project_budget_text,
+            period_value=row.get("접수기간"),
+            agency=row.get("전문기관") or row.get("담당부처"),
+            ministry=row.get("소관부처"),
+            recommendation=first_non_empty(top_related, "llm_recommendation", "recommendation", "추천정도"),
+            score=clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("추천점수")),
+            detail_link="",
+            detail_button_label="",
+            related_count=len(related),
+        )
+        if detail_link:
+            st.link_button("원문 공고", detail_link, use_container_width=True)
+        if primary_rfp_id:
+            if st.button("연결 RFP 보기", key=f"notice_related_rfp_{clean(row.get('怨듦퀬ID'))}", use_container_width=True):
+                switch_to_detail("rfp_queue", primary_rfp_id)
+
+    if related.empty:
+        st.info("이 공고에 연결된 Opportunity가 아직 없습니다.")
+        return
+
+    related_view = ensure_opportunity_row_ids(related)
+    related_view["연결 과제명"] = series_from_candidates(related_view, ["llm_project_name", "project_name"])
+    related_view["추천도"] = series_from_candidates(related_view, ["llm_recommendation", "recommendation", "추천여부"])
+    related_view["점수"] = series_from_candidates(related_view, ["llm_fit_score", "rfp_score"])
+    related_view["예산"] = series_from_candidates(related_view, ["llm_total_budget_text", "total_budget_text", "budget"])
+    related_view["파일명"] = series_from_candidates(related_view, ["file_name"])
+    render_clickable_table(
+        related_view,
+        [
+            "공고명",
+            "notice_title",
+            "연결 과제명",
+            "추천도",
+            "점수",
+            "예산",
+            "파일명",
+        ],
+        page_key="rfp_queue",
+        id_column="_row_id",
+    )
 
 def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
     if not row:
-        st.info("?쒖떆??붿빟 怨듦퀬媛 ?놁뒿?덈떎.")
+        st.info("표시할 요약 공고가 없습니다.")
         return
 
     render_detail_header(
-        title=clean(row.get("怨듦퀬紐?)),
+        title=clean(row.get("공고명")),
         kicker="Summary Detail",
         chips=[
-            (clean(row.get("??쒖텛泥쒕룄")), "accent"),
-            (clean(row.get("異붿쿇??諛??먯닔")), "neutral"),
-            (clean(row.get("?꾨Ц湲곌?")), "neutral"),
-            (clean(row.get("怨듦퀬?쇱옄")), "neutral"),
+            (clean(row.get("대표추천도")), "accent"),
+            (clean(row.get("추천도 및 점수")), "neutral"),
+            (clean(row.get("전문기관")), "neutral"),
+            (clean(row.get("공고일자")), "neutral"),
         ],
     )
 
     top_left, top_right = st.columns([2, 1])
     with top_left:
         render_detail_card(
-            "???怨쇱젣 遺꾩꽍",
+            "대표 과제 분석",
             [
-                ("?대떦 怨쇱젣紐?, row.get("?대떦 怨쇱젣紐?)),
-                ("異붿쿇??諛??먯닔", row.get("異붿쿇??諛??먯닔")),
-                ("?덉궛", row.get("?덉궛")),
-                ("怨쇱젣??, row.get("怨쇱젣??)),
-                ("臾몄꽌??, row.get("臾몄꽌??)),
+                ("해당 과제명", row.get("해당 과제명")),
+                ("추천도 및 점수", row.get("추천도 및 점수")),
+                ("예산", row.get("예산")),
+                ("과제수", row.get("과제수")),
+                ("문서수", row.get("문서수")),
             ],
         )
     with top_right:
         render_detail_card(
-            "怨듦퀬 ?앸퀎 ?뺣낫",
+            "공고 식별 정보",
             [
-                ("怨듦퀬ID", row.get("怨듦퀬ID")),
-                ("怨듦퀬踰덊샇", row.get("怨듦퀬踰덊샇")),
-                ("?꾨Ц湲곌?", row.get("?꾨Ц湲곌?")),
-                ("?뚭?遺泥?, row.get("?뚭?遺泥?)),
-                ("寃??щ?", row.get("寃??щ?")),
+                ("공고ID", row.get("공고ID")),
+                ("공고번호", row.get("공고번호")),
+                ("전문기관", row.get("전문기관")),
+                ("소관부처", row.get("소관부처")),
+                ("검토 여부", row.get("검토 여부")),
             ],
         )
 
@@ -12929,13 +13080,13 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
     with action_left:
         detail_link = resolve_external_detail_link(row)
         if detail_link:
-            st.link_button("IRIS ?곸꽭 諛붾줈媛湲?, detail_link, use_container_width=True)
+            st.link_button("IRIS 상세 바로가기", detail_link, use_container_width=True)
     with action_right:
-        st.caption("Summary????怨쇱젣 湲곗??쇰줈 怨듦퀬瑜??붿빟?댁꽌 蹂댁뿬以띾땲??")
+        st.caption("Summary는 대표 과제 기준으로 공고를 요약해서 보여줍니다.")
 
     related = pd.DataFrame()
     if not opportunity_df.empty and "notice_id" in opportunity_df.columns:
-        notice_key = normalize_notice_id_for_match(row.get("怨듦퀬ID"))
+        notice_key = normalize_notice_id_for_match(row.get("공고ID"))
         related = opportunity_df[
             opportunity_df["notice_id"].apply(normalize_notice_id_for_match).eq(notice_key)
         ].copy()
@@ -12947,76 +13098,76 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
             )
     top_related = related.iloc[0].to_dict() if not related.empty else {}
 
-    st.markdown('<div class="detail-section-title">寃??곹깭</div>', unsafe_allow_html=True)
+    st.markdown('<div class="detail-section-title">검토 상태</div>', unsafe_allow_html=True)
     left, right = st.columns(2)
     with left:
         render_detail_card(
-            "怨듦퀬 ?뺣낫",
+            "공고 정보",
             [
-                ("怨듦퀬?쇱옄", row.get("怨듦퀬?쇱옄")),
-                ("怨듦퀬?곹깭", row.get("怨듦퀬?곹깭")),
-                ("?묒닔湲곌컙", row.get("?묒닔湲곌컙")),
+                ("공고일자", row.get("공고일자")),
+                ("공고상태", row.get("공고상태")),
+                ("접수기간", row.get("접수기간")),
                 ("is_current", row.get("is_current")),
             ],
         )
     with right:
         render_review_editor(
-            notice_id=clean(row.get("怨듦퀬ID")),
-            current_value=clean(row.get("寃??щ?")),
-            form_key=f"summary_review_form_{clean(row.get('怨듦퀬ID'))}",
+            notice_id=clean(row.get("공고ID")),
+            current_value=clean(row.get("검토 여부")),
+            form_key=f"summary_review_form_{clean(row.get('공고ID'))}",
         )
 
-    st.markdown('<div class="detail-section-title">???遺꾩꽍 ?붿빟</div>', unsafe_allow_html=True)
+    st.markdown('<div class="detail-section-title">대표 분석 요약</div>', unsafe_allow_html=True)
     render_detail_card(
-        "怨쇱젣 遺꾩꽍",
+        "과제 분석",
         [
-            ("異붿쿇 ?댁쑀", first_non_empty(top_related, "llm_reason", "reason", "??쒖텛泥쒖씠??)),
+            ("추천 이유", first_non_empty(top_related, "llm_reason", "reason", "대표추천이유")),
             (
-                "媛쒕뀗 諛?媛쒕컻 ?댁슜",
+                "개념 및 개발 내용",
                 first_non_empty(
                     top_related,
                     "llm_concept_and_development",
                     "concept_and_development",
-                    "媛쒕뀗 諛?媛쒕컻 ?댁슜",
+                    "개념 및 개발 내용",
                 ),
             ),
             (
-                "吏?먰븘?붿꽦(怨쇱젣 諛곌꼍)",
+                "지원필요성(과제 배경)",
                 first_non_empty(
                     top_related,
                     "llm_support_necessity",
                     "support_necessity",
-                    "吏?먰븘?붿꽦(怨쇱젣 諛곌꼍)",
+                    "지원필요성(과제 배경)",
                     "llm_technical_background",
                     "technical_background",
                 ),
             ),
             (
-                "?쒖슜遺꾩빞",
+                "활용분야",
                 first_non_empty(
                     top_related,
                     "llm_application_field",
                     "application_field",
-                    "?쒖슜遺꾩빞",
+                    "활용분야",
                 ),
             ),
             (
-                "吏?먭린媛?諛??덉궛쨌異붿쭊泥닿퀎",
+                "지원기간 및 예산·추진체계",
                 first_non_empty(
                     top_related,
                     "llm_support_plan",
                     "support_plan",
-                    "吏?먭린媛?諛??덉궛쨌異붿쭊泥닿퀎",
+                    "지원기간 및 예산·추진체계",
                 ),
             ),
-            ("??쒓낵?쒕챸", first_non_empty(top_related, "llm_project_name", "project_name", "??쒓낵?쒕챸")),
-            ("??쒖삁??, first_non_empty(top_related, "llm_total_budget_text", "total_budget_text", "budget", "??쒖삁??)),
-            ("??쒗궎?뚮뱶", first_non_empty(top_related, "llm_keywords", "keywords", "??쒗궎?뚮뱶")),
-            ("??쒓??ъ쁺??, first_non_empty(top_related, "target_market", "??쒓??ъ쁺??)),
+            ("대표과제명", first_non_empty(top_related, "llm_project_name", "project_name", "대표과제명")),
+            ("대표예산", first_non_empty(top_related, "llm_total_budget_text", "total_budget_text", "budget", "대표예산")),
+            ("대표키워드", first_non_empty(top_related, "llm_keywords", "keywords", "대표키워드")),
+            ("대표관심영역", first_non_empty(top_related, "target_market", "대표관심영역")),
         ],
     )
 
-    render_notice_comments(row, section_key=f"summary_{clean(row.get('怨듦퀬ID'))}")
+    render_notice_comments(row, section_key=f"summary_{clean(row.get('공고ID'))}")
 
 def render_notice_page_with_scope(
     source_df: pd.DataFrame,
@@ -13032,27 +13183,27 @@ def render_notice_page_with_scope(
     current_view, selected_notice_id = get_route_state(page_key)
 
     if current_view == "detail":
-        selected_row = get_row_by_column_value(source_df, "怨듦퀬ID", selected_notice_id)
+        selected_row = get_row_by_column_value(source_df, "공고ID", selected_notice_id)
         action_col, info_col = st.columns([1, 5])
         with action_col:
-            if st.button("RFP Dashboard濡?, key=f"{page_key}_back_to_dashboard", use_container_width=True):
+            if st.button("RFP Dashboard로", key=f"{page_key}_back_to_dashboard", use_container_width=True):
                 navigate_to_route("dashboard", "dashboard")
         with info_col:
-            st.markdown('<div class="page-note">RFP 異붿쿇 ?붾㈃?먯꽌 ?곌껐??怨듦퀬 ?곸꽭瑜??뺤씤?섎뒗 ?붾㈃?낅땲??</div>', unsafe_allow_html=True)
+            st.markdown('<div class="page-note">RFP 추천 화면에서 연결된 공고 상세를 확인하는 화면입니다.</div>', unsafe_allow_html=True)
         render_notice_detail_from_row(selected_row, opportunity_df)
         return
 
-    subtitle = "?섏쭛??怨듦퀬瑜??곹깭? 湲곌? 湲곗??쇰줈 ?뺣━??遊낅땲??"
+    subtitle = "수집된 공고를 상태와 기관 기준으로 정리해 봅니다."
     if archive:
-        subtitle = "醫낅즺?섏뿀嫄곕굹 蹂닿? ??곸쑝濡?遺꾨쪟??怨듦퀬瑜?紐⑥븘 遊낅땲??"
-    elif default_status_scope == "?덉젙":
-        subtitle = "?덉젙 怨듦퀬? ?묒닔 ?덉젙 嫄댁쓣 癒쇱? ?뺤씤?⑸땲??"
+        subtitle = "종료되었거나 보관 대상으로 분류된 공고를 모아 봅니다."
+    elif default_status_scope == "예정":
+        subtitle = "예정 공고와 접수 예정 건을 먼저 확인합니다."
     render_page_header(title, subtitle, eyebrow="Notice")
 
     filtered = source_df.copy()
     if not already_scoped:
         filtered = filter_archived_notice_rows(filtered) if archive else filter_current_notice_rows(filtered)
-    filtered["?ъ뾽鍮?] = series_from_candidates(filtered, ["?ъ뾽鍮?, "??쒖삁??]).apply(extract_budget_summary)
+    filtered["사업비"] = series_from_candidates(filtered, ["사업비", "대표예산"]).apply(extract_budget_summary)
     search_text, current_only, status_scope = render_notice_filter_sidebar(
         page_key,
         current_only_default=current_only_default,
@@ -13064,48 +13215,169 @@ def render_notice_page_with_scope(
         filtered = filtered[filtered["is_current"].fillna("").eq("Y")]
     if not archive:
         filtered = filter_notice_status_scope(filtered, status_scope)
-    filtered = apply_multiselect_filter(filtered, "?꾨Ц湲곌?", "?꾨Ц湲곌?", f"{page_key}_agency")
-    filtered = apply_multiselect_filter(filtered, "?뚭?遺泥?, "?뚭?遺泥?, f"{page_key}_ministry")
-    filtered = apply_multiselect_filter(filtered, "寃??щ?", "寃??щ?", f"{page_key}_review")
+    filtered = apply_multiselect_filter(filtered, "전문기관", "전문기관", f"{page_key}_agency")
+    filtered = apply_multiselect_filter(filtered, "소관부처", "소관부처", f"{page_key}_ministry")
+    filtered = apply_multiselect_filter(filtered, "검토 여부", "검토 여부", f"{page_key}_review")
 
     filtered = filtered[
         build_contains_mask(
             filtered,
-            ["怨듦퀬紐?, "怨듦퀬踰덊샇", "?꾨Ц湲곌?", "?뚭?遺泥?, "怨듦퀬ID", "??쒓낵?쒕챸"],
+            ["공고명", "공고번호", "전문기관", "소관부처", "공고ID", "대표과제명"],
             search_text,
         )
     ]
 
     render_metrics(
         [
-            ("怨듦퀬 ??, str(len(filtered))),
-            ("?꾩옱 怨듦퀬", str(int((filtered["is_current"] == "Y").sum()) if "is_current" in filtered.columns else 0)),
-            ("?꾨Ц湲곌? ??, str(filtered["?꾨Ц湲곌?"].nunique() if "?꾨Ц湲곌?" in filtered.columns else 0)),
-            ("寃??꾨즺", str(int(filtered["寃??щ?"].fillna("").ne("").sum()) if "寃??щ?" in filtered.columns else 0)),
+            ("공고 수", str(len(filtered))),
+            ("현재 공고", str(int((filtered["is_current"] == "Y").sum()) if "is_current" in filtered.columns else 0)),
+            ("전문기관 수", str(filtered["전문기관"].nunique() if "전문기관" in filtered.columns else 0)),
+            ("검토 완료", str(int(filtered["검토 여부"].fillna("").ne("").sum()) if "검토 여부" in filtered.columns else 0)),
         ]
     )
 
     render_section_label("Notice List")
     st.markdown(
-        f'<div class="page-note">怨듦퀬紐??먮뒗 怨쇱젣紐낆쓣 ?대┃?섎㈃ ?곸꽭 ?섏씠吏濡??대룞?⑸땲?? ?꾩옱 {len(filtered)}嫄?/div>',
+        f'<div class="page-note">공고명 또는 과제명을 클릭하면 상세 페이지로 이동합니다. 현재 {len(filtered)}건</div>',
         unsafe_allow_html=True,
     )
     render_clickable_table(
         filtered,
         NOTICE_PREFERRED_COLUMNS,
         page_key=page_key,
-        id_column="怨듦퀬ID",
+        id_column="공고ID",
     )
 
 def render_opportunity_detail_from_row(row: dict) -> None:
-    render_rfp_detail_page_module(st, row, api=sys.modules[__name__])
+    if not row:
+        st.info("표시할 Opportunity가 없습니다.")
+        return
+
+    source_key = resolve_notice_source_key(row)
+    detail_link = resolve_external_detail_link(row, source_key=source_key)
+    download_path = resolve_local_file_path(row)
+    ctx = _queue_row_context(row)
+    score_value = _score_value(first_non_empty(row, "llm_fit_score", "rfp_score"))
+    period = first_non_empty(row, "notice_period", "period", "접수기간", "신청기간") or "-"
+    period_end = extract_period_end(period)
+    deadline_label = period_end.strftime("%Y-%m-%d") if pd.notna(period_end) else "-"
+    story = build_analysis_story_bundle(row, period_text=period)
+    summary_text = clean(story["summary_text"]) or ctx["reason"] or "-"
+    detail_text = clean(story["detail_text"]) or "-"
+    objective_text = clean(story["objective_text"]) or "-"
+    eligibility_text = clean(story["eligibility_text"]) or "-"
+    support_type = first_non_empty(row, "support_type", "사업유형", "business_type", "document_type") or "-"
+    keyword_text = first_non_empty(row, "llm_keywords", "keywords")
+    target_market_text = first_non_empty(row, "target_market")
+    overview_steps = story["overview_steps"]
+
+    render_page_header("RFP Analysis", "", eyebrow="Analysis")
+    badges = "".join(
+        [
+            _pill_html(ctx["recommendation"], base_class="detail-badge"),
+            _pill_html(ctx["score"], kind="score", base_class="detail-badge"),
+            _pill_html(ctx["deadline"], kind="deadline", base_class="detail-badge"),
+        ]
+    )
+    st.markdown(
+        (
+            '<div class="analysis-hero">'
+            f'<div class="detail-badge-row">{badges}</div>'
+            f'<div class="analysis-title">{escape(ctx["project"])}</div>'
+            f'<div class="analysis-subtitle">{escape(ctx["notice"])}</div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+    info_col, summary_col = st.columns([1.65, 0.95], gap="large")
+    with info_col:
+        _, favorite_col = st.columns([4.2, 1.1], gap="small")
+        with favorite_col:
+            render_favorite_scrap_button(
+                notice_id=clean(row.get("notice_id")),
+                current_value=clean(row.get("review_status")),
+                source_key=source_key,
+                notice_title=first_non_empty(row, "notice_title", "공고명"),
+                button_key=f"favorite_opportunity_main_{clean(row.get('notice_id'))}",
+            )
+        render_notice_detail_rows_panel(
+            "주요 정보",
+            [
+                {"label": "지원유형", "value": support_type},
+                {"label": "핵심 키워드", "value": keyword_text, "kind": "chips"},
+                {"label": "관심영역", "value": target_market_text, "kind": "chips"},
+                {"label": "지원금", "value": ctx["budget"], "kind": "accent"},
+                {"label": "지원 가능 기관", "value": eligibility_text, "kind": "multiline"},
+                {"label": "공고 등록일", "value": ctx["registered_at"]},
+                {"label": "공고 마감일", "value": deadline_label},
+                {"label": "신청 기간", "value": period, "kind": "deadline"},
+            ],
+            tone="blue",
+        )
+    with summary_col:
+        render_notice_detail_rows_panel(
+            "빠른 요약",
+            [
+                {"label": "주관 부처", "value": ctx["ministry"]},
+                {"label": "전문 기관", "value": ctx["agency"]},
+                {"label": "추천 상태", "value": ctx["recommendation"], "kind": "success"},
+                {"label": "적합 점수", "value": str(score_value if score_value else "-"), "kind": "accent"},
+                {"label": "공고 상태", "value": ctx["status"]},
+                {"label": "문서 단서", "value": ctx["file_name"], "kind": "multiline"},
+            ],
+            tone="green",
+        )
+
+    action_cols = st.columns([1, 1, 1.2])
+    with action_cols[0]:
+        if detail_link:
+            st.link_button("원문 보기", detail_link, use_container_width=True)
+    with action_cols[1]:
+        if download_path:
+            with open(download_path, "rb") as file_handle:
+                st.download_button(
+                    "RFP 다운로드",
+                    data=file_handle.read(),
+                    file_name=download_path.name,
+                    mime="application/octet-stream",
+                    use_container_width=True,
+                )
+    with action_cols[2]:
+        if st.button("관련 공고 보기", key=f"oppty_notice_detail_{clean(row.get('_row_id'))}", use_container_width=True):
+            navigate_to_notice_detail(source_key, clean(row.get("notice_id")))
+
+    render_notice_detail_text_panel("과제 분석", build_project_analysis_text(row), tone="blue")
+    render_notice_detail_rows_panel(
+        "지원 요건",
+        [
+            {"label": "지원 가능 기관", "value": eligibility_text, "kind": "multiline"},
+            {"label": "지원 유형", "value": support_type},
+            {"label": "핵심 키워드", "value": keyword_text, "kind": "chips"},
+            {"label": "관심영역", "value": target_market_text, "kind": "chips"},
+            {"label": "지원 내용 및 혜택", "value": clean(story["support_plan_text"]) or clean(story["support_need_text"]), "kind": "multiline"},
+        ],
+        tone="amber",
+    )
+    render_notice_detail_steps_panel("과제 개요", overview_steps, tone="blue")
+    render_notice_detail_rows_panel(
+        "과제 세부 내용",
+        [
+            {"label": "공고명", "value": first_non_empty(row, "notice_title", "공고명"), "kind": "multiline"},
+            {"label": "RFP 제목", "value": first_non_empty(row, "llm_rfp_title", "rfp_title"), "kind": "multiline"},
+            {"label": "활용 분야", "value": objective_text, "kind": "multiline"},
+            {"label": "상세 내용", "value": detail_text, "kind": "multiline"},
+        ],
+        tone="blue",
+    )
+
 
 def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
     del df
 
     working = ensure_opportunity_row_ids(filter_rankable_opportunity_rows(filter_current_opportunity_rows(opportunity_df.copy())))
     if working.empty:
-        st.info("?쒖떆??遺꾩꽍 ??곸씠 ?놁뒿?덈떎.")
+        st.info("표시할 분석 대상이 없습니다.")
         return
 
     selected_row_id = clean(get_query_param("id"))
@@ -13218,7 +13490,7 @@ def build_crawled_notice_collection(
             return
         normalized["_notice_scope"] = scope
         normalized["_collection_id"] = normalized.apply(
-            lambda row: f"{source_key}::{scope}::{clean(first_non_empty(row, '怨듦퀬ID', 'notice_id'))}",
+            lambda row: f"{source_key}::{scope}::{clean(first_non_empty(row, '공고ID', 'notice_id'))}",
             axis=1,
         )
         frames.append(normalized)
@@ -13247,7 +13519,7 @@ def build_crawled_notice_collection(
         )
     combined = combined.drop_duplicates(subset=["_collection_id"], keep="first")
     return combined.sort_values(
-        by=["_sort_date", "留ㅼ껜", "怨듦퀬紐?],
+        by=["_sort_date", "매체", "공고명"],
         ascending=[False, True, True],
         na_position="last",
     )
@@ -13261,7 +13533,7 @@ def filter_notice_queue_rows(rows: pd.DataFrame, *, search_text: str) -> pd.Data
     return rows[
         build_contains_mask(
             rows,
-            ["留ㅼ껜", "怨듦퀬紐?, "怨듦퀬踰덊샇", "?꾨Ц湲곌?", "?대떦遺??, "?뚭?遺泥?, "怨듦퀬ID", "怨듦퀬?곹깭", "?묒닔湲곌컙"],
+            ["매체", "공고명", "공고번호", "전문기관", "담당부서", "소관부처", "공고ID", "공고상태", "접수기간"],
             search_text,
         )
     ].copy()
@@ -13342,11 +13614,11 @@ def build_notice_queue_metric_items(rows: pd.DataFrame) -> list[tuple[str, str, 
     nipa_rows = rows[rows["source_key"].eq("nipa") & rows["_notice_scope"].eq("current")]
     archive_rows = rows[rows["_notice_scope"].eq("archive")]
     return [
-        ("?꾩껜 怨듦퀬", str(len(rows)), "all"),
+        ("전체 공고", str(len(rows)), "all"),
         ("IRIS", str(len(iris_rows)), "iris"),
         ("MSS", str(len(mss_rows)), "mss"),
         ("NIPA", str(len(nipa_rows)), "nipa"),
-        ("留덇컧쨌蹂닿?", str(len(archive_rows)), "archive"),
+        ("마감·보관", str(len(archive_rows)), "archive"),
     ]
 
 
@@ -13402,7 +13674,7 @@ def render_opportunity_page(
             selected_row = get_row_by_column_value(all_source_df, "_row_id", selected_document_id)
         back_col, info_col = st.columns([1.8, 4.2])
         with back_col:
-            if st.button(f"??{title}濡??뚯븘媛湲?, key=f"{page_key}_back_to_table_ui", use_container_width=False, type="secondary"):
+            if st.button(f"← {title}로 돌아가기", key=f"{page_key}_back_to_table_ui", use_container_width=False, type="secondary"):
                 go_back_route(route_core.build_rfp_queue_route())
                 st.rerun()
         with info_col:
@@ -13412,11 +13684,11 @@ def render_opportunity_page(
 
     render_page_header(
         title,
-        "遺꾩꽍 ?꾨즺??Opportunity瑜?異붿쿇?쒖쑝濡?寃?좏븯??硫붿씤 Intelligence Workspace?낅땲??" if not archive else "蹂닿??Opportunity 臾띠쓬??寃??대젰 湲곗??쇰줈 ?ㅼ떆 ?먯깋??덉뒿?덈떎.",
+        "분석 완료된 Opportunity를 추천순으로 검토하는 메인 Intelligence Workspace입니다." if not archive else "보관된 Opportunity 묶음을 검토 이력 기준으로 다시 탐색할 수 있습니다.",
         eyebrow="Opportunity",
     )
     st.markdown(
-        '<div class="queue-shell-note">異붿쿇 ?곹깭? 怨듦퀬 ?곹깭留?鍮좊Ⅴ寃?醫곹엳怨? ?곸쐞 Opportunity瑜?移대뱶 罹먮윭?濡??섍꺼蹂대㈃??諛붾줈 ?곸꽭 寃?좊줈 ?댁뼱吏???덇쾶 援ъ꽦?덉뒿?덈떎.</div>',
+        '<div class="queue-shell-note">추천 상태와 공고 상태만 빠르게 좁히고, 상위 Opportunity를 카드 캐러셀로 넘겨보면서 바로 상세 검토로 이어질 수 있게 구성했습니다.</div>',
         unsafe_allow_html=True,
     )
 
@@ -13426,14 +13698,14 @@ def render_opportunity_page(
     option_rows = filter_archived_opportunity_rows(all_source_df) if archive else all_source_df
     option_working = _build_queue_filter_frame(option_rows)
     if working.empty and option_working.empty:
-        st.info("?쒖떆??RFP媛 ?놁뒿?덈떎.")
+        st.info("표시할 RFP가 없습니다.")
         return
 
     recommendation_options = build_queue_recommendation_options(working["_queue_recommendation"]) if not working.empty else []
-    status_options = build_queue_status_options(option_working["_queue_status"]) if not option_working.empty else ["留덇컧"]
+    status_options = build_queue_status_options(option_working["_queue_status"]) if not option_working.empty else ["마감"]
     application_field_series = series_from_candidates(
         option_working if not option_working.empty else working,
-        ["llm_application_field", "application_field", "?쒖슜遺꾩빞"],
+        ["llm_application_field", "application_field", "활용분야"],
     ).fillna("").astype(str).str.strip()
     application_field_options = sorted({value for value in application_field_series.tolist() if clean(value) and value != "-"})
     archive_reason_options = sorted(
@@ -13456,7 +13728,7 @@ def render_opportunity_page(
     st.session_state.setdefault(deadline_key, route_filters.get("deadline", []))
     st.session_state.setdefault(field_key, route_filters.get("field", []))
     st.session_state.setdefault(review_key, route_filters.get("review", []))
-    st.session_state.setdefault(sort_key, clean(route_filters.get("sort")) or "異붿쿇??)
+    st.session_state.setdefault(sort_key, clean(route_filters.get("sort")) or "추천순")
     if archive:
         st.session_state.setdefault(archive_reason_key, route_filters.get("archive_reason", []))
 
@@ -13464,53 +13736,53 @@ def render_opportunity_page(
     filter_cols = st.columns(5 if archive else 4)
     with filter_cols[0]:
         selected_recommendation = st.multiselect(
-            "異붿쿇 ?곹깭",
+            "추천 상태",
             options=recommendation_options,
             key=f"{page_key}_filter_recommendation",
-            placeholder="?꾩껜",
+            placeholder="전체",
         )
     with filter_cols[1]:
         selected_status = st.multiselect(
-            "怨듦퀬 ?곹깭",
+            "공고 상태",
             options=status_options,
             key=f"{page_key}_filter_status",
-            placeholder="?꾩껜",
+            placeholder="전체",
         )
     with filter_cols[2]:
         selected_deadline = st.multiselect(
             "D-day",
-            options=["吏꾪뻾以?, "7??대궡", "30??대궡", "?덉젙", "留덇컧"],
+            options=["진행중", "7일 이내", "30일 이내", "예정", "마감"],
             key=deadline_key,
-            placeholder="?꾩껜",
+            placeholder="전체",
         )
     with filter_cols[3]:
         selected_field = st.multiselect(
-            "?곌뎄遺꾩빞",
+            "연구분야",
             options=application_field_options,
             key=field_key,
-            placeholder="?꾩껜",
+            placeholder="전체",
         )
 
     selected_archive_reason: list[str] = []
     if archive:
         with filter_cols[4]:
             selected_archive_reason = st.multiselect(
-                "蹂닿? ?ъ쑀",
+                "보관 사유",
                 options=archive_reason_options,
                 key=archive_reason_key,
-                placeholder="?꾩껜",
+                placeholder="전체",
             )
     sort_col, spacer_col = st.columns([1.2, 4.8])
     with sort_col:
         sort_option = st.selectbox(
-            "?뺣젹",
-            options=["異붿쿇??, "留덇컧?꾨컯??, "怨쇱젣紐낆닚"],
+            "정렬",
+            options=["추천순", "마감임박순", "과제명순"],
             key=sort_key,
         )
     with spacer_col:
         st.markdown("", unsafe_allow_html=True)
 
-    include_closed = archive or ("留덇컧" in selected_status)
+    include_closed = archive or ("마감" in selected_status)
     filter_source = (
         filter_archived_opportunity_rows(all_source_df)
         if archive
@@ -13526,11 +13798,11 @@ def render_opportunity_page(
     if selected_archive_reason:
         filtered = filtered[filtered["_queue_archive_reason"].isin(selected_archive_reason)]
     if selected_field:
-        field_source = series_from_candidates(filtered, ["llm_application_field", "application_field", "?쒖슜遺꾩빞"]).fillna("").astype(str)
+        field_source = series_from_candidates(filtered, ["llm_application_field", "application_field", "활용분야"]).fillna("").astype(str)
         filtered = filtered[field_source.apply(lambda value: any(option in value for option in selected_field))]
     selected_review = st.session_state.get(review_key, [])
     if selected_review:
-        review_source = series_from_candidates(filtered, ["Review", "review_status", "寃??щ?", "寃?좎뿬遺"]).fillna("").astype(str).str.strip()
+        review_source = series_from_candidates(filtered, ["Review", "review_status", "검토 여부", "검토여부"]).fillna("").astype(str).str.strip()
         filtered = filtered[review_source.isin(selected_review)].copy()
     if selected_deadline:
         today = pd.Timestamp.now().normalize()
@@ -13539,33 +13811,33 @@ def render_opportunity_page(
             buckets: set[str] = set()
             deadline = row.get("_queue_deadline_sort")
             status_text = clean(row.get("_queue_status"))
-            if "留덇컧" in status_text or bool(row.get("_queue_is_closed")):
-                buckets.add("留덇컧")
-            elif "?덉젙" in status_text:
-                buckets.add("?덉젙")
+            if "마감" in status_text or bool(row.get("_queue_is_closed")):
+                buckets.add("마감")
+            elif "예정" in status_text:
+                buckets.add("예정")
             else:
-                buckets.add("吏꾪뻾以?)
+                buckets.add("진행중")
             if pd.notna(deadline):
                 days_left = int((deadline.normalize() - today).days)
                 if days_left <= 7:
-                    buckets.add("7??대궡")
+                    buckets.add("7일 이내")
                 if days_left <= 30:
-                    buckets.add("30??대궡")
+                    buckets.add("30일 이내")
             return any(option in buckets for option in selected_deadline)
 
         filtered = filtered[filtered.apply(_deadline_bucket_match, axis=1)]
 
     if filtered.empty:
-        st.info("寃??議곌굔??留욌뒗 RFP媛 ?놁뒿?덈떎.")
+        st.info("검색 조건에 맞는 RFP가 없습니다.")
         return
 
-    if sort_option == "留덇컧?꾨컯??:
+    if sort_option == "마감임박순":
         filtered = filtered.sort_values(
             by=["_queue_deadline_sort", "_queue_sort_score", "_queue_project_sort"],
             ascending=[True, False, True],
             na_position="last",
         )
-    elif sort_option == "怨쇱젣紐낆닚":
+    elif sort_option == "과제명순":
         filtered = filtered.sort_values(
             by=["_queue_project_sort", "_queue_sort_score"],
             ascending=[True, False],
@@ -13606,7 +13878,7 @@ def render_opportunity_page(
 
     display_col, summary_col = st.columns([5.4, 2.15], gap="large")
     with display_col:
-        st.markdown('<div class="queue-results-label">異붿쿇 寃곌낵</div>', unsafe_allow_html=True)
+        st.markdown('<div class="queue-results-label">추천 결과</div>', unsafe_allow_html=True)
         _render_recommended_opportunity_cards(
             filtered.head(30),
             page_key=page_key,
@@ -13623,8 +13895,8 @@ def render_opportunity_page(
         _render_rfp_preview_panel(
             selected_row,
             panel_key=f"{page_key}_preview",
-            empty_title="RFP瑜??좏깮?섎㈃ 誘몃━蹂닿린媛 ?대┰?덈떎.",
-            empty_copy="移대뱶 ?좏깮? ?곗륫 Preview Panel留?媛깆떊?섍퀬, ?곸꽭 ?붾㈃? 踰꾪듉??뚮???뚮쭔 ?꾪솚?⑸땲??",
+            empty_title="RFP를 선택하면 미리보기가 열립니다.",
+            empty_copy="카드 선택은 우측 Preview Panel만 갱신하고, 상세 화면은 버튼을 눌렀을 때만 전환됩니다.",
             close_callback=lambda: (
                 route_core.set_current_route(
                     route_core.build_rfp_queue_route(
@@ -13881,27 +14153,22 @@ def _inject_public_workspace_shell_styles() -> None:
         """
         <style>
         .app-shell {
-          min-height: 96px;
+          min-height: 68px;
           display: grid;
-          grid-template-columns: minmax(260px, 320px) minmax(460px, 1fr) auto;
+          grid-template-columns: minmax(220px, 260px) minmax(320px, 1fr) minmax(320px, auto);
           align-items: center;
-          gap: 1.45rem;
-          margin: -1.05rem -1rem 0.7rem;
-          padding: 1.15rem 1.45rem 1rem;
+          gap: 1.1rem;
+          margin: -0.45rem 0 1.25rem;
+          padding: 0.1rem 0.4rem 0.2rem;
           background: rgba(255, 255, 255, 0.98);
-          border: 1px solid #dbe4f0;
-          border-top: none;
-          border-left: none;
-          border-right: none;
-          border-radius: 0 0 24px 24px;
-          box-shadow: 0 20px 42px rgba(15, 23, 42, 0.07);
+          border-bottom: 1px solid #dbe4f0;
         }
         .app-brand {
           display: flex;
           align-items: center;
-          gap: 0.92rem;
+          gap: 0.75rem;
           color: #0f172a;
-          font-size: 1.1rem;
+          font-size: 1rem;
           font-weight: 800;
           white-space: nowrap;
         }
@@ -13909,46 +14176,45 @@ def _inject_public_workspace_shell_styles() -> None:
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 46px;
-          height: 46px;
+          width: 32px;
+          height: 32px;
           color: #ffffff;
           background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
-          font-size: 1.12rem;
+          font-size: 1rem;
           font-weight: 800;
-          border-radius: 14px;
-          box-shadow: 0 14px 28px rgba(37, 99, 235, 0.2);
+          border-radius: 10px;
+          box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
         }
         .app-brand-copy {
           display: flex;
           align-items: baseline;
-          gap: 0.54rem;
+          gap: 0.42rem;
         }
         .app-brand-title {
           color: #0f172a;
-          font-size: 1.14rem;
+          font-size: 0.98rem;
           font-weight: 850;
         }
         .app-brand-subtitle {
           color: #475569;
-          font-size: 0.84rem;
+          font-size: 0.76rem;
           font-weight: 650;
         }
         .app-nav {
           display: flex;
-          align-items: center;
-          gap: 1.6rem;
+          align-items: stretch;
+          height: 100%;
+          gap: 1.45rem;
           min-width: 0;
         }
         .app-nav-item {
           display: inline-flex;
           align-items: center;
-          min-height: 54px;
+          height: 100%;
           color: #475569;
           border-bottom: 2px solid transparent;
-          font-size: 1.02rem;
-          font-weight: 700;
-          padding-top: 0.34rem;
-          padding-bottom: 0.28rem;
+          font-size: 0.94rem;
+          font-weight: 650;
           text-decoration: none !important;
           white-space: nowrap;
         }
@@ -13963,55 +14229,97 @@ def _inject_public_workspace_shell_styles() -> None:
           display: flex;
           align-items: center;
           justify-content: flex-end;
-          gap: 0.8rem;
+          gap: 0.7rem;
           min-width: 0;
+        }
+        .app-search {
+          min-width: min(290px, 34vw);
+          height: 38px;
+          display: flex;
+          align-items: center;
+          gap: 0.55rem;
+          padding: 0 0.95rem;
+          color: #94a3b8;
+          background: #ffffff;
+          border: 1px solid #dbe3ef;
+          border-radius: 10px;
+          font-size: 0.86rem;
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+        }
+        .app-search-icon {
+          color: #475569;
+          font-size: 0.84rem;
         }
         .app-icon-button,
         .app-user-menu {
-          min-height: 46px;
+          min-height: 38px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          padding: 0 1.05rem;
-          color: #334155;
-          background: #f8fafc;
+          padding: 0 0.9rem;
+          color: #475569;
+          background: #ffffff;
           border: 1px solid #dbe3ef;
-          border-radius: 14px;
-          font-size: 0.92rem;
-          font-weight: 700;
+          border-radius: 10px;
+          font-size: 0.84rem;
+          font-weight: 650;
           white-space: nowrap;
-          box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+        }
+        .app-icon-button {
+          position: relative;
+          width: 38px;
+          padding: 0;
+        }
+        .app-notice-badge {
+          position: absolute;
+          top: -4px;
+          right: -3px;
+          min-width: 18px;
+          height: 18px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0 0.2rem;
+          color: #ffffff;
+          background: #ef4444;
+          border: 2px solid #ffffff;
+          border-radius: 999px;
+          font-size: 0.66rem;
+          font-weight: 800;
+          line-height: 1;
         }
         .app-user-menu {
           align-items: flex-start;
           flex-direction: column;
           gap: 0.1rem;
           min-width: 92px;
-          background: #ffffff;
         }
         .app-user-name {
           color: #0f172a;
-          font-size: 0.92rem;
+          font-size: 0.84rem;
           font-weight: 850;
           line-height: 1.1;
         }
         .app-user-role {
           color: #64748b;
-          font-size: 0.77rem;
+          font-size: 0.7rem;
           font-weight: 700;
           line-height: 1.1;
         }
         @media (max-width: 1200px) {
           .app-shell {
             grid-template-columns: 1fr;
-            gap: 0.6rem;
-            margin-left: -0.7rem;
-            margin-right: -0.7rem;
-            padding-bottom: 0.75rem;
+            gap: 0.7rem;
+            padding-bottom: 0.8rem;
           }
           .app-actions {
             justify-content: flex-start;
             flex-wrap: wrap;
+          }
+          .app-search {
+            min-width: 0;
+            width: 100%;
           }
         }
         @media (max-width: 780px) {
@@ -14054,6 +14362,7 @@ def render_public_workspace_navigation(mode_config: AppModeConfig, current_sourc
             '</div>'
             f'<nav class="app-nav">{"".join(nav_links)}</nav>'
             '<div class="app-actions">'
+            '<div class="app-icon-button" aria-label="Notifications">&#128276;<span class="app-notice-badge">3</span></div>'
             f'<div class="app-user-menu"><span class="app-user-name">{user_label}</span><span class="app-user-role">Researcher</span></div>'
             '</div>'
             '</div>'
@@ -14067,48 +14376,19 @@ def _inject_compact_public_dashboard_styles() -> None:
         """
         <style>
         .main .block-container {
-          max-width: min(1920px, calc(100vw - 0.2rem));
-          padding-left: 0.28rem;
-          padding-right: 0.28rem;
-          padding-top: 0.18rem;
-          padding-bottom: 1rem;
+          max-width: min(1920px, calc(100vw - 0.75rem));
+          padding-left: 0.7rem;
+          padding-right: 0.7rem;
+          padding-top: 0.85rem;
         }
         .app-shell {
-          gap: 1.15rem;
-          margin-bottom: 0.56rem;
-          grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) auto;
+          gap: 0.9rem;
+          margin-bottom: 0.8rem;
+          grid-template-columns: minmax(220px, 250px) minmax(320px, 1fr) auto;
         }
         .dashboard-shell {
           padding: 0;
           gap: 0.85rem;
-        }
-        .dashboard-toolbar-meta {
-          min-height: 2.8rem;
-          display: flex;
-          align-items: center;
-          justify-content: flex-end;
-          color: #64748b;
-          font-size: 0.8rem;
-          font-weight: 700;
-          white-space: nowrap;
-        }
-        .st-key-public_dashboard_compact_search_text div[data-baseweb="input"] {
-          min-height: 2.8rem;
-          border-radius: 14px;
-          border-color: #dbe3ef;
-          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-        }
-        .st-key-public_dashboard_compact_search_text input {
-          font-size: 0.9rem;
-        }
-        .st-key-public_dashboard_compact_search_reset button {
-          min-height: 2.8rem;
-          border-radius: 14px;
-          border: 1px solid #dbe3ef;
-          background: #ffffff;
-          color: #1e3a8a;
-          font-weight: 800;
-          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
         }
         .dashboard-section,
         .queue-table-card,
@@ -14119,7 +14399,7 @@ def _inject_compact_public_dashboard_styles() -> None:
         .dashboard-kpi-grid {
           grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 0.8rem;
-          margin: 0.2rem 0 0.9rem;
+          margin: 0.45rem 0 0.95rem;
         }
         .rfp-card {
           min-height: 208px;
@@ -14134,6 +14414,14 @@ def _inject_compact_public_dashboard_styles() -> None:
         .notice-row-meta,
         .notice-row-summary {
           font-size: 0.78rem;
+        }
+        .dashboard-search-meta {
+          color: #64748b;
+          font-size: 0.8rem;
+          font-weight: 700;
+          display: flex;
+          align-items: center;
+          min-height: 2.4rem;
         }
         .notice-row-head,
         .notice-row-body {
@@ -14174,7 +14462,7 @@ def _filter_public_dashboard_frames(
         filtered_notices = filtered_notices[
             build_contains_mask(
                 filtered_notices,
-                ["怨듦퀬紐?, "notice_title", "agency", "?꾨Ц湲곌?", "?뚭?遺泥?, "_queue_analysis", "_queue_project_name", "budget"],
+                ["공고명", "notice_title", "agency", "전문기관", "소관부처", "_queue_analysis", "_queue_project_name", "budget"],
                 search_text,
             )
         ].copy()
@@ -14182,7 +14470,7 @@ def _filter_public_dashboard_frames(
     return filtered_opportunities, filtered_notices
 
 
-def _render_public_dashboard_kpi_cards_impl(recommended_rows: pd.DataFrame, notice_rows: pd.DataFrame) -> None:
+def _render_dashboard_kpi_cards(recommended_rows: pd.DataFrame, notice_rows: pd.DataFrame) -> None:
     recommended_count = len(recommended_rows) if recommended_rows is not None and not recommended_rows.empty else 0
     favorite_count = 0
     if notice_rows is not None and not notice_rows.empty:
@@ -14191,9 +14479,9 @@ def _render_public_dashboard_kpi_cards_impl(recommended_rows: pd.DataFrame, noti
     urgent_count = _count_dashboard_urgent_notices(notice_rows)
 
     cards = [
-        ("recommended_rfp", "異붿쿇 RFP", str(recommended_count), "異붿쿇 RFP Queue濡??대룞", "RFP"),
-        ("urgent_notice", "留덇컧 ?꾨컯", str(urgent_count), "30??대궡 怨듦퀬 蹂닿린", "D-30"),
-        ("favorite_notice", "愿?ш났怨?, str(favorite_count), "利먭꺼李얘린 紐⑥븘蹂닿린", "SAVE"),
+        ("recommended_rfp", "추천 RFP", str(recommended_count), "추천 RFP Queue로 이동", "RFP"),
+        ("urgent_notice", "마감 임박", str(urgent_count), "30일 이내 공고 보기", "D-30"),
+        ("favorite_notice", "관심공고", str(favorite_count), "즐겨찾기 모아보기", "SAVE"),
     ]
     cols = st.columns(3, gap="medium")
     for column, (card_key, label, value, copy, icon) in zip(cols, cards):
@@ -14228,7 +14516,7 @@ def _render_public_dashboard_kpi_cards_impl(recommended_rows: pd.DataFrame, noti
         )
         with column:
             if st.button(
-                f"{label}  {icon}\n{value}\n{copy}\n諛붾줈媛湲?>",
+                f"{label}  {icon}\n{value}\n{copy}\n바로가기 >",
                 key=f"dashboard_kpi_{card_key}",
                 use_container_width=True,
                 type="secondary",
@@ -14236,7 +14524,7 @@ def _render_public_dashboard_kpi_cards_impl(recommended_rows: pd.DataFrame, noti
                 _navigate_from_dashboard_kpi(card_key)
 
 
-def _render_public_dashboard_workspace_impl(
+def _render_dashboard_workspace(
     datasets: dict[str, pd.DataFrame],
     source_datasets: dict[str, object] | None,
 ) -> None:
@@ -14254,25 +14542,29 @@ def _render_public_dashboard_workspace_impl(
         else pd.DataFrame()
     )
     notice_rows = _build_dashboard_notice_inbox_rows(datasets, source_datasets)
-    updated_at = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M")
+    favorite_count = len(build_favorite_notice_df(datasets["notice_view"], source_datasets or {}))
+    urgent_count = int(
+        len(build_dashboard_deadline_table(build_dashboard_notice_index(datasets, source_datasets, archived=False), limit=30))
+    )
 
-    search_cols = st.columns([8.3, 1.35, 2.2], gap="small")
+    search_cols = st.columns([5.3, 1.1, 2.1], gap="small")
     with search_cols[0]:
         dashboard_search = clean(
             st.text_input(
                 "Dashboard Search",
                 key="public_dashboard_compact_search_text",
-                placeholder="怨듦퀬紐? 怨쇱젣紐? ?ㅼ썙?? 湲곌? 寃??,
+                placeholder="공고명, 과제명, 키워드, 기관 검색",
                 label_visibility="collapsed",
             )
         )
     with search_cols[1]:
-        if st.button("珥덇린??, key="public_dashboard_compact_search_reset", use_container_width=True):
+        if st.button("초기화", key="public_dashboard_compact_search_reset", use_container_width=True):
             st.session_state["public_dashboard_compact_search_text"] = ""
             st.rerun()
     with search_cols[2]:
+        updated_at = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M")
         st.markdown(
-            f'<div class="dashboard-toolbar-meta">?낅뜲?댄듃 {escape(updated_at)}</div>',
+            f'<div class="dashboard-search-meta">업데이트 {escape(updated_at)}</div>',
             unsafe_allow_html=True,
         )
 
@@ -14289,9 +14581,9 @@ def _render_public_dashboard_workspace_impl(
     preview_rows = filtered_notice_rows.head(10).copy() if not filtered_notice_rows.empty else pd.DataFrame()
 
     if dashboard_search:
-        st.caption(f"寃??寃곌낵: 異붿쿇 RFP {len(recommended_filtered.head(5))}嫄? 理쒓렐 怨듦퀬 {len(preview_rows)}嫄?)
+        st.caption(f"검색 결과: 추천 RFP {len(recommended_filtered.head(5))}건, 최근 공고 {len(preview_rows)}건")
 
-    _render_public_dashboard_kpi_cards_impl(
+    _render_dashboard_kpi_cards(
         recommended_rows.head(len(recommended_rows)),
         build_dashboard_notice_index(datasets, source_datasets, archived=False),
     )
@@ -14299,29 +14591,29 @@ def _render_public_dashboard_workspace_impl(
     top_left, top_right = st.columns([6, 1.8], gap="medium")
     with top_left:
         st.markdown(
-            '<div class="oppty-section-header"><div><div class="oppty-section-title">異붿쿇 RFP Top 5</div><div class="oppty-section-subtitle">?듭떖 ?뺣낫留?鍮좊Ⅴ寃??묎퀬 ?곸꽭 寃?좉? ?꾩슂??怨듦퀬留??좊퀎?⑸땲??</div></div></div>',
+            '<div class="oppty-section-header"><div><div class="oppty-section-title">추천 RFP Top 5</div><div class="oppty-section-subtitle">핵심 정보만 빠르게 훑고 상세 검토가 필요한 공고만 선별합니다.</div></div></div>',
             unsafe_allow_html=True,
         )
     with top_right:
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        if st.button("?꾩껜 RFP Queue 蹂닿린", key="public_dashboard_to_rfp_queue", use_container_width=True):
+        if st.button("전체 RFP Queue 보기", key="public_dashboard_to_rfp_queue", use_container_width=True):
             navigate_to_route_state(route_core.build_rfp_queue_route(), push=True)
     _render_dashboard_top_rfp_cards(recommended_filtered, selected_item_id="", on_select=None, visible_count=5)
 
     notice_left, notice_right = st.columns([6, 2.0], gap="medium")
     with notice_left:
         st.markdown(
-            '<div class="oppty-section-header"><div><div class="oppty-section-title">理쒓렐 怨듦퀬 (Notice Inbox)</div><div class="oppty-section-subtitle">理쒖떊 怨듦퀬 10嫄대쭔 compact inbox濡?蹂댁뿬以띾땲??</div></div></div>',
+            '<div class="oppty-section-header"><div><div class="oppty-section-title">최근 공고 (Notice Inbox)</div><div class="oppty-section-subtitle">최신 공고 10건만 compact inbox로 보여줍니다.</div></div></div>',
             unsafe_allow_html=True,
         )
     with notice_right:
         st.markdown('<div style="height:1rem"></div>', unsafe_allow_html=True)
-        if st.button("?꾩껜 Notice Queue 蹂닿린", key="public_dashboard_to_notice_queue", use_container_width=True):
+        if st.button("전체 Notice Queue 보기", key="public_dashboard_to_notice_queue", use_container_width=True):
             navigate_to_route_state(route_core.build_notice_queue_route(), push=True)
     _render_dashboard_recent_notice_inbox(preview_rows, limit=10)
 
 
-def _run_public_workspace_main(app_mode: str = "viewer"):
+def main(app_mode: str = "viewer"):
     load_dotenv()
 
     mode_config = build_app_mode_config(
@@ -14362,7 +14654,7 @@ def _run_public_workspace_main(app_mode: str = "viewer"):
             sheet_names["errors"],
         )
     except Exception as exc:
-        st.error(f"?쒗듃 濡쒕뵫 ?ㅽ뙣: {exc}")
+        st.error(f"시트 로딩 실패: {exc}")
         st.stop()
 
     default_route = route_core.normalize_route(
