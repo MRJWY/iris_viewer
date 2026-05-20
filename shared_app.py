@@ -3709,6 +3709,12 @@ def initialize_route_state(default_route: dict[str, object]) -> dict[str, object
         default_route=default_route,
         query_params=query_params,
     )
+    query_route = route_core.deserialize_route(
+        query_params,
+        default_route=default_route,
+    )
+    if not route_core.route_equals(route, query_route):
+        route = route_core.set_current_route(query_route)
     replace_query_params(with_auth_params(route_core.serialize_route(route)))
     return route
 
