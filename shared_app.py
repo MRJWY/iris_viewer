@@ -669,21 +669,47 @@ def build_dashboard_opportunity_index(
     def append_source(df: pd.DataFrame, *, source_key: str, source_label: str) -> None:
         if df is None or df.empty:
             return
-        working = filter_current_opportunity_rows(df)
+        working = ensure_opportunity_row_ids(filter_current_opportunity_rows(df))
         if working.empty:
             return
 
-        normalized = pd.DataFrame(index=working.index.copy())
-        normalized["source_key"] = source_key
-        normalized["Source"] = source_label
+        normalized = working.copy()
+        normalized["Row ID"] = series_from_candidates(working, ["_row_id"])
+        normalized["source_key"] = (
+            series_from_candidates(working, ["source_key", "_source_key"])
+            .replace("", pd.NA)
+            .fillna(source_key)
+        )
+        normalized["Source"] = (
+            series_from_candidates(working, ["Source", "source_label", "source_site"])
+            .replace("", pd.NA)
+            .fillna(source_label)
+        )
         normalized["Notice ID"] = series_from_candidates(working, ["notice_id", "공고ID"])
         normalized["Notice Title"] = series_from_candidates(working, ["notice_title", "공고명"])
-        normalized["Project"] = series_from_candidates(working, ["project_name", "해당 과제명", "llm_project_name"])
+        normalized["Project"] = series_from_candidates(working, ["llm_project_name", "project_name", "해당 과제명", "llm_rfp_title", "rfp_title"])
         normalized["Recommendation"] = series_from_candidates(working, ["recommendation", "추천여부", "llm_recommendation"])
         normalized["Score"] = to_numeric_column(series_from_candidates(working, ["rfp_score", "점수", "llm_fit_score"]))
+        normalized["Candidate"] = series_from_candidates(working, ["candidate_flag", "확장후보여부", "llm_score_candidate_flag"])
+        normalized["Candidate Reason"] = series_from_candidates(working, ["candidate_reason", "확장후보사유", "llm_score_candidate_reason"])
         normalized["Budget"] = series_from_candidates(working, ["budget", "예산", "llm_total_budget_text", "total_budget_text"])
         normalized["Reason"] = series_from_candidates(working, ["llm_reason", "reason", "관심사유"])
+        normalized["Keywords"] = series_from_candidates(working, ["llm_keywords", "keywords", "키워드"])
+        normalized["LLM Enriched"] = series_from_candidates(working, ["llm_enriched"])
+        normalized["LLM Mode"] = series_from_candidates(working, ["llm_mode"])
+        normalized["LLM Error"] = series_from_candidates(working, ["llm_error"])
+        normalized["Document Role"] = series_from_candidates(working, ["llm_document_role", "document_role", "document_type"])
+        normalized["Validation Errors"] = series_from_candidates(working, ["validation_errors", "검증오류"])
         normalized["Date"] = series_from_candidates(working, ["ancm_de", "공고일자", "registered_at"])
+        normalized["Period"] = series_from_candidates(working, ["notice_period", "period", "접수기간", "요청기간"])
+        normalized["RFP Period"] = series_from_candidates(working, ["rfp_period", "RFP 기간"])
+        normalized["Agency"] = series_from_candidates(working, ["agency", "전문기관", "전문기관명"])
+        normalized["Ministry"] = series_from_candidates(working, ["ministry", "소관부처"])
+        normalized["Application Field"] = series_from_candidates(working, ["llm_application_field", "application_field"])
+        normalized["Eligibility"] = series_from_candidates(working, ["llm_eligibility", "eligibility"])
+        normalized["Support Need"] = series_from_candidates(working, ["llm_support_need", "support_need"])
+        normalized["Status"] = series_from_candidates(working, ["rcve_status", "status", "notice_status"])
+        normalized["Review"] = series_from_candidates(working, ["review_status", "검토여부"])
         normalized["_sort_date"] = parse_date_column(normalized["Date"])
         frames.append(normalized)
 
@@ -693,14 +719,11 @@ def build_dashboard_opportunity_index(
         append_source(source_datasets["nipa_opportunity"], source_key="nipa", source_label="NIPA")
 
     if not frames:
-        return pd.DataFrame(columns=["source_key", "Source", "Notice ID", "Notice Title", "Project", "Recommendation", "Score", "Budget", "Reason", "Date", "_sort_date"])
+        return pd.DataFrame(columns=["Row ID", "source_key", "Source", "Notice ID", "Notice Title", "Project", "Recommendation", "Score", "Budget", "Reason", "Keywords", "Date", "Period", "Agency", "Ministry", "Status", "Review", "_sort_date"])
 
     combined = pd.concat(frames, ignore_index=True)
-    return combined.sort_values(
-        by=["Score", "_sort_date", "Project"],
-        ascending=[False, False, True],
-        na_position="last",
-    )
+    combined = _build_queue_filter_frame(combined)
+    return _sort_opportunity_rows_for_display(combined)
 
 
 def build_dashboard_opportunity_table(df: pd.DataFrame, *, limit: int = 8) -> pd.DataFrame:
@@ -2690,11 +2713,7 @@ def _legacy_render_dashboard_workspace(
 ) -> None:
     opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
     if not opportunity_index.empty:
-        opportunity_index = opportunity_index.sort_values(
-            by=["Score", "_sort_date", "Project"],
-            ascending=[False, False, True],
-            na_position="last",
-        )
+        opportunity_index = _sort_opportunity_rows_for_display(opportunity_index)
     recommended_rows = (
         opportunity_index[build_positive_recommendation_mask(opportunity_index)].copy()
         if not opportunity_index.empty
@@ -2949,11 +2968,7 @@ def render_dashboard_source(
 
     opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
     if not opportunity_index.empty:
-        opportunity_index = opportunity_index.sort_values(
-            by=["Score", "_sort_date", "Project"],
-            ascending=[False, False, True],
-            na_position="last",
-        )
+        opportunity_index = _sort_opportunity_rows_for_display(opportunity_index)
     recommended_rows = opportunity_index[build_positive_recommendation_mask(opportunity_index)].copy() if not opportunity_index.empty else pd.DataFrame()
     notice_rows = _build_dashboard_notice_inbox_rows(datasets, source_datasets)
     preview_rows = notice_rows.head(12).copy() if not notice_rows.empty else pd.DataFrame()
@@ -8788,6 +8803,19 @@ def build_positive_recommendation_mask(df: pd.DataFrame) -> pd.Series:
     return recommendation_series.apply(_normalize_recommendation_value).eq("추천")
 
 
+def _recommendation_sort_rank(value: object) -> int:
+    normalized = _normalize_recommendation_value(value)
+    if normalized == "추천":
+        return 0
+    if normalized == "보통":
+        return 1
+    if normalized in {"비추천", "미추천"}:
+        return 3
+    if clean(normalized):
+        return 2
+    return 2
+
+
 def is_positive_recommendation(value: object) -> bool:
     return _normalize_recommendation_value(clean(value)) == "추천"
 
@@ -11780,6 +11808,9 @@ def _build_queue_filter_frame(rows: pd.DataFrame) -> pd.DataFrame:
         open_flags.append(bool(is_open))
 
     working["_queue_recommendation"] = [clean(ctx["recommendation"]) or "-" for ctx in contexts]
+    working["_queue_recommendation_rank"] = [
+        _recommendation_sort_rank(ctx["recommendation"]) for ctx in contexts
+    ]
     working["_queue_score"] = [clean(ctx["score"]) or "-" for ctx in contexts]
     working["_queue_sort_score"] = to_numeric_column(
         series_from_candidates(working, ["llm_fit_score", "rfp_score", "점수", "Score"])
@@ -11804,6 +11835,25 @@ def _build_queue_filter_frame(rows: pd.DataFrame) -> pd.DataFrame:
         ["project_name", "llm_project_name", "?대떦 怨쇱젣紐?"],
     ).fillna("").astype(str).str.strip()
     return working
+
+
+def _sort_opportunity_rows_for_display(rows: pd.DataFrame) -> pd.DataFrame:
+    if rows.empty:
+        return rows
+    working = rows.copy()
+    if "_queue_recommendation_rank" not in working.columns:
+        working = _build_queue_filter_frame(working)
+    return working.sort_values(
+        by=[
+            "_queue_recommendation_rank",
+            "_queue_sort_score",
+            "_queue_deadline_sort",
+            "_queue_project_sort",
+        ],
+        ascending=[True, False, True, True],
+        na_position="last",
+        kind="stable",
+    )
 
 
 def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
@@ -12443,11 +12493,7 @@ def _legacy_render_opportunity_page_aligned(
         st.info("검색 조건에 맞는 RFP가 없습니다.")
         return
 
-    filtered = filtered.sort_values(
-        by=["_queue_sort_score", "_queue_deadline_sort", "_queue_project_sort"],
-        ascending=[False, True, True],
-        na_position="last",
-    )
+    filtered = _sort_opportunity_rows_for_display(filtered)
 
     render_metrics(
         [
@@ -12573,11 +12619,7 @@ def render_opportunity_page_aligned(
     if selected_status:
         filtered = filtered[filtered["_queue_status"].isin(selected_status)]
 
-    filtered = filtered.sort_values(
-        by=["_queue_sort_score", "_queue_deadline_sort", "_queue_project_sort"],
-        ascending=[False, True, True],
-        na_position="last",
-    )
+    filtered = _sort_opportunity_rows_for_display(filtered)
 
     render_metrics(
         [
@@ -15018,11 +15060,7 @@ def render_opportunity_page(
             st.info("검색 조건에 맞는 RFP가 없습니다.")
             return
 
-        filtered = filtered.sort_values(
-            by=["_queue_sort_score", "_queue_deadline_sort", "_queue_project_sort"],
-            ascending=[False, True, True],
-            na_position="last",
-        )
+        filtered = _sort_opportunity_rows_for_display(filtered)
 
         total_rows = len(filtered)
         total_pages = max(1, math.ceil(total_rows / page_size)) if page_size else 1
@@ -16869,11 +16907,7 @@ def _render_dashboard_workspace(
     _inject_compact_public_dashboard_styles()
     opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
     if not opportunity_index.empty:
-        opportunity_index = opportunity_index.sort_values(
-            by=["Score", "_sort_date", "Project"],
-            ascending=[False, False, True],
-            na_position="last",
-        )
+        opportunity_index = _sort_opportunity_rows_for_display(opportunity_index)
     recommended_rows = (
         opportunity_index[build_positive_recommendation_mask(opportunity_index)].copy()
         if not opportunity_index.empty
