@@ -8457,28 +8457,39 @@ def render_favorite_scrap_button(
         active_color = "#c2410c" if is_favorite else "#64748b"
         min_width = "42px" if icon_only else "auto"
         padding = "0" if icon_only else "0.15rem 0.8rem"
-        st.markdown(
-            f"""
+        font_size = "1.02rem" if icon_only else "0.88rem"
+        style_block = (
+            """
             <style>
-            .st-key-{safe_key} {{
+            .st-key-__SAFE_KEY__ {{
               display: flex;
               justify-content: flex-end;
             }}
-            .st-key-{safe_key} button {{
+            .st-key-__SAFE_KEY__ button {{
               min-height: 36px !important;
-              min-width: {min_width} !important;
-              padding: {padding} !important;
+              min-width: __MIN_WIDTH__ !important;
+              padding: __PADDING__ !important;
               border-radius: 999px !important;
-              border: 1px solid {active_border} !important;
-              background: {active_bg} !important;
-              color: {active_color} !important;
-              font-size: {("1.02rem" if icon_only else "0.88rem")} !important;
+              border: 1px solid __ACTIVE_BORDER__ !important;
+              background: __ACTIVE_BG__ !important;
+              color: __ACTIVE_COLOR__ !important;
+              font-size: __FONT_SIZE__ !important;
               font-weight: 800 !important;
               white-space: nowrap !important;
               box-shadow: none !important;
             }}
             </style>
-            """,
+            """
+            .replace("__SAFE_KEY__", safe_key)
+            .replace("__MIN_WIDTH__", min_width)
+            .replace("__PADDING__", padding)
+            .replace("__ACTIVE_BORDER__", active_border)
+            .replace("__ACTIVE_BG__", active_bg)
+            .replace("__ACTIVE_COLOR__", active_color)
+            .replace("__FONT_SIZE__", font_size)
+        )
+        st.markdown(
+            style_block,
             unsafe_allow_html=True,
         )
     if use_container_width is None:
@@ -14919,10 +14930,9 @@ def _render_dashboard_kpi_cards(recommended_rows: pd.DataFrame, notice_rows: pd.
     cols = st.columns(3, gap="medium")
     for column, (card_key, label, value, copy, icon) in zip(cols, cards):
         safe_key = _css_safe_key(f"dashboard_kpi_{card_key}")
-        st.markdown(
-            f"""
+        style_block = """
             <style>
-            .st-key-{safe_key} button {{
+            .st-key-__SAFE_KEY__ button {{
               min-height: 88px !important;
               width: 100% !important;
               padding: 0.85rem 0.95rem !important;
@@ -14937,14 +14947,16 @@ def _render_dashboard_kpi_cards(recommended_rows: pd.DataFrame, notice_rows: pd.
               font-size: 0.82rem !important;
               font-weight: 700 !important;
             }}
-            .st-key-{safe_key} button:hover {{
+            .st-key-__SAFE_KEY__ button:hover {{
               border-color: #93c5fd !important;
               background: #f8fbff !important;
               color: #1d4ed8 !important;
               box-shadow: 0 14px 28px rgba(37, 99, 235, 0.10) !important;
             }}
             </style>
-            """,
+            """.replace("__SAFE_KEY__", safe_key)
+        st.markdown(
+            style_block,
             unsafe_allow_html=True,
         )
         with column:
