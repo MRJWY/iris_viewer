@@ -8710,6 +8710,11 @@ def build_positive_recommendation_mask(df: pd.DataFrame) -> pd.Series:
     ).fillna("").astype(str)
     return recommendation_series.apply(_normalize_recommendation_value).eq("추천")
 
+
+def is_positive_recommendation(value: object) -> bool:
+    return _normalize_recommendation_value(clean(value)) == "추천"
+
+
 def _normalize_recommendation_filter(value: str) -> str:
     normalized = _normalize_recommendation_value(value)
     if normalized in {option for option, _ in RECOMMENDATION_FILTER_OPTIONS}:
