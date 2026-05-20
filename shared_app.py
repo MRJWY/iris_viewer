@@ -4249,6 +4249,24 @@ def get_current_user_domain() -> str:
     return normalize_email_domain(get_current_user_email())
 
 
+def get_current_user_affiliation() -> str:
+    user = st.session_state.get("auth_user") or {}
+    if isinstance(user, dict):
+        organization = clean(user.get("organization"))
+        if organization:
+            return organization
+        latest_request = get_latest_signup_request_for_account(
+            {
+                "user_id": clean(user.get("user_id")),
+                "email": clean(user.get("email")),
+            }
+        )
+        organization = clean(latest_request.get("organization"))
+        if organization:
+            return organization
+    return ""
+
+
 def get_admin_user_ids() -> set[str]:
     raw_value = get_env("ADMIN_USER_IDS", "admin")
     return {clean(item).lower() for item in clean(raw_value).split(",") if clean(item)}
@@ -4646,6 +4664,7 @@ def render_signup_form() -> None:
     with st.form("signup_form"):
         user_id = st.text_input("아이디", key="signup_user_id")
         display_name = st.text_input("이름", key="signup_display_name")
+        organization = st.text_input("소속", key="signup_organization")
         email = st.text_input("이메일", key="signup_email")
         password = st.text_input("비밀번호", type="password", key="signup_password")
         password_confirm = st.text_input("비밀번호 확인", type="password", key="signup_password_confirm")
@@ -4659,6 +4678,7 @@ def render_signup_form() -> None:
                 user_id=user_id,
                 password=password,
                 display_name=display_name,
+                organization=organization,
                 email=email,
             )
             st.success("가입 요청을 보냈습니다. 관리자가 승인하면 로그인할 수 있습니다.")
@@ -4682,10 +4702,12 @@ def render_login_page(mode_config: AppModeConfig, accounts: dict[str, dict[str, 
                 if submitted:
                     account = accounts.get(clean(user_id))
                     if account and clean(account.get("status")).lower() == "approved" and verify_password(password, account.get("password_hash", "")):
+                        latest_request = get_latest_signup_request_for_account(account)
                         st.session_state["auth_user"] = {
                             "user_id": clean(account.get("user_id")),
                             "display_name": clean(account.get("display_name")),
                             "email": clean(account.get("email")),
+                            "organization": clean(latest_request.get("organization")),
                             "role": clean(account.get("role")) or "viewer",
                         }
                         token = encode_auth_token(account.get("user_id", ""))
@@ -4965,17 +4987,20 @@ def sync_auth_account_status(
     load_auth_user_accounts.clear()
 
 
-def submit_signup_request(*, user_id: str, password: str, display_name: str, email: str) -> None:
+def submit_signup_request(*, user_id: str, password: str, display_name: str, organization: str, email: str) -> None:
     user_id = clean(user_id)
     password = clean(password)
     email = clean(email).lower()
     display_name = clean(display_name) or user_id
+    organization = clean(organization)
     if not user_id:
         raise RuntimeError("아이디를 입력해 주세요.")
     if len(user_id) < 3:
         raise RuntimeError("아이디는 3자 이상이어야 합니다.")
     if not re.match(r"^[A-Za-z0-9_.-]+$", user_id):
         raise RuntimeError("아이디는 영문, 숫자, 밑줄, 점, 하이픈만 사용할 수 있습니다.")
+    if not organization:
+        raise RuntimeError("소속을 입력해 주세요.")
     if len(password) < 6:
         raise RuntimeError("비밀번호는 6자 이상이어야 합니다.")
 
@@ -5013,7 +5038,7 @@ def submit_signup_request(*, user_id: str, password: str, display_name: str, ema
         {
             "name": display_name,
             "email": email,
-            "organization": "",
+            "organization": organization,
             "account_type": "viewer",
             "request_note": f"requested_user_id={user_id}",
             "status": "PENDING",
@@ -8767,69 +8792,41 @@ def _reset_favorites_workspace_filters() -> None:
     st.session_state.pop("favorites_workspace_sort", None)
 
 
-def _favorite_status_sort_rank(value: object) -> int:
-    text = normalize_notice_status_label(value) or clean(value)
-    if text in {"접수중", "마감임박"}:
-        return 0
-    if text == "예정":
-        return 1
-    if text == "마감":
-        return 2
-    return 1
-
-
-def _favorite_deadline_sort_value(period_value: object, status_value: object, dday_value: object) -> pd.Timestamp:
-    status_text = normalize_notice_status_label(status_value) or clean(status_value)
-    if status_text == "마감":
-        return pd.Timestamp.max
-
-    period_end = extract_period_end(period_value)
-    if pd.notna(period_end):
-        return period_end
-
-    dday_text = clean(dday_value)
-    today = pd.Timestamp.now().normalize()
-    if dday_text == "D-Day":
-        return today
-    match = re.fullmatch(r"D-(\d+)", dday_text)
-    if match:
-        return today + pd.Timedelta(days=int(match.group(1)))
-    return pd.Timestamp.max
-
-
 def _sort_favorites_workspace_entries(rows: pd.DataFrame, sort_option: str) -> pd.DataFrame:
     if rows.empty:
         return rows
 
     working = rows.copy()
-    working["_favorite_status_rank"] = working["Status"].apply(_favorite_status_sort_rank)
-    working["_favorite_deadline_sort"] = working.apply(
-        lambda row: _favorite_deadline_sort_value(row.get("Period"), row.get("Status"), row.get("D-Day")),
-        axis=1,
-    )
-    working["_favorite_score_sort"] = (
-        to_numeric_column(working["Score"])
-        if "Score" in working.columns
-        else pd.Series(0, index=working.index, dtype="float64")
-    )
+    if "_sort_date" not in working.columns:
+        working["_sort_date"] = pd.NaT
 
     if sort_option == "추천도순":
+        working["_queue_score_sort"] = (
+            to_numeric_column(working["Score"])
+            if "Score" in working.columns
+            else pd.Series(0, index=working.index, dtype="float64")
+        )
         return working.sort_values(
-            by=["_favorite_status_rank", "_favorite_score_sort", "_favorite_deadline_sort", "_sort_date", "Title"],
-            ascending=[True, False, True, False, True],
+            by=["_queue_score_sort", "_sort_date", "Title"],
+            ascending=[False, False, True],
             na_position="last",
             kind="stable",
         )
     if sort_option == "최신 등록일순":
         return working.sort_values(
-            by=["_favorite_status_rank", "_sort_date", "_favorite_deadline_sort", "Title"],
-            ascending=[True, False, True, True],
+            by=["_sort_date", "Title"],
+            ascending=[False, True],
             na_position="last",
             kind="stable",
         )
+    working["_queue_deadline_sort"] = working["D-Day"].apply(
+        lambda value: 0
+        if clean(value) == "D-Day"
+        else (int(re.fullmatch(r"D-(\d+)", clean(value)).group(1)) if re.fullmatch(r"D-(\d+)", clean(value)) else 9999)
+    )
     return working.sort_values(
-        by=["_favorite_status_rank", "_favorite_deadline_sort", "_sort_date", "Title"],
-        ascending=[True, True, False, True],
+        by=["_queue_deadline_sort", "_sort_date", "Title"],
+        ascending=[True, False, True],
         na_position="last",
         kind="stable",
     )
@@ -10233,6 +10230,7 @@ def _build_favorites_workspace_entries(
                 "Review": FAVORITE_REVIEW_STATUS,
                 "D-Day": clean(row.get("D-Day")) or "-",
                 "Recommendation": clean(row.get("Recommendation")) or "-",
+                "Score": row.get("Score"),
                 "Budget": clean(row.get("Budget")) or "-",
                 "Recent Memo": truncate_text(_recent_comment_for_notice(comment_lookup, source_key, notice_id), max_chars=72) or "-",
                 "Agency": clean(row.get("Agency")) or "-",
@@ -10241,6 +10239,7 @@ def _build_favorites_workspace_entries(
                 "Summary": truncate_text(clean(row.get("Summary")), max_chars=150) or "-",
                 "RFP Count": clean(row.get("RFP Count")) or "",
                 "Keywords": ", ".join(_extract_dashboard_keywords(row, limit=3)),
+                "_sort_date": row.get("_sort_date"),
                 "_selection_type": "notice",
                 "_selection_id": notice_id,
                 "_source_key": source_key,
@@ -16193,7 +16192,7 @@ def render_public_workspace_navigation(mode_config: AppModeConfig, current_sourc
     logout_params = with_auth_params(get_query_params_dict())
     logout_params["logout"] = "1"
     logout_href = f"?{urlencode(logout_params)}"
-    affiliation_label = escape(get_current_user_domain() or "Researcher")
+    affiliation_label = escape(get_current_user_affiliation() or get_current_user_domain() or "Researcher")
     user_label = escape(get_current_user_label() or get_current_user_id() or "User")
     st.markdown(
         (
