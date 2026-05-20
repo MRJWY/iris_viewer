@@ -3098,6 +3098,7 @@ def _normalize_workspace_shell_route(route: dict[str, object]) -> dict[str, obje
 
 SOURCE_RENDERERS = {
     "dashboard": render_dashboard_source,
+    "notices": render_notices_source,
     "iris": render_iris_source,
     "tipa": render_tipa_source,
     "nipa": render_nipa_source,
@@ -14915,6 +14916,12 @@ def render_public_workspace_navigation(mode_config: AppModeConfig, current_sourc
         if group.key == "workspace"
         for item in group.items
     ]
+    if not nav_items:
+        nav_items = [
+            (item.label, item.source_key, item.page_key)
+            for group in mode_config.nav_groups
+            for item in group.items
+        ]
     nav_links: list[str] = []
     for label, source_key, page_key in nav_items:
         active_class = " app-nav-item-active" if current_source == source_key and current_page == page_key else ""
@@ -15072,6 +15079,27 @@ def _inject_compact_public_dashboard_styles() -> None:
           font-size: 0.82rem;
           font-weight: 500;
         }
+        .rfp-card-row {
+          display: flex;
+          gap: 1rem;
+          overflow-x: auto;
+          overflow-y: hidden;
+          padding: 0.05rem 0.05rem 0.55rem;
+          scroll-snap-type: x proximity;
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 #f8fafc;
+        }
+        .rfp-card-row::-webkit-scrollbar {
+          height: 10px;
+        }
+        .rfp-card-row::-webkit-scrollbar-track {
+          background: #f8fafc;
+          border-radius: 999px;
+        }
+        .rfp-card-row::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 999px;
+        }
         .rfp-card {
           flex: 0 0 360px;
           min-height: 236px;
@@ -15084,6 +15112,13 @@ def _inject_compact_public_dashboard_styles() -> None:
           box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
           text-decoration: none !important;
           color: #000000;
+          scroll-snap-align: start;
+          transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+        }
+        .rfp-card:hover {
+          transform: translateY(-2px);
+          border-color: #cbd5e1;
+          box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
         }
         .rfp-card-title {
           color: #000000;

@@ -118,36 +118,17 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
         SourceRouteConfig("favorites", "관심 공고", "favorites", True, "favorites"),
     )
 
-    viewer_nav_groups = (
-        NavGroupConfig(
-            "dashboard",
-            "Dashboard",
-            (
-                NavItemConfig("dashboard", "Dashboard", "dashboard", "dashboard"),
-            ),
-        ),
-        NavGroupConfig(
-            "rfp_queue",
-            "RFP Queue",
-            (
-                NavItemConfig("rfp_queue", "RFP Queue", "iris", "rfp_queue"),
-            ),
-        ),
-        NavGroupConfig(
-            "notice_queue",
-            "Notice Queue",
-            (
-                NavItemConfig("notice_queue", "Notice Queue", "notices", "notice_queue"),
-            ),
-        ),
-        NavGroupConfig(
-            "favorites",
-            "Favorites",
-            (
-                NavItemConfig("favorites", "Favorites", "favorites", "favorites"),
-            ),
+    workspace_group = NavGroupConfig(
+        "workspace",
+        "Workspace",
+        (
+            NavItemConfig("dashboard_home", "Dashboard", "dashboard", "dashboard"),
+            NavItemConfig("iris_queue", "RFP Queue", "iris", "rfp_queue"),
+            NavItemConfig("notices_home", "Notice Queue", "notices", "notice_queue"),
+            NavItemConfig("favorites_home", "Favorites", "favorites", "favorites"),
         ),
     )
+    viewer_nav_groups = (workspace_group,)
     if normalized_mode == "viewer":
         return AppModeConfig(
             mode="viewer",
