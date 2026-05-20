@@ -4315,8 +4315,15 @@ def logout_current_user() -> None:
     st.session_state.pop("auth_token", None)
     params = get_query_params_dict()
     params.pop("auth", None)
+    params.pop("logout", None)
     replace_query_params(params)
     st.rerun()
+
+
+def consume_workspace_logout_query_action() -> None:
+    if clean(get_query_param("logout")).lower() not in {"1", "true", "y", "yes"}:
+        return
+    logout_current_user()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -15638,6 +15645,12 @@ def _inject_public_workspace_shell_styles() -> None:
     st.markdown(
         """
         <style>
+        html, body, [class*="css"], .stApp,
+        [data-testid="stAppViewContainer"],
+        [data-testid="stAppViewBlockContainer"],
+        [data-testid="stHeader"] {
+          background: #ffffff !important;
+        }
         .app-shell {
           min-height: 96px;
           display: grid;
@@ -15712,6 +15725,7 @@ def _inject_public_workspace_shell_styles() -> None:
           gap: 0.55rem;
           min-width: 0;
         }
+        .app-user-link,
         .app-user-menu {
           min-height: 44px;
           display: inline-flex;
@@ -15724,8 +15738,12 @@ def _inject_public_workspace_shell_styles() -> None:
           border-radius: 12px;
           font-size: 0.94rem;
           font-weight: 700;
+          text-decoration: none !important;
           white-space: nowrap;
           box-shadow: none;
+        }
+        .app-user-link {
+          color: #374151 !important;
         }
         .app-user-menu {
           align-items: flex-start;
@@ -15787,6 +15805,9 @@ def render_public_workspace_navigation(mode_config: AppModeConfig, current_sourc
             f'<a class="app-nav-item{active_class}" href="{escape(href, quote=True)}" target="_self">{escape(label)}</a>'
         )
 
+    logout_params = with_auth_params(get_query_params_dict())
+    logout_params["logout"] = "1"
+    logout_href = f"?{urlencode(logout_params)}"
     user_label = escape(get_current_user_label() or get_current_user_id() or "User")
     st.markdown(
         (
@@ -15798,6 +15819,7 @@ def render_public_workspace_navigation(mode_config: AppModeConfig, current_sourc
             '</div>'
             f'<nav class="app-nav">{"".join(nav_links)}</nav>'
             '<div class="app-actions">'
+            f'<a class="app-user-link app-user-link-logout" href="{escape(logout_href, quote=True)}" target="_self">로그아웃</a>'
             f'<div class="app-user-menu"><span class="app-user-name">{user_label}</span><span class="app-user-role">Researcher</span></div>'
             '</div>'
             '</div>'
@@ -16562,6 +16584,7 @@ def main(app_mode: str = "viewer"):
     inject_opportunity_detail_alignment_styles()
     inject_viewer_layout_styles()
     require_login(mode_config)
+    consume_workspace_logout_query_action()
     consume_favorite_toggle_query_action()
 
     sheet_names = {
