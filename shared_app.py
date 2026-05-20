@@ -370,6 +370,9 @@ def normalize_row_dict(row: dict[str, object] | pd.Series | None) -> dict[str, o
     return dict(row)
 
 
+def row_has_data(row: dict[str, object] | pd.Series | None) -> bool:
+    return bool(normalize_row_dict(row))
+
 def normalize_opportunity_source_key(source_key: object) -> str:
     return SOURCE_KEY_ALIAS_MAP.get(clean(source_key).lower(), clean(source_key).lower())
 
@@ -14622,20 +14625,20 @@ def _inject_public_workspace_shell_styles() -> None:
         """
         <style>
         .app-shell {
-          min-height: 68px;
+          min-height: 82px;
           display: grid;
-          grid-template-columns: minmax(220px, 260px) minmax(320px, 1fr) minmax(320px, auto);
+          grid-template-columns: auto minmax(320px, 1fr) auto;
           align-items: center;
-          gap: 1.1rem;
-          margin: -0.45rem 0 1.25rem;
-          padding: 0.1rem 0.4rem 0.2rem;
-          background: rgba(255, 255, 255, 0.98);
-          border-bottom: 1px solid #dbe4f0;
+          gap: 1.35rem;
+          margin: -0.1rem 0 0.8rem;
+          padding: 0 0 0.25rem;
+          background: #ffffff;
+          border-bottom: 1px solid #e5e7eb;
         }
         .app-brand {
           display: flex;
           align-items: center;
-          gap: 0.75rem;
+          gap: 0.55rem;
           color: #0f172a;
           font-size: 1rem;
           font-weight: 800;
@@ -14645,35 +14648,38 @@ def _inject_public_workspace_shell_styles() -> None:
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 32px;
-          height: 32px;
+          width: 36px;
+          height: 36px;
           color: #ffffff;
-          background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
-          font-size: 1rem;
+          background: linear-gradient(135deg, #1d4ed8, #2563eb);
+          font-size: 0.88rem;
           font-weight: 800;
-          border-radius: 10px;
+          border-radius: 12px;
           box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
         }
         .app-brand-copy {
-          display: flex;
-          align-items: baseline;
-          gap: 0.42rem;
+          display: inline-flex;
+          flex-direction: column;
+          gap: 0.05rem;
         }
         .app-brand-title {
-          color: #0f172a;
-          font-size: 0.98rem;
-          font-weight: 850;
+          color: #000000;
+          font-size: 1.18rem;
+          font-weight: 700;
+          line-height: 1.12;
+          letter-spacing: -0.04em;
         }
         .app-brand-subtitle {
-          color: #475569;
-          font-size: 0.76rem;
-          font-weight: 650;
+          color: #64748b;
+          font-size: 0.74rem;
+          font-weight: 700;
+          letter-spacing: 0.01em;
         }
         .app-nav {
           display: flex;
           align-items: stretch;
           height: 100%;
-          gap: 1.45rem;
+          gap: 1.8rem;
           min-width: 0;
         }
         .app-nav-item {
@@ -14683,7 +14689,7 @@ def _inject_public_workspace_shell_styles() -> None:
           color: #475569;
           border-bottom: 2px solid transparent;
           font-size: 0.94rem;
-          font-weight: 650;
+          font-weight: 700;
           text-decoration: none !important;
           white-space: nowrap;
         }
@@ -14702,8 +14708,8 @@ def _inject_public_workspace_shell_styles() -> None:
           min-width: 0;
         }
         .app-search {
-          min-width: min(290px, 34vw);
-          height: 38px;
+          min-width: min(280px, 30vw);
+          height: 40px;
           display: flex;
           align-items: center;
           gap: 0.55rem;
@@ -14719,9 +14725,8 @@ def _inject_public_workspace_shell_styles() -> None:
           color: #475569;
           font-size: 0.84rem;
         }
-        .app-icon-button,
         .app-user-menu {
-          min-height: 38px;
+          min-height: 40px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -14734,29 +14739,6 @@ def _inject_public_workspace_shell_styles() -> None:
           font-weight: 650;
           white-space: nowrap;
           box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-        }
-        .app-icon-button {
-          position: relative;
-          width: 38px;
-          padding: 0;
-        }
-        .app-notice-badge {
-          position: absolute;
-          top: -4px;
-          right: -3px;
-          min-width: 18px;
-          height: 18px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          padding: 0 0.2rem;
-          color: #ffffff;
-          background: #ef4444;
-          border: 2px solid #ffffff;
-          border-radius: 999px;
-          font-size: 0.66rem;
-          font-weight: 800;
-          line-height: 1;
         }
         .app-user-menu {
           align-items: flex-start;
@@ -14805,10 +14787,10 @@ def _inject_public_workspace_shell_styles() -> None:
 def render_public_workspace_navigation(mode_config: AppModeConfig, current_source: str, current_page: str) -> None:
     _inject_public_workspace_shell_styles()
     nav_items = [
-        ("Dashboard", "dashboard", "dashboard"),
-        ("RFP Queue", "iris", "rfp_queue"),
-        ("Notice Queue", "notices", "notice_queue"),
-        ("Favorites", "favorites", "favorites"),
+        (item.label, item.source_key, item.page_key)
+        for group in mode_config.nav_groups
+        if group.key == "workspace"
+        for item in group.items
     ]
     nav_links: list[str] = []
     for label, source_key, page_key in nav_items:
@@ -14823,15 +14805,15 @@ def render_public_workspace_navigation(mode_config: AppModeConfig, current_sourc
         (
             '<div class="app-shell">'
             '<div class="app-brand">'
-            '<span class="app-brand-mark">X</span>'
+            '<span class="app-brand-mark">IR</span>'
             '<span class="app-brand-copy">'
             '<span class="app-brand-title">R&amp;D Opportunity</span>'
-            '<span class="app-brand-subtitle">Public Viewer</span>'
+            '<span class="app-brand-subtitle">Opportunity Workspace</span>'
             '</span>'
             '</div>'
             f'<nav class="app-nav">{"".join(nav_links)}</nav>'
             '<div class="app-actions">'
-            '<div class="app-icon-button" aria-label="Notifications">&#128276;<span class="app-notice-badge">3</span></div>'
+            '<div class="app-search"><span class="app-search-icon">&#128269;</span><span>공고명 / 과제명 / 키워드 검색</span></div>'
             f'<div class="app-user-menu"><span class="app-user-name">{user_label}</span><span class="app-user-role">Researcher</span></div>'
             '</div>'
             '</div>'
@@ -14845,48 +14827,48 @@ def _inject_compact_public_dashboard_styles() -> None:
         """
         <style>
         .main .block-container {
-          max-width: min(1920px, calc(100vw - 0.75rem));
-          padding-left: 0.7rem;
-          padding-right: 0.7rem;
-          padding-top: 0.85rem;
+          max-width: 1440px;
+          padding-left: clamp(1.2rem, 2vw, 2rem);
+          padding-right: clamp(1.2rem, 2vw, 2rem);
+          padding-top: 1rem;
         }
         .app-shell {
-          gap: 0.9rem;
-          margin-bottom: 0.8rem;
-          grid-template-columns: minmax(220px, 250px) minmax(320px, 1fr) auto;
+          gap: 1.35rem;
+          margin-bottom: 1rem;
+          grid-template-columns: auto minmax(320px, 1fr) auto;
         }
         .dashboard-shell {
           padding: 0;
-          gap: 0.85rem;
+          gap: 1rem;
         }
         .dashboard-section,
         .queue-table-card,
         .summary-panel {
-          border-radius: 14px;
-          padding: 0.95rem 1rem;
+          border-radius: 18px;
+          padding: 1rem 1.05rem;
         }
         .dashboard-kpi-grid {
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 0.8rem;
-          margin: 0.45rem 0 0.95rem;
+          gap: 0.95rem;
+          margin: 0.55rem 0 1.1rem;
         }
         .rfp-card {
-          min-height: 208px;
-          padding: 0.9rem;
+          min-height: 220px;
+          padding: 1rem;
         }
         .rfp-card-title {
-          font-size: 0.92rem;
+          font-size: 0.96rem;
         }
         .rfp-card-notice,
         .rfp-card-analysis,
         .rfp-card-meta,
         .notice-row-meta,
         .notice-row-summary {
-          font-size: 0.78rem;
+          font-size: 0.81rem;
         }
         .dashboard-search-meta {
           color: #64748b;
-          font-size: 0.8rem;
+          font-size: 0.82rem;
           font-weight: 700;
           display: flex;
           align-items: center;
