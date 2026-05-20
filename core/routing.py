@@ -290,7 +290,7 @@ def build_rfp_detail_route(item_id: str, source_key: str | None = None) -> dict[
 
 def build_notice_detail_route(notice_id: str, source_key: str | None = None) -> dict[str, Any]:
     normalized_source = _clean(source_key) or "iris"
-    detail_source_key = normalized_source if normalized_source in {"iris", "tipa", "nipa", "favorites"} else "iris"
+    detail_source_key = normalized_source if normalized_source in {"iris", "tipa", "nipa", "bipa", "bizinfo", "favorites"} else "iris"
     page_key = "favorites" if detail_source_key == "favorites" else "notice_queue"
     return normalize_route(
         {

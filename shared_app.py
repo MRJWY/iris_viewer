@@ -107,6 +107,42 @@ def resolve_nipa_opportunity_archive_sheet(getter=None) -> str:
     )
 
 
+def resolve_bipa_opportunity_current_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("BIPA_OPPORTUNITY_CURRENT_SHEET",),
+        legacy_keys=("BIPA_OPPORTUNITY_MASTER_SHEET",),
+        default_name="BIPA_OPPORTUNITY_CURRENT",
+        legacy_default_names=("BIPA_OPPORTUNITY_MASTER",),
+        getter=getter,
+    )
+
+
+def resolve_bipa_opportunity_archive_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("BIPA_OPPORTUNITY_ARCHIVE_SHEET",),
+        default_name="BIPA_OPPORTUNITY_ARCHIVE",
+        getter=getter,
+    )
+
+
+def resolve_bizinfo_opportunity_current_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("BIZINFO_OPPORTUNITY_CURRENT_SHEET",),
+        legacy_keys=("BIZINFO_OPPORTUNITY_MASTER_SHEET",),
+        default_name="BIZINFO_OPPORTUNITY_CURRENT",
+        legacy_default_names=("BIZINFO_OPPORTUNITY_MASTER",),
+        getter=getter,
+    )
+
+
+def resolve_bizinfo_opportunity_archive_sheet(getter=None) -> str:
+    return _resolve_sheet_name(
+        current_keys=("BIZINFO_OPPORTUNITY_ARCHIVE_SHEET",),
+        default_name="BIZINFO_OPPORTUNITY_ARCHIVE",
+        getter=getter,
+    )
+
+
 def resolve_canonical_notice_master_sheet(getter=None) -> str:
     return _resolve_sheet_name(
         current_keys=("CANONICAL_NOTICE_MASTER_SHEET", "NOTICE_UNIFIED_MASTER_SHEET"),
@@ -306,10 +342,13 @@ STATUS_KEY_CANDIDATES = ["상태키", "status_key"]
 
 SOURCE_KEY_ALIAS_MAP = {
     "iris": "iris",
-    "notices": "iris",
+    "notices": "notices",
     "tipa": "tipa",
     "mss": "tipa",
     "nipa": "nipa",
+    "bipa": "bipa",
+    "bizinfo": "bizinfo",
+    "biz-info": "bizinfo",
     "favorites": "favorites",
 }
 
@@ -374,6 +413,41 @@ def normalize_opportunity_source_key(source_key: object) -> str:
     return SOURCE_KEY_ALIAS_MAP.get(clean(source_key).lower(), clean(source_key).lower())
 
 
+def get_external_source_dataset_specs() -> tuple[dict[str, str], ...]:
+    mode_config = build_app_mode_config("viewer", nipa_view_columns=tuple(NIPA_VIEW_COLUMNS))
+    specs: list[dict[str, str]] = []
+    for source in mode_config.sources:
+        if not source.page_configs:
+            continue
+        notice_page = next(
+            (
+                page
+                for page in source.page_configs
+                if page.kind == "notice" and page.data_key and page.origin_key and "scheduled" not in page.key
+            ),
+            None,
+        )
+        archive_page = next((page for page in source.page_configs if page.kind == "archive"), None)
+        opportunity_page = next((page for page in source.page_configs if page.kind == "opportunity" and page.data_key), None)
+        if notice_page is None or archive_page is None or opportunity_page is None:
+            continue
+        loader_prefix = clean(opportunity_page.data_key).split("_", 1)[0].lower()
+        specs.append(
+            {
+                "source_key": source.key,
+                "source_label": source.label,
+                "loader_prefix": loader_prefix,
+                "current_notice_key": notice_page.data_key,
+                "current_origin_key": notice_page.origin_key,
+                "past_notice_key": archive_page.secondary_data_key,
+                "past_origin_key": archive_page.secondary_origin_key,
+                "opportunity_key": opportunity_page.data_key,
+                "opportunity_archive_key": f"{loader_prefix}_opportunity_archive",
+            }
+        )
+    return tuple(specs)
+
+
 def is_retryable_gspread_api_error(exc: Exception) -> bool:
     api_error_cls = getattr(getattr(gspread, "exceptions", None), "APIError", None)
     if api_error_cls is None or not isinstance(exc, api_error_cls):
@@ -415,12 +489,60 @@ def run_gspread_call(operation, *args, **kwargs):
     raise RuntimeError("Google Sheets call failed without an explicit error.")
 
 
-def render_iris_page(page_key: str, datasets: dict[str, pd.DataFrame]) -> None:
+def _source_tagged_opportunity_frame(df: pd.DataFrame, *, source_key: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    tagged = df.copy()
+    if "source_key" not in tagged.columns or tagged["source_key"].fillna("").astype(str).str.strip().eq("").all():
+        tagged["source_key"] = source_key
+    return tagged
+
+
+def build_rfp_queue_frames(
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    current_frames = [_source_tagged_opportunity_frame(datasets["opportunity"], source_key="iris")]
+    all_frames = [
+        _source_tagged_opportunity_frame(datasets["opportunity"], source_key="iris"),
+        _source_tagged_opportunity_frame(datasets["opportunity_all"], source_key="iris"),
+    ]
+    if source_datasets:
+        for spec in get_external_source_dataset_specs():
+            current_frames.append(
+                _source_tagged_opportunity_frame(
+                    source_datasets.get(spec["opportunity_key"], pd.DataFrame()),
+                    source_key=spec["source_key"],
+                )
+            )
+            all_frames.extend(
+                [
+                    _source_tagged_opportunity_frame(
+                        source_datasets.get(spec["opportunity_key"], pd.DataFrame()),
+                        source_key=spec["source_key"],
+                    ),
+                    _source_tagged_opportunity_frame(
+                        source_datasets.get(spec["opportunity_archive_key"], pd.DataFrame()),
+                        source_key=spec["source_key"],
+                    ),
+                ]
+            )
+    current = pd.concat([frame for frame in current_frames if not frame.empty], ignore_index=True) if any(not frame.empty for frame in current_frames) else pd.DataFrame()
+    all_rows = pd.concat([frame for frame in all_frames if not frame.empty], ignore_index=True) if any(not frame.empty for frame in all_frames) else current
+    return current, all_rows
+
+
+def render_iris_page(
+    page_key: str,
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None = None,
+) -> None:
     if page_key in {"opportunity", "rfp_queue"}:
+        rfp_current_df, rfp_all_df = build_rfp_queue_frames(datasets, source_datasets)
         render_opportunity_page(
-            datasets["opportunity"],
+            rfp_current_df,
             page_key="rfp_queue",
-            all_df=datasets["opportunity_all"],
+            all_df=rfp_all_df,
         )
     elif page_key == "summary":
         render_summary_page(datasets["summary"], datasets["opportunity"])
@@ -491,13 +613,17 @@ def build_dashboard_notice_index(
     append_source(iris_df, source_key="iris", source_label="IRIS")
 
     if source_datasets:
-        tipa_base = combine_notice_frames(source_datasets["mss_current"], source_datasets["mss_past"])
-        tipa_df = filter_archived_notice_rows(tipa_base) if archived else filter_current_notice_rows(source_datasets["mss_current"])
-        append_source(tipa_df, source_key="tipa", source_label="중소기업벤처부")
-
-        nipa_base = combine_notice_frames(source_datasets["nipa_current"], source_datasets["nipa_past"])
-        nipa_df = filter_archived_notice_rows(nipa_base) if archived else filter_current_notice_rows(source_datasets["nipa_current"])
-        append_source(nipa_df, source_key="nipa", source_label="NIPA")
+        for spec in get_external_source_dataset_specs():
+            source_base = combine_notice_frames(
+                source_datasets.get(spec["current_notice_key"], pd.DataFrame()),
+                source_datasets.get(spec["past_notice_key"], pd.DataFrame()),
+            )
+            source_df = (
+                filter_archived_notice_rows(source_base)
+                if archived
+                else filter_current_notice_rows(source_datasets.get(spec["current_notice_key"], pd.DataFrame()))
+            )
+            append_source(source_df, source_key=spec["source_key"], source_label=spec["source_label"])
 
     if not frames:
         return pd.DataFrame(
@@ -533,12 +659,11 @@ def build_dashboard_source_snapshot_rows(
     current_notice_index = build_dashboard_notice_index(datasets, source_datasets, archived=False)
     archive_notice_index = build_dashboard_notice_index(datasets, source_datasets, archived=True)
 
-    opportunity_map: dict[str, pd.DataFrame] = {
-        "iris": datasets["opportunity"],
-        "tipa": source_datasets["mss_opportunity"] if source_datasets else pd.DataFrame(),
-        "nipa": source_datasets["nipa_opportunity"] if source_datasets else pd.DataFrame(),
-    }
-    source_labels = {"iris": "IRIS", "tipa": "중소기업벤처부", "nipa": "NIPA"}
+    opportunity_map: dict[str, pd.DataFrame] = {"iris": datasets["opportunity"]}
+    source_labels = {"iris": "IRIS"}
+    for spec in get_external_source_dataset_specs():
+        opportunity_map[spec["source_key"]] = source_datasets.get(spec["opportunity_key"], pd.DataFrame()) if source_datasets else pd.DataFrame()
+        source_labels[spec["source_key"]] = spec["source_label"]
 
     rows: list[dict[str, object]] = []
     for source_key, source_label in source_labels.items():
@@ -678,8 +803,12 @@ def build_dashboard_opportunity_index(
 
     append_source(datasets["opportunity"], source_key="iris", source_label="IRIS")
     if source_datasets:
-        append_source(source_datasets["mss_opportunity"], source_key="tipa", source_label="중소기업벤처부")
-        append_source(source_datasets["nipa_opportunity"], source_key="nipa", source_label="NIPA")
+        for spec in get_external_source_dataset_specs():
+            append_source(
+                source_datasets.get(spec["opportunity_key"], pd.DataFrame()),
+                source_key=spec["source_key"],
+                source_label=spec["source_label"],
+            )
 
     if not frames:
         return pd.DataFrame(columns=["source_key", "Source", "Notice ID", "Notice Title", "Project", "Recommendation", "Score", "Budget", "Reason", "Date", "_sort_date"])
@@ -992,9 +1121,14 @@ def render_dashboard_quick_links(mode_config: AppModeConfig) -> None:
     primary_links = [
         ("IRIS 진행", "iris", "notice"),
         ("IRIS Opportunity", "iris", "opportunity"),
-        ("중소기업벤처부 진행", "tipa", "tipa_current"),
-        ("NIPA 진행", "nipa", "nipa_current"),
     ]
+    for spec in get_external_source_dataset_specs():
+        current_page = next(
+            (page.key for page in get_source_config_map(mode_config).get(spec["source_key"], SourceRouteConfig("", "", "", False, "")).page_configs if page.kind == "notice"),
+            "",
+        )
+        if current_page:
+            primary_links.append((f"{spec['source_label']} 진행", spec["source_key"], current_page))
     secondary_links = [("관심 공고", "favorites", "favorites")]
     if "summary" in mode_config.valid_iris_pages:
         secondary_links.insert(0, ("IRIS Summary", "iris", "summary"))
@@ -3045,7 +3179,7 @@ def render_iris_source(
         render_notice_queue_page(datasets, source_datasets)
         return
 
-    render_iris_page(current_page_key, datasets)
+    render_iris_page(current_page_key, datasets, source_datasets)
 
 
 def _normalize_workspace_shell_route(route: dict[str, object]) -> dict[str, object]:
@@ -3070,7 +3204,7 @@ def _normalize_workspace_shell_route(route: dict[str, object]) -> dict[str, obje
             page_size=current_page_size,
             view=current_view,
             item_id=current_item_id,
-            source_key=current_source_key if current_source_key in {"iris", "tipa", "nipa"} else "iris",
+            source_key=current_source_key if current_source_key in {"iris", "tipa", "nipa", "bipa", "bizinfo"} else "iris",
         )
     if current_page == "notice_queue":
         return route_core.build_notice_queue_route(
@@ -3079,7 +3213,7 @@ def _normalize_workspace_shell_route(route: dict[str, object]) -> dict[str, obje
             page_size=current_page_size,
             view=current_view,
             item_id=current_item_id,
-            source_key=current_source_key if current_source_key in {"iris", "tipa", "nipa"} else "iris",
+            source_key=current_source_key if current_source_key in {"iris", "tipa", "nipa", "bipa", "bizinfo"} else "iris",
         )
     if current_page == "favorites":
         return route_core.build_favorites_route(
@@ -3093,15 +3227,19 @@ def _normalize_workspace_shell_route(route: dict[str, object]) -> dict[str, obje
     return normalized
 
 
-SOURCE_RENDERERS = {
-    "dashboard": render_dashboard_source,
-    "iris": render_iris_source,
-    "tipa": render_tipa_source,
-    "nipa": render_nipa_source,
-    "proposal": render_proposal_source,
-    "operations": render_operations_source,
-    "favorites": render_favorites_source,
-}
+def get_source_renderers() -> dict[str, object]:
+    return {
+        "dashboard": render_dashboard_source,
+        "notices": render_notices_source,
+        "iris": render_iris_source,
+        "tipa": render_tipa_source,
+        "nipa": render_nipa_source,
+        "bipa": render_nipa_source,
+        "bizinfo": render_nipa_source,
+        "proposal": render_proposal_source,
+        "operations": render_operations_source,
+        "favorites": render_favorites_source,
+    }
 
 
 def render_selected_source(
@@ -3115,7 +3253,8 @@ def render_selected_source(
 ) -> None:
     normalized_source_key = normalize_opportunity_source_key(source_key) or "iris"
     renderer_lookup_key = normalize_opportunity_source_key(source_config.renderer_key if source_config else normalized_source_key)
-    renderer = SOURCE_RENDERERS.get(renderer_lookup_key) or SOURCE_RENDERERS.get(normalized_source_key)
+    renderer_map = get_source_renderers()
+    renderer = renderer_map.get(renderer_lookup_key) or renderer_map.get(normalized_source_key)
     if renderer is None:
         fallback_config = source_config or SourceRouteConfig("iris", "IRIS", mode_config.default_iris_page, False, "iris")
         render_iris_source(fallback_config, mode_config, datasets, source_datasets, show_internal_tabs=show_internal_tabs)
@@ -4386,16 +4525,12 @@ def apply_user_review_statuses(
 
     scoped_source_datasets = dict(source_datasets) if source_datasets else source_datasets
     if scoped_source_datasets:
-        source_key_map = {
-            "mss_current": "tipa",
-            "mss_past": "tipa",
-            "mss_opportunity": "tipa",
-            "mss_opportunity_archive": "tipa",
-            "nipa_current": "nipa",
-            "nipa_past": "nipa",
-            "nipa_opportunity": "nipa",
-            "nipa_opportunity_archive": "nipa",
-        }
+        source_key_map = {}
+        for spec in get_external_source_dataset_specs():
+            source_key_map[spec["current_notice_key"]] = spec["source_key"]
+            source_key_map[spec["past_notice_key"]] = spec["source_key"]
+            source_key_map[spec["opportunity_key"]] = spec["source_key"]
+            source_key_map[spec["opportunity_archive_key"]] = spec["source_key"]
         for dataset_key, source_key in source_key_map.items():
             value = scoped_source_datasets.get(dataset_key)
             if isinstance(value, pd.DataFrame):
@@ -5192,6 +5327,46 @@ def load_nipa_past_df() -> tuple[pd.DataFrame, str]:
     )
 
 
+def load_bipa_notice_df() -> tuple[pd.DataFrame, str]:
+    sheet_name = get_env("BIPA_CURRENT_SHEET", "BIPA_CURRENT")
+    return load_source_notice_sheet(
+        primary_sheet_name=sheet_name,
+        master_sheet_name=get_env("BIPA_NOTICE_MASTER_SHEET", "BIPA_NOTICE_MASTER"),
+        normalize_func=normalize_nipa_notice_df,
+        past=False,
+    )
+
+
+def load_bipa_past_df() -> tuple[pd.DataFrame, str]:
+    sheet_name = get_env("BIPA_PAST_SHEET", "BIPA_PAST")
+    return load_source_notice_sheet(
+        primary_sheet_name=sheet_name,
+        master_sheet_name=get_env("BIPA_NOTICE_MASTER_SHEET", "BIPA_NOTICE_MASTER"),
+        normalize_func=normalize_nipa_notice_df,
+        past=True,
+    )
+
+
+def load_bizinfo_notice_df() -> tuple[pd.DataFrame, str]:
+    sheet_name = get_env("BIZINFO_CURRENT_SHEET", "BIZINFO_CURRENT")
+    return load_source_notice_sheet(
+        primary_sheet_name=sheet_name,
+        master_sheet_name=get_env("BIZINFO_NOTICE_MASTER_SHEET", "BIZINFO_NOTICE_MASTER"),
+        normalize_func=normalize_nipa_notice_df,
+        past=False,
+    )
+
+
+def load_bizinfo_past_df() -> tuple[pd.DataFrame, str]:
+    sheet_name = get_env("BIZINFO_PAST_SHEET", "BIZINFO_PAST")
+    return load_source_notice_sheet(
+        primary_sheet_name=sheet_name,
+        master_sheet_name=get_env("BIZINFO_NOTICE_MASTER_SHEET", "BIZINFO_NOTICE_MASTER"),
+        normalize_func=normalize_nipa_notice_df,
+        past=True,
+    )
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_mss_opportunity_df() -> pd.DataFrame:
     sheet_name = resolve_mss_opportunity_current_sheet(get_env)
@@ -5213,6 +5388,30 @@ def load_nipa_opportunity_df() -> pd.DataFrame:
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_nipa_opportunity_archive_df() -> pd.DataFrame:
     sheet_name = get_env("NIPA_OPPORTUNITY_ARCHIVE_SHEET", "NIPA_OPPORTUNITY_ARCHIVE")
+    return enrich_opportunity_df(load_optional_sheet_as_dataframe(sheet_name))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_bipa_opportunity_df() -> pd.DataFrame:
+    sheet_name = resolve_bipa_opportunity_current_sheet(get_env)
+    return enrich_opportunity_df(load_optional_sheet_as_dataframe(sheet_name))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_bipa_opportunity_archive_df() -> pd.DataFrame:
+    sheet_name = resolve_bipa_opportunity_archive_sheet(get_env)
+    return enrich_opportunity_df(load_optional_sheet_as_dataframe(sheet_name))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_bizinfo_opportunity_df() -> pd.DataFrame:
+    sheet_name = resolve_bizinfo_opportunity_current_sheet(get_env)
+    return enrich_opportunity_df(load_optional_sheet_as_dataframe(sheet_name))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_bizinfo_opportunity_archive_df() -> pd.DataFrame:
+    sheet_name = resolve_bizinfo_opportunity_archive_sheet(get_env)
     return enrich_opportunity_df(load_optional_sheet_as_dataframe(sheet_name))
 
 
@@ -5276,6 +5475,12 @@ def update_notice_review_status(notice_id: str, review_status: str, source_key: 
     if normalized_source == "nipa":
         update_nipa_review_status(notice_id, review_status)
         return
+    if normalized_source == "bipa":
+        update_bipa_review_status(notice_id, review_status)
+        return
+    if normalized_source == "bizinfo":
+        update_bizinfo_review_status(notice_id, review_status)
+        return
 
     _update_review_status_in_sheets(
         notice_id=notice_id,
@@ -5308,6 +5513,34 @@ def update_nipa_review_status(notice_id: str, review_status: str) -> None:
             get_env("NIPA_NOTICE_MASTER_SHEET", "NIPA_NOTICE_MASTER"),
         ],
         missing_message="NIPA 시트({sheet_names})에서 공고ID {notice_id}를 찾지 못했습니다.",
+    )
+    build_source_datasets.clear()
+
+
+def update_bipa_review_status(notice_id: str, review_status: str) -> None:
+    _update_review_status_in_sheets(
+        notice_id=notice_id,
+        review_status=review_status,
+        sheet_names=[
+            get_env("BIPA_CURRENT_SHEET", "BIPA_CURRENT"),
+            get_env("BIPA_PAST_SHEET", "BIPA_PAST"),
+            get_env("BIPA_NOTICE_MASTER_SHEET", "BIPA_NOTICE_MASTER"),
+        ],
+        missing_message="BIPA 시트({sheet_names})에서 공고ID {notice_id}를 찾지 못했습니다.",
+    )
+    build_source_datasets.clear()
+
+
+def update_bizinfo_review_status(notice_id: str, review_status: str) -> None:
+    _update_review_status_in_sheets(
+        notice_id=notice_id,
+        review_status=review_status,
+        sheet_names=[
+            get_env("BIZINFO_CURRENT_SHEET", "BIZINFO_CURRENT"),
+            get_env("BIZINFO_PAST_SHEET", "BIZINFO_PAST"),
+            get_env("BIZINFO_NOTICE_MASTER_SHEET", "BIZINFO_NOTICE_MASTER"),
+        ],
+        missing_message="BIZINFO 시트({sheet_names})에서 공고ID {notice_id}를 찾지 못했습니다.",
     )
     build_source_datasets.clear()
 
@@ -8426,10 +8659,9 @@ RECOMMENDATION_FILTER_OPTIONS: list[tuple[str, str]] = [
 ]
 TOP_TAB_OPTIONS: list[tuple[str, str]] = [
     ("IRIS", "iris"),
-    ("MSS", "tipa"),
-    ("NIPA", "nipa"),
-    ("????", "favorite"),
-    ("??/??", "archive"),
+    *[(spec["source_label"], spec["source_key"]) for spec in get_external_source_dataset_specs()],
+    ("Favorites", "favorite"),
+    ("Archive", "archive"),
 ]
 RECOMMENDATION_RANK = {
     "??": 3,
@@ -9796,7 +10028,7 @@ def _render_notice_queue_screen(
                 placeholder="전체",
             )
         with filter_cols[2]:
-            source_options = [label for label, _ in TOP_TAB_OPTIONS if label not in {"관심공고", "보관/마감"}]
+            source_options = [label for label, source_key in TOP_TAB_OPTIONS if source_key not in {"favorite", "archive"}]
             st.multiselect(
                 "출처",
                 options=source_options,
@@ -9845,11 +10077,7 @@ def _render_notice_queue_screen(
         )
         selected_sources = filters["source"]
         if selected_sources:
-            allowed_source_keys = {
-                "IRIS": "iris",
-                "MSS": "tipa",
-                "NIPA": "nipa",
-            }
+            allowed_source_keys = {label: source_key for label, source_key in TOP_TAB_OPTIONS}
             allowed_values = {allowed_source_keys.get(clean(value), clean(value).lower()) for value in selected_sources}
             filtered_view_rows = filtered_view_rows[
                 filtered_view_rows["source_key"].fillna("").astype(str).str.strip().isin(allowed_values)
@@ -11786,24 +12014,24 @@ def load_app_datasets(
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def build_source_datasets() -> dict[str, object]:
-    mss_current_df, mss_current_origin = load_mss_notice_df()
-    mss_past_df, mss_past_origin = load_mss_past_df()
-    nipa_current_df, nipa_current_origin = load_nipa_notice_df()
-    nipa_past_df, nipa_past_origin = load_nipa_past_df()
-    return {
-        "mss_current": mss_current_df,
-        "mss_current_origin": mss_current_origin,
-        "mss_past": mss_past_df,
-        "mss_past_origin": mss_past_origin,
-        "mss_opportunity": load_mss_opportunity_df(),
-        "mss_opportunity_archive": load_mss_opportunity_archive_df(),
-        "nipa_current": nipa_current_df,
-        "nipa_current_origin": nipa_current_origin,
-        "nipa_past": nipa_past_df,
-        "nipa_past_origin": nipa_past_origin,
-        "nipa_opportunity": load_nipa_opportunity_df(),
-        "nipa_opportunity_archive": load_nipa_opportunity_archive_df(),
-    }
+    datasets: dict[str, object] = {}
+    for spec in get_external_source_dataset_specs():
+        prefix = spec["loader_prefix"]
+        current_loader = globals().get(f"load_{prefix}_notice_df")
+        past_loader = globals().get(f"load_{prefix}_past_df")
+        opportunity_loader = globals().get(f"load_{prefix}_opportunity_df")
+        archive_loader = globals().get(f"load_{prefix}_opportunity_archive_df")
+        if not callable(current_loader) or not callable(past_loader) or not callable(opportunity_loader) or not callable(archive_loader):
+            continue
+        current_df, current_origin = current_loader()
+        past_df, past_origin = past_loader()
+        datasets[spec["current_notice_key"]] = current_df
+        datasets[spec["current_origin_key"]] = current_origin
+        datasets[spec["past_notice_key"]] = past_df
+        datasets[spec["past_origin_key"]] = past_origin
+        datasets[spec["opportunity_key"]] = opportunity_loader()
+        datasets[spec["opportunity_archive_key"]] = archive_loader()
+    return datasets
 
 
 def combine_notice_frames(*frames: pd.DataFrame) -> pd.DataFrame:
@@ -12483,19 +12711,20 @@ def build_favorite_notice_df(notice_view_df: pd.DataFrame, source_datasets: dict
     if not iris_df.empty:
         frames.append(iris_df)
 
-    mss_current_df = source_datasets["mss_current"]
-    mss_past_df = source_datasets["mss_past"]
-    mss_df = pd.concat([mss_current_df, mss_past_df], ignore_index=True) if not mss_current_df.empty or not mss_past_df.empty else pd.DataFrame()
-    if not mss_df.empty:
-        mss_df = mss_df.drop_duplicates(subset=["공고ID"], keep="first")
-        frames.append(normalize_favorite_notice_df(mss_df, source_key="tipa", source_label="중소기업벤처부"))
-
-    nipa_current_df = source_datasets["nipa_current"]
-    nipa_past_df = source_datasets["nipa_past"]
-    nipa_df = pd.concat([nipa_current_df, nipa_past_df], ignore_index=True) if not nipa_current_df.empty or not nipa_past_df.empty else pd.DataFrame()
-    if not nipa_df.empty:
-        nipa_df = nipa_df.drop_duplicates(subset=["공고ID"], keep="first")
-        frames.append(normalize_favorite_notice_df(nipa_df, source_key="nipa", source_label="NIPA"))
+    for spec in get_external_source_dataset_specs():
+        current_df = source_datasets.get(spec["current_notice_key"], pd.DataFrame()) if source_datasets else pd.DataFrame()
+        past_df = source_datasets.get(spec["past_notice_key"], pd.DataFrame()) if source_datasets else pd.DataFrame()
+        source_df = pd.concat([current_df, past_df], ignore_index=True) if not current_df.empty or not past_df.empty else pd.DataFrame()
+        if source_df.empty:
+            continue
+        source_df = source_df.drop_duplicates(subset=["공고ID"], keep="first")
+        frames.append(
+            normalize_favorite_notice_df(
+                source_df,
+                source_key=spec["source_key"],
+                source_label=spec["source_label"],
+            )
+        )
 
     if not frames:
         return pd.DataFrame()
@@ -14110,10 +14339,19 @@ def build_crawled_notice_collection(
     append_frame(datasets.get("notice_archive", pd.DataFrame()), source_key="iris", source_label="IRIS", scope="archive")
 
     source_datasets = source_datasets or {}
-    append_frame(source_datasets.get("mss_current", pd.DataFrame()), source_key="tipa", source_label="MSS", scope="current")
-    append_frame(source_datasets.get("mss_past", pd.DataFrame()), source_key="tipa", source_label="MSS", scope="archive")
-    append_frame(source_datasets.get("nipa_current", pd.DataFrame()), source_key="nipa", source_label="NIPA", scope="current")
-    append_frame(source_datasets.get("nipa_past", pd.DataFrame()), source_key="nipa", source_label="NIPA", scope="archive")
+    for spec in get_external_source_dataset_specs():
+        append_frame(
+            source_datasets.get(spec["current_notice_key"], pd.DataFrame()),
+            source_key=spec["source_key"],
+            source_label=spec["source_label"],
+            scope="current",
+        )
+        append_frame(
+            source_datasets.get(spec["past_notice_key"], pd.DataFrame()),
+            source_key=spec["source_key"],
+            source_label=spec["source_label"],
+            scope="archive",
+        )
 
     if not frames:
         return pd.DataFrame()
@@ -15703,8 +15941,6 @@ def main(app_mode: str = "viewer"):
         current_source = "favorites"
     elif current_page == "dashboard":
         current_source = "dashboard"
-    else:
-        current_source = "iris"
 
     render_public_workspace_navigation(mode_config, current_source, current_page)
 

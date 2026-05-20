@@ -57,12 +57,27 @@ class AppModeConfig:
     iris_tab_key: str
 
 
+def build_workspace_nav_items(sources: tuple[SourceRouteConfig, ...]) -> tuple[NavItemConfig, ...]:
+    items: list[NavItemConfig] = []
+    for source in sources:
+        if source.key in {"dashboard", "notices", "iris", "favorites"} or source.page_configs:
+            items.append(
+                NavItemConfig(
+                    f"{source.key}_home",
+                    source.label,
+                    source.key,
+                    source.default_page,
+                )
+            )
+    return tuple(items)
+
+
 def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] = ()) -> AppModeConfig:
-    normalized_mode = "viewer"
+    normalized_mode = "viewer" if str(app_mode or "").strip().lower() == "viewer" else "viewer"
 
     tipa_pages = (
-        SourcePageConfig("tipa_current", "진행 공고", "notice", "진행 공고", data_key="mss_current", origin_key="mss_current_origin"),
-        SourcePageConfig("tipa_scheduled", "예정 공고", "notice", "예정 공고", data_key="mss_current", origin_key="mss_current_origin"),
+        SourcePageConfig("tipa_current", "Current Notices", "notice", "Current Notices", data_key="mss_current", origin_key="mss_current_origin"),
+        SourcePageConfig("tipa_scheduled", "Scheduled Notices", "notice", "Scheduled Notices", data_key="mss_current", origin_key="mss_current_origin"),
         SourcePageConfig("tipa_opportunity", "Opportunity", "opportunity", "Opportunity", data_key="mss_opportunity"),
         SourcePageConfig(
             "tipa_archive",
@@ -78,18 +93,18 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
     nipa_pages = (
         SourcePageConfig(
             "nipa_current",
-            "진행 공고",
+            "Current Notices",
             "notice",
-            "진행 공고",
+            "Current Notices",
             data_key="nipa_current",
             origin_key="nipa_current_origin",
             view_columns=tuple(nipa_view_columns),
         ),
         SourcePageConfig(
             "nipa_scheduled",
-            "예정 공고",
+            "Scheduled Notices",
             "notice",
-            "예정 공고",
+            "Scheduled Notices",
             data_key="nipa_current",
             origin_key="nipa_current_origin",
             view_columns=tuple(nipa_view_columns),
@@ -107,73 +122,97 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
             view_columns=tuple(nipa_view_columns),
         ),
     )
+    bipa_pages = (
+        SourcePageConfig(
+            "bipa_current",
+            "Current Notices",
+            "notice",
+            "Current Notices",
+            data_key="bipa_current",
+            origin_key="bipa_current_origin",
+            view_columns=tuple(nipa_view_columns),
+        ),
+        SourcePageConfig(
+            "bipa_scheduled",
+            "Scheduled Notices",
+            "notice",
+            "Scheduled Notices",
+            data_key="bipa_current",
+            origin_key="bipa_current_origin",
+            view_columns=tuple(nipa_view_columns),
+        ),
+        SourcePageConfig("bipa_opportunity", "Opportunity", "opportunity", "Opportunity", data_key="bipa_opportunity"),
+        SourcePageConfig(
+            "bipa_archive",
+            "Archive",
+            "archive",
+            "Archive",
+            data_key="bipa_current",
+            origin_key="bipa_current_origin",
+            secondary_data_key="bipa_past",
+            secondary_origin_key="bipa_past_origin",
+            view_columns=tuple(nipa_view_columns),
+        ),
+    )
+    bizinfo_pages = (
+        SourcePageConfig(
+            "bizinfo_current",
+            "Current Notices",
+            "notice",
+            "Current Notices",
+            data_key="bizinfo_current",
+            origin_key="bizinfo_current_origin",
+            view_columns=tuple(nipa_view_columns),
+        ),
+        SourcePageConfig(
+            "bizinfo_scheduled",
+            "Scheduled Notices",
+            "notice",
+            "Scheduled Notices",
+            data_key="bizinfo_current",
+            origin_key="bizinfo_current_origin",
+            view_columns=tuple(nipa_view_columns),
+        ),
+        SourcePageConfig("bizinfo_opportunity", "Opportunity", "opportunity", "Opportunity", data_key="bizinfo_opportunity"),
+        SourcePageConfig(
+            "bizinfo_archive",
+            "Archive",
+            "archive",
+            "Archive",
+            data_key="bizinfo_current",
+            origin_key="bizinfo_current_origin",
+            secondary_data_key="bizinfo_past",
+            secondary_origin_key="bizinfo_past_origin",
+            view_columns=tuple(nipa_view_columns),
+        ),
+    )
 
     sources = (
         SourceRouteConfig("dashboard", "Dashboard", "dashboard", True, "dashboard"),
-        SourceRouteConfig("iris", "IRIS", "rfp_queue", False, "iris"),
-        SourceRouteConfig("tipa", "중소기업기술정보진흥원", "tipa_current", True, "external", page_configs=tipa_pages),
-        SourceRouteConfig("nipa", "NIPA", "nipa_current", True, "external", page_configs=nipa_pages),
-        SourceRouteConfig("proposal", "제안관리", "proposal", False, "proposal"),
-        SourceRouteConfig("operations", "운영관리", "operations", True, "operations"),
-        SourceRouteConfig("favorites", "관심 공고", "favorites", True, "favorites"),
+        SourceRouteConfig("notices", "Notice Queue", "notice_queue", True, "notices"),
+        SourceRouteConfig("iris", "RFP Queue", "rfp_queue", True, "iris"),
+        SourceRouteConfig("tipa", "MSS", "tipa_opportunity", True, "tipa", page_configs=tipa_pages),
+        SourceRouteConfig("nipa", "NIPA", "nipa_opportunity", True, "nipa", page_configs=nipa_pages),
+        SourceRouteConfig("bipa", "BIPA", "bipa_opportunity", True, "bipa", page_configs=bipa_pages),
+        SourceRouteConfig("bizinfo", "BIZINFO", "bizinfo_opportunity", True, "bizinfo", page_configs=bizinfo_pages),
+        SourceRouteConfig("proposal", "Proposal", "proposal", False, "proposal"),
+        SourceRouteConfig("operations", "Operations", "operations", True, "operations"),
+        SourceRouteConfig("favorites", "Favorites", "favorites", True, "favorites"),
     )
 
     viewer_nav_groups = (
         NavGroupConfig(
-            "dashboard",
-            "Dashboard",
-            (
-                NavItemConfig("dashboard", "Dashboard", "dashboard", "dashboard"),
-            ),
-        ),
-        NavGroupConfig(
-            "rfp_queue",
-            "RFP Queue",
-            (
-                NavItemConfig("rfp_queue", "RFP Queue", "iris", "rfp_queue"),
-            ),
-        ),
-        NavGroupConfig(
-            "notice_queue",
-            "Notice Queue",
-            (
-                NavItemConfig("notice_queue", "Notice Queue", "notices", "notice_queue"),
-            ),
-        ),
-        NavGroupConfig(
-            "favorites",
-            "Favorites",
-            (
-                NavItemConfig("favorites", "Favorites", "favorites", "favorites"),
-            ),
+            "workspace",
+            "Workspace",
+            build_workspace_nav_items(sources),
         ),
     )
-    if normalized_mode == "viewer":
-        return AppModeConfig(
-            mode="viewer",
-            page_title="RFP Intelligence Viewer",
-            header_title="RFP Intelligence Viewer",
-            header_caption="정부사업 공고 수집, 추천, 검토를 한 곳에서 보는 뷰어입니다.",
-            supports_summary=False,
-            nav_groups=viewer_nav_groups,
-            sources=sources,
-            default_source="dashboard",
-            default_iris_page="rfp_queue",
-            iris_tabs=(
-                ("rfp_queue", "RFP Queue"),
-                ("notice_queue", "Notice Queue"),
-                ("notice_scheduled", "예정 공고"),
-                ("notice_archive", "Archive"),
-            ),
-            valid_iris_pages=frozenset({"rfp_queue", "notice_queue", "notice_scheduled", "notice_archive"}),
-            iris_tab_key="iris_page_tabs",
-        )
 
     return AppModeConfig(
-        mode="viewer",
+        mode=normalized_mode,
         page_title="RFP Intelligence Viewer",
         header_title="RFP Intelligence Viewer",
-        header_caption="?????? ??? ???, ???, ????? ?????????? ????????",
+        header_caption="Viewer workspace for dashboard, queues, and crawler sources.",
         supports_summary=False,
         nav_groups=viewer_nav_groups,
         sources=sources,
@@ -182,7 +221,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
         iris_tabs=(
             ("rfp_queue", "RFP Queue"),
             ("notice_queue", "Notice Queue"),
-            ("notice_scheduled", "??? ???"),
+            ("notice_scheduled", "Scheduled Notices"),
             ("notice_archive", "Archive"),
         ),
         valid_iris_pages=frozenset({"rfp_queue", "notice_queue", "notice_scheduled", "notice_archive"}),
