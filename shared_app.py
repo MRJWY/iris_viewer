@@ -8764,6 +8764,75 @@ def is_positive_recommendation(value: object) -> bool:
 def _reset_favorites_workspace_filters() -> None:
     st.session_state.pop("favorites_workspace_type", None)
     st.session_state.pop("favorites_workspace_search", None)
+    st.session_state.pop("favorites_workspace_sort", None)
+
+
+def _favorite_status_sort_rank(value: object) -> int:
+    text = normalize_notice_status_label(value) or clean(value)
+    if text in {"접수중", "마감임박"}:
+        return 0
+    if text == "예정":
+        return 1
+    if text == "마감":
+        return 2
+    return 1
+
+
+def _favorite_deadline_sort_value(period_value: object, status_value: object, dday_value: object) -> pd.Timestamp:
+    status_text = normalize_notice_status_label(status_value) or clean(status_value)
+    if status_text == "마감":
+        return pd.Timestamp.max
+
+    period_end = extract_period_end(period_value)
+    if pd.notna(period_end):
+        return period_end
+
+    dday_text = clean(dday_value)
+    today = pd.Timestamp.now().normalize()
+    if dday_text == "D-Day":
+        return today
+    match = re.fullmatch(r"D-(\d+)", dday_text)
+    if match:
+        return today + pd.Timedelta(days=int(match.group(1)))
+    return pd.Timestamp.max
+
+
+def _sort_favorites_workspace_entries(rows: pd.DataFrame, sort_option: str) -> pd.DataFrame:
+    if rows.empty:
+        return rows
+
+    working = rows.copy()
+    working["_favorite_status_rank"] = working["Status"].apply(_favorite_status_sort_rank)
+    working["_favorite_deadline_sort"] = working.apply(
+        lambda row: _favorite_deadline_sort_value(row.get("Period"), row.get("Status"), row.get("D-Day")),
+        axis=1,
+    )
+    working["_favorite_score_sort"] = (
+        to_numeric_column(working["Score"])
+        if "Score" in working.columns
+        else pd.Series(0, index=working.index, dtype="float64")
+    )
+
+    if sort_option == "추천도순":
+        return working.sort_values(
+            by=["_favorite_status_rank", "_favorite_score_sort", "_favorite_deadline_sort", "_sort_date", "Title"],
+            ascending=[True, False, True, False, True],
+            na_position="last",
+            kind="stable",
+        )
+    if sort_option == "최신 등록일순":
+        return working.sort_values(
+            by=["_favorite_status_rank", "_sort_date", "_favorite_deadline_sort", "Title"],
+            ascending=[True, False, True, True],
+            na_position="last",
+            kind="stable",
+        )
+    return working.sort_values(
+        by=["_favorite_status_rank", "_favorite_deadline_sort", "_sort_date", "Title"],
+        ascending=[True, True, False, True],
+        na_position="last",
+        kind="stable",
+    )
 
 
 def _encode_notice_queue_query_list(values: list[str]) -> str:
@@ -10093,6 +10162,48 @@ def _render_notice_queue_screen(
     route_core.set_current_route(route_snapshot)
     replace_query_params(with_auth_params(route_core.serialize_route(route_snapshot)))
 
+
+def _build_recent_comment_lookup() -> dict[tuple[str, str], str]:
+    try:
+        comments_df = load_notice_comments()
+    except Exception:
+        return {}
+    if comments_df.empty:
+        return {}
+    working = comments_df.copy()
+    working["source_key"] = working["source"].fillna("").astype(str).str.strip().str.lower().apply(normalize_opportunity_source_key)
+    working["notice_key"] = working["notice_id"].apply(normalize_notice_id_for_match)
+    working = working.sort_values(by=["created_at_sort"], ascending=False, na_position="last")
+    lookup: dict[tuple[str, str], str] = {}
+    for _, row in working.iterrows():
+        key = (clean(row.get("source_key")), clean(row.get("notice_key")))
+        if key[0] and key[1] and key not in lookup:
+            lookup[key] = clean(row.get("content")) or clean(row.get("comment"))
+    return lookup
+
+
+def _recent_comment_for_notice(comment_lookup: dict[tuple[str, str], str], source_key: str, notice_id: str) -> str:
+    return clean(comment_lookup.get((normalize_opportunity_source_key(source_key), normalize_notice_id_for_match(notice_id)), ""))
+
+
+def _build_notice_review_lookup(notice_rows: pd.DataFrame) -> dict[tuple[str, str], str]:
+    if notice_rows is None or notice_rows.empty:
+        return {}
+
+    working = notice_rows.copy()
+    working["source_key"] = series_from_candidates(working, ["source_key", "_source_key"]).fillna("").astype(str).str.strip().apply(normalize_opportunity_source_key)
+    working["notice_key"] = series_from_candidates(working, ["Notice ID", "공고ID", "notice_id"]).fillna("").astype(str).str.strip().apply(normalize_notice_id_for_match)
+    working["review_value"] = series_from_candidates(working, ["Review", "검토 여부", "검토여부", "review_status"]).fillna("").astype(str).str.strip()
+    working = working[(working["source_key"] != "") & (working["notice_key"] != "")]
+    if working.empty:
+        return {}
+
+    lookup: dict[tuple[str, str], str] = {}
+    for _, row in working.iterrows():
+        lookup[(clean(row.get("source_key")), clean(row.get("notice_key")))] = clean(row.get("review_value"))
+    return lookup
+
+
 def _build_favorites_workspace_entries(
     opportunity_rows: pd.DataFrame,
     notice_rows: pd.DataFrame,
@@ -10162,35 +10273,44 @@ def render_favorite_notice_page(
         if favorite_entries.empty:
             st.info("저장된 관심 항목이 없습니다.")
             return
+        type_options = ["All"] + [
+            option
+            for option in ["Notice", "RFP"]
+            if favorite_entries["Type"].eq(option).any()
+        ]
 
         with st.container(key="favorites_toolbar_shell"):
-            toolbar_cols = st.columns([5.4, 0.95], gap="small")
+            toolbar_cols = st.columns([1.05, 1.15, 3.7, 0.6], gap="small")
             with toolbar_cols[0]:
-                with st.container(key="favorites_toolbar_group"):
-                    group_cols = st.columns([1.3, 3.9], gap="small")
-                    with group_cols[0]:
-                        type_filter = st.selectbox(
-                            "타입",
-                            options=["All", "RFP", "Notice"],
-                            index=0,
-                            key="favorites_workspace_type",
-                            label_visibility="collapsed",
-                        )
-                    with group_cols[1]:
-                        search_text = st.text_input(
-                            "검색",
-                            key="favorites_workspace_search",
-                            placeholder="제목, 기관 검색",
-                            label_visibility="collapsed",
-                        )
+                type_filter = st.selectbox(
+                    "타입",
+                    options=type_options,
+                    index=0,
+                    key="favorites_workspace_type",
+                    label_visibility="collapsed",
+                )
             with toolbar_cols[1]:
-                with st.container(key="favorites_toolbar_action"):
-                    st.button(
-                        "초기화",
-                        key="favorites_workspace_reset",
-                        use_container_width=True,
-                        on_click=_reset_favorites_workspace_filters,
-                    )
+                sort_option = st.selectbox(
+                    "정렬",
+                    options=["마감 임박순", "최신 등록일순", "추천도순"],
+                    index=0,
+                    key="favorites_workspace_sort",
+                    label_visibility="collapsed",
+                )
+            with toolbar_cols[2]:
+                search_text = st.text_input(
+                    "검색",
+                    key="favorites_workspace_search",
+                    placeholder="공고명 / 기관명 검색",
+                    label_visibility="collapsed",
+                )
+            with toolbar_cols[3]:
+                st.button(
+                    "초기화",
+                    key="favorites_workspace_reset",
+                    use_container_width=True,
+                    on_click=_reset_favorites_workspace_filters,
+                )
         filtered_entries = favorite_entries.copy()
         if type_filter != "All":
             filtered_entries = filtered_entries[filtered_entries["Type"].eq(type_filter)]
@@ -10198,6 +10318,7 @@ def render_favorite_notice_page(
             filtered_entries = filtered_entries[
                 build_contains_mask(filtered_entries, ["Title", "Subtitle", "Agency"], search_text)
             ]
+        filtered_entries = _sort_favorites_workspace_entries(filtered_entries, clean(sort_option) or "마감 임박순")
         st.markdown(f'<div class="notice-queue-toolbar-meta">저장된 관심 항목 {len(filtered_entries):,}건</div>', unsafe_allow_html=True)
         _render_favorites_table(filtered_entries, key_prefix="favorites_workspace")
 
@@ -10229,7 +10350,7 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
     def _render_notice_queue_workspace_fragment() -> None:
         render_notice_queue_ui_styles()
         with st.container(key="notice_queue_toolbar_shell"):
-            toolbar_cols = st.columns([4.45, 1.15, 1.15, 1.05, 0.8], gap="small")
+            toolbar_cols = st.columns([4.7, 1.05, 1.05, 1.0, 0.6], gap="small")
             with toolbar_cols[0]:
                 search_text = st.text_input(
                     "Notice Search",
@@ -14850,7 +14971,7 @@ def render_notice_queue_ui_styles() -> None:
         [class*="st-key-notice_queue_workspace_status_inline"] [data-baseweb="select"] > div,
         [class*="st-key-notice_queue_workspace_recommendation"] [data-baseweb="select"] > div,
         [class*="st-key-notice_queue_workspace_sort"] [data-baseweb="select"] > div {
-          min-height: 52px;
+          min-height: 54px;
           height: auto !important;
           border: 1px solid #cfd8e3 !important;
           border-radius: 999px !important;
@@ -14859,26 +14980,238 @@ def render_notice_queue_ui_styles() -> None:
           font-size: 0.92rem !important;
           font-weight: 500 !important;
           box-shadow: none !important;
+          transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+        }
+        [class*="st-key-notice_queue_workspace_search"] [data-testid="stTextInputRootElement"][data-baseweb="input"] {
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          padding: 0 !important;
+          overflow: visible !important;
+        }
+        [class*="st-key-notice_queue_workspace_search"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"] {
+          display: flex !important;
+          align-items: center !important;
+          min-height: 54px;
+          height: auto !important;
+          border: 1px solid #cfd8e3 !important;
+          border-radius: 999px !important;
+          background: #fbfdff !important;
+          box-shadow: none !important;
+          padding-top: 0 !important;
+          padding-bottom: 0 !important;
+          overflow: visible !important;
+        }
+        [class*="st-key-notice_queue_workspace_status_inline"] [data-baseweb="select"] > div,
+        [class*="st-key-notice_queue_workspace_recommendation"] [data-baseweb="select"] > div,
+        [class*="st-key-notice_queue_workspace_sort"] [data-baseweb="select"] > div {
+          display: flex !important;
+          align-items: center !important;
+          justify-content: flex-start !important;
+          padding: 0 1rem !important;
+        }
+        [class*="st-key-notice_queue_workspace_status_inline"] [data-baseweb="select"] > div > div,
+        [class*="st-key-notice_queue_workspace_recommendation"] [data-baseweb="select"] > div > div,
+        [class*="st-key-notice_queue_workspace_sort"] [data-baseweb="select"] > div > div {
+          display: flex !important;
+          align-items: center !important;
+          min-height: 52px !important;
+          height: auto !important;
+          padding-top: 0 !important;
+          padding-bottom: 0 !important;
         }
         [class*="st-key-notice_queue_workspace_search"] input {
-          min-height: 50px !important;
+          display: block !important;
+          min-height: 52px !important;
+          height: auto !important;
           padding: 0 1.4rem !important;
+          background: transparent !important;
+          box-shadow: none !important;
           color: #0f172a !important;
           font-size: 0.98rem !important;
           font-weight: 500 !important;
+          line-height: 1.35 !important;
+          align-self: center !important;
+        }
+        [class*="st-key-notice_queue_workspace_search"] input::placeholder {
+          color: #9aa8ba !important;
+          font-size: 0.98rem !important;
+          font-weight: 400 !important;
+          line-height: 1.35 !important;
+        }
+        [class*="st-key-notice_queue_workspace_status_inline"] input,
+        [class*="st-key-notice_queue_workspace_recommendation"] input,
+        [class*="st-key-notice_queue_workspace_sort"] input {
+          display: block !important;
+          min-height: 0 !important;
+          height: 1.4rem !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          align-self: center !important;
+          text-align: left !important;
+          color: #0f172a !important;
+          font-size: 0.98rem !important;
+          font-weight: 600 !important;
+          line-height: 1.35 !important;
+          opacity: 1 !important;
+        }
+        [class*="st-key-notice_queue_workspace_status_inline"] input::placeholder,
+        [class*="st-key-notice_queue_workspace_recommendation"] input::placeholder,
+        [class*="st-key-notice_queue_workspace_sort"] input::placeholder {
+          color: #64748b !important;
+          font-size: 0.98rem !important;
+          font-weight: 600 !important;
+          line-height: 1.35 !important;
+          opacity: 1 !important;
+        }
+        [class*="st-key-notice_queue_workspace_status_inline"] [data-baseweb="select"] span,
+        [class*="st-key-notice_queue_workspace_recommendation"] [data-baseweb="select"] span,
+        [class*="st-key-notice_queue_workspace_sort"] [data-baseweb="select"] span {
+          display: block !important;
+          line-height: 1.35 !important;
+          padding-top: 0 !important;
+          padding-bottom: 0 !important;
+          color: #0f172a !important;
+          font-size: 0.98rem !important;
+          font-weight: 600 !important;
+        }
+        [class*="st-key-notice_queue_workspace_status_inline"] [data-baseweb="select"] > div:hover,
+        [class*="st-key-notice_queue_workspace_recommendation"] [data-baseweb="select"] > div:hover,
+        [class*="st-key-notice_queue_workspace_sort"] [data-baseweb="select"] > div:hover,
+        [class*="st-key-notice_queue_workspace_search"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"]:hover {
+          border-color: #b9c6d8 !important;
+          background: #ffffff !important;
+        }
+        [class*="st-key-notice_queue_workspace_status_inline"] [data-baseweb="select"] > div:focus-within,
+        [class*="st-key-notice_queue_workspace_recommendation"] [data-baseweb="select"] > div:focus-within,
+        [class*="st-key-notice_queue_workspace_sort"] [data-baseweb="select"] > div:focus-within,
+        [class*="st-key-notice_queue_workspace_search"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"]:focus-within {
+          border-color: #7fb1f9 !important;
+          background: #ffffff !important;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1) !important;
+        }
+        [class*="st-key-notice_queue_workspace_status_inline"] [data-baseweb="tag"],
+        [class*="st-key-notice_queue_workspace_recommendation"] [data-baseweb="tag"] {
+          margin-top: 0 !important;
+          margin-bottom: 0 !important;
         }
         [class*="st-key-notice_queue_reset_top"] button {
-          min-height: 52px;
-          height: 52px !important;
+          min-height: 44px;
+          height: 44px !important;
           border: 1px solid #cfd8e3 !important;
           border-radius: 999px !important;
           background: #ffffff !important;
           color: #475569 !important;
-          font-size: 0.92rem !important;
+          font-size: 0.88rem !important;
           font-weight: 600 !important;
+          text-align: center !important;
+          box-shadow: none !important;
+          padding: 0 0.95rem !important;
+          transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease, color 0.16s ease;
         }
         [class*="st-key-favorites_toolbar_shell"] {
           margin: 0.15rem 0 0.85rem;
+        }
+        [class*="st-key-favorites_toolbar_shell"] [data-testid="stHorizontalBlock"] {
+          align-items: center;
+          gap: 0.75rem;
+        }
+        [class*="st-key-favorites_workspace_type"],
+        [class*="st-key-favorites_workspace_sort"],
+        [class*="st-key-favorites_workspace_search"],
+        [class*="st-key-favorites_workspace_reset"] {
+          margin: 0;
+          overflow: visible !important;
+        }
+        [class*="st-key-favorites_workspace_search"] [data-testid="stTextInput"],
+        [class*="st-key-favorites_workspace_search"] [data-testid="stTextInput"] > div,
+        [class*="st-key-favorites_workspace_search"] [data-testid="stTextInputRootElement"] {
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          overflow: visible !important;
+        }
+        [class*="st-key-favorites_workspace_type"] [data-baseweb="select"] > div,
+        [class*="st-key-favorites_workspace_sort"] [data-baseweb="select"] > div,
+        [class*="st-key-favorites_workspace_search"] [data-testid="stTextInputRootElement"] > div,
+        [class*="st-key-favorites_workspace_search"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"] {
+          min-height: 54px;
+          height: auto !important;
+          border: 1px solid #cfd8e3 !important;
+          border-radius: 999px !important;
+          background: #fbfdff !important;
+          color: #0f172a !important;
+          font-size: 0.98rem !important;
+          font-weight: 600 !important;
+          box-shadow: none !important;
+          transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+          overflow: visible !important;
+        }
+        [class*="st-key-favorites_workspace_type"] [data-baseweb="select"] > div,
+        [class*="st-key-favorites_workspace_sort"] [data-baseweb="select"] > div {
+          display: flex !important;
+          align-items: center !important;
+          justify-content: flex-start !important;
+          padding: 0 1rem !important;
+        }
+        [class*="st-key-favorites_workspace_search"] [data-testid="stTextInputRootElement"][data-baseweb="input"] {
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          padding: 0 !important;
+          overflow: visible !important;
+        }
+        [class*="st-key-favorites_workspace_type"] [data-baseweb="select"] > div:hover,
+        [class*="st-key-favorites_workspace_sort"] [data-baseweb="select"] > div:hover,
+        [class*="st-key-favorites_workspace_search"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"]:hover {
+          border-color: #b9c6d8 !important;
+          background: #ffffff !important;
+        }
+        [class*="st-key-favorites_workspace_type"] [data-baseweb="select"] > div:focus-within,
+        [class*="st-key-favorites_workspace_sort"] [data-baseweb="select"] > div:focus-within,
+        [class*="st-key-favorites_workspace_search"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"]:focus-within {
+          border-color: #7fb1f9 !important;
+          background: #ffffff !important;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1) !important;
+        }
+        [class*="st-key-favorites_workspace_search"] input {
+          display: block !important;
+          min-height: 52px !important;
+          height: auto !important;
+          padding: 0 1.4rem !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          color: #0f172a !important;
+          font-size: 0.98rem !important;
+          font-weight: 500 !important;
+          line-height: 1.35 !important;
+          align-self: center !important;
+        }
+        [class*="st-key-favorites_workspace_search"] input::placeholder {
+          color: #9aa8ba !important;
+          font-size: 0.98rem !important;
+          font-weight: 400 !important;
+          line-height: 1.35 !important;
+        }
+        [class*="st-key-favorites_workspace_type"] [data-baseweb="select"] span,
+        [class*="st-key-favorites_workspace_sort"] [data-baseweb="select"] span {
+          color: #0f172a !important;
+          font-size: 0.98rem !important;
+          font-weight: 600 !important;
+        }
+        [class*="st-key-favorites_workspace_reset"] button {
+          min-height: 44px;
+          height: 44px !important;
+          border: 1px solid #cfd8e3 !important;
+          border-radius: 999px !important;
+          background: #ffffff !important;
+          color: #475569 !important;
+          font-size: 0.88rem !important;
+          font-weight: 600 !important;
+          text-align: center !important;
+          box-shadow: none !important;
+          padding: 0 0.95rem !important;
+          transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease, color 0.16s ease;
         }
         .notice-queue-summary-wrap {
           margin: 0 0 1rem;
@@ -15700,11 +16033,11 @@ def _inject_public_workspace_shell_styles() -> None:
           background: #ffffff !important;
         }
         .app-shell {
-          min-height: 96px;
+          min-height: 108px;
           display: grid;
           grid-template-columns: auto minmax(320px, 1fr) auto;
           align-items: center;
-          gap: 1.6rem;
+          gap: 1.85rem;
           margin: -0.15rem 0 0.9rem;
           padding: 0;
           background: #ffffff;
@@ -15724,7 +16057,7 @@ def _inject_public_workspace_shell_styles() -> None:
         }
         .app-brand-title {
           color: #111827;
-          font-size: 1.36rem;
+          font-size: 1.5rem;
           font-weight: 700;
           font-family: "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", "Segoe UI", sans-serif;
           line-height: 1.15;
@@ -15734,7 +16067,7 @@ def _inject_public_workspace_shell_styles() -> None:
           display: flex;
           align-items: center;
           height: 100%;
-          gap: 2.35rem;
+          gap: 2.55rem;
           min-width: 0;
           overflow-x: auto;
           overflow-y: hidden;
@@ -15746,10 +16079,10 @@ def _inject_public_workspace_shell_styles() -> None:
         .app-nav-item {
           display: inline-flex;
           align-items: center;
-          height: 96px;
+          height: 108px;
           color: #1f2937;
           border-bottom: 3px solid transparent;
-          font-size: 1.3rem;
+          font-size: 1.38rem;
           font-weight: 700;
           font-family: "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", "Segoe UI", sans-serif;
           line-height: 1;
@@ -15774,8 +16107,9 @@ def _inject_public_workspace_shell_styles() -> None:
           min-width: 0;
         }
         .app-user-link,
-        .app-user-menu {
-          min-height: 44px;
+        .app-user-menu,
+        .app-user-chip {
+          min-height: 46px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -15789,6 +16123,9 @@ def _inject_public_workspace_shell_styles() -> None:
           text-decoration: none !important;
           white-space: nowrap;
           box-shadow: none;
+        }
+        .app-user-chip {
+          color: #374151;
         }
         .app-user-link {
           color: #374151 !important;
@@ -15856,6 +16193,7 @@ def render_public_workspace_navigation(mode_config: AppModeConfig, current_sourc
     logout_params = with_auth_params(get_query_params_dict())
     logout_params["logout"] = "1"
     logout_href = f"?{urlencode(logout_params)}"
+    affiliation_label = escape(get_current_user_domain() or "Researcher")
     user_label = escape(get_current_user_label() or get_current_user_id() or "User")
     st.markdown(
         (
@@ -15867,8 +16205,9 @@ def render_public_workspace_navigation(mode_config: AppModeConfig, current_sourc
             '</div>'
             f'<nav class="app-nav">{"".join(nav_links)}</nav>'
             '<div class="app-actions">'
+            f'<div class="app-user-chip app-user-affiliation-chip">{affiliation_label}</div>'
+            f'<div class="app-user-chip app-user-name-chip">{user_label}</div>'
             f'<a class="app-user-link app-user-link-logout" href="{escape(logout_href, quote=True)}" target="_self">로그아웃</a>'
-            f'<div class="app-user-menu"><span class="app-user-name">{user_label}</span><span class="app-user-role">Researcher</span></div>'
             '</div>'
             '</div>'
         ),
@@ -15887,7 +16226,8 @@ def _inject_compact_public_dashboard_styles() -> None:
           padding-top: 0.2rem;
         }
         .app-shell {
-          gap: 1.35rem;
+          min-height: 94px;
+          gap: 1.55rem;
           margin: -0.1rem 0 0.14rem;
           grid-template-columns: auto minmax(320px, 1fr) auto;
         }
