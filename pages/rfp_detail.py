@@ -190,14 +190,14 @@ def render_page(st, row, *, api) -> None:
         if notice_id:
             api.render_favorite_scrap_button(
                 notice_id=notice_id,
-                current_value=first_present(api, row_dict, "review_status", "검토 여부", "검토여부"),
+                current_value=first_present(api, row_dict, "검토 여부", "검토여부", "review_status"),
                 source_key=source_key,
                 notice_title=notice_title,
                 button_key=f"rfp_detail_header_favorite_{row_id or notice_id}",
                 compact=True,
                 use_container_width=True,
             )
-        if download_path:
+        if download_path and not detail_link:
             try:
                 with open(download_path, "rb") as file_handle:
                     st.download_button(
@@ -351,7 +351,7 @@ def render_page(st, row, *, api) -> None:
                     review_caption="검토 상태와 메모는 연결된 공고 기준으로 저장됩니다.",
                     render_review=lambda: api.render_review_editor(
                         notice_id=notice_id,
-                        current_value=first_present(api, row_dict, "review_status", "검토 여부", "검토여부"),
+                        current_value=first_present(api, row_dict, "검토 여부", "검토여부", "review_status"),
                         form_key=f"rfp_review_form_{row_id or notice_id}",
                         source_key=source_key,
                     ),
