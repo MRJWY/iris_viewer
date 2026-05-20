@@ -8539,6 +8539,15 @@ def _normalize_recommendation_value(value: object) -> str:
         return "보통"
     return text
 
+def build_positive_recommendation_mask(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    recommendation_series = series_from_candidates(
+        df,
+        ["Recommendation", "_queue_recommendation", "recommendation", "추천여부", "llm_recommendation"],
+    ).fillna("").astype(str)
+    return recommendation_series.apply(_normalize_recommendation_value).eq("추천")
+
 def _normalize_recommendation_filter(value: str) -> str:
     normalized = _normalize_recommendation_value(value)
     if normalized in {option for option, _ in RECOMMENDATION_FILTER_OPTIONS}:
