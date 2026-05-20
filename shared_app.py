@@ -5579,6 +5579,34 @@ def normalize_notice_status_label(value: object) -> str:
     return text
 
 
+def notice_status_badge_class(value: object) -> str:
+    text = normalize_notice_status_label(value) or clean(value)
+    if text == "접수중":
+        return "is-open"
+    if text == "예정":
+        return "is-pending"
+    if "임박" in text:
+        return "is-deadline"
+    if text == "마감":
+        return "is-closed"
+    return "is-pending"
+
+
+def notice_status_badge_label(value: object) -> str:
+    text = normalize_notice_status_label(value) or clean(value) or "미정"
+    if text == "예정":
+        return "접수예정"
+    if text == "마감":
+        return "접수마감"
+    return text
+
+
+def notice_status_badge_html(value: object) -> str:
+    label = notice_status_badge_label(value)
+    css_class = notice_status_badge_class(value)
+    return f'<span class="notice-mailbox-status {css_class}">{escape(label)}</span>'
+
+
 def normalize_review_status_label(value: object) -> str:
     return clean(value).replace(" ", "")
 
@@ -8718,6 +8746,98 @@ def is_positive_recommendation(value: object) -> bool:
     return _normalize_recommendation_value(clean(value)) == "추천"
 
 
+def _reset_favorites_workspace_filters() -> None:
+    st.session_state.pop("favorites_workspace_type", None)
+    st.session_state.pop("favorites_workspace_search", None)
+
+
+def _encode_notice_queue_query_list(values: list[str]) -> str:
+    cleaned = [clean(value) for value in values if clean(value)]
+    return json.dumps(cleaned, ensure_ascii=False)
+
+
+def _decode_notice_queue_query_list(raw_value: str) -> list[str]:
+    text = clean(raw_value)
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        parsed = [item.strip() for item in text.split(",")]
+    if not isinstance(parsed, list):
+        return []
+    return [clean(item) for item in parsed if clean(item)]
+
+
+def _current_notice_queue_filter_params() -> dict[str, str]:
+    params: dict[str, str] = {}
+    search_text = clean(st.session_state.get("notice_queue_workspace_search"))
+    selected_status = st.session_state.get("notice_queue_workspace_status_inline") or []
+    selected_recommendations = st.session_state.get("notice_queue_workspace_recommendation") or []
+    sort_option = clean(st.session_state.get("notice_queue_workspace_sort"))
+
+    if search_text:
+        params["nq_search"] = search_text
+    if selected_status:
+        params["nq_status"] = _encode_notice_queue_query_list(list(selected_status))
+    if selected_recommendations:
+        params["nq_reco"] = _encode_notice_queue_query_list(list(selected_recommendations))
+    if sort_option:
+        params["nq_sort"] = sort_option
+    return params
+
+
+def _notice_queue_filter_signature(
+    *,
+    search_text: object | None = None,
+    selected_status: list[str] | tuple[str, ...] | None = None,
+    selected_recommendations: list[str] | tuple[str, ...] | None = None,
+    sort_option: object | None = None,
+) -> tuple[str, tuple[str, ...], tuple[str, ...], str]:
+    return (
+        clean(st.session_state.get("notice_queue_workspace_search") if search_text is None else search_text),
+        tuple(
+            sorted(
+                clean(value)
+                for value in (
+                    st.session_state.get("notice_queue_workspace_status_inline")
+                    if selected_status is None
+                    else selected_status
+                ) or []
+                if clean(value)
+            )
+        ),
+        tuple(
+            sorted(
+                clean(value)
+                for value in (
+                    st.session_state.get("notice_queue_workspace_recommendation")
+                    if selected_recommendations is None
+                    else selected_recommendations
+                ) or []
+                if clean(value)
+            )
+        ),
+        clean(st.session_state.get("notice_queue_workspace_sort") if sort_option is None else sort_option),
+    )
+
+
+def _notice_queue_query_signature() -> tuple[str, tuple[str, ...], tuple[str, ...], str]:
+    return (
+        clean(get_query_param("nq_search")),
+        tuple(sorted(clean(value) for value in _decode_notice_queue_query_list(get_query_param("nq_status")) if clean(value))),
+        tuple(sorted(clean(value) for value in _decode_notice_queue_query_list(get_query_param("nq_reco")) if clean(value))),
+        clean(get_query_param("nq_sort")) or "최신 등록일순",
+    )
+
+
+def _reset_notice_queue_filters(page_state_key: str, filter_reset_keys: list[str]) -> None:
+    for key in filter_reset_keys:
+        st.session_state.pop(key, None)
+    st.session_state.pop(page_state_key, None)
+    st.session_state.pop("notice_queue_workspace_filter_signature", None)
+
+
 def _normalize_recommendation_filter(value: str) -> str:
     normalized = _normalize_recommendation_value(value)
     if normalized in {option for option, _ in RECOMMENDATION_FILTER_OPTIONS}:
@@ -9963,191 +10083,219 @@ def render_favorite_notice_page(
     opportunity_df: pd.DataFrame,
     source_datasets: dict[str, object] | None = None,
 ) -> None:
-    current_route = route_core.get_current_route(route_core.build_favorites_route())
-    source_df = _ensure_collection_for_favorites(notice_view_df, source_datasets)
-    source_df = _enrich_notice_rows(source_df, opportunity_df)
-    if clean(current_route.get("page")) == "favorites" and clean(current_route.get("view")) == "detail":
-        selected_row = _get_notice_row_by_id(source_df, clean(current_route.get("item_id")))
-        back_col, info_col = st.columns([1.8, 4.2])
-        with back_col:
-            if st.button("← Favorites로 돌아가기", key="favorites_back_to_table", use_container_width=False, type="secondary"):
-                go_back_route(route_core.build_favorites_route())
-                st.rerun()
-        with info_col:
-            st.markdown('<div class="page-note">Favorites / Notice Detail</div>', unsafe_allow_html=True)
-        render_notice_detail_from_row(selected_row, opportunity_df)
-        return
+    render_notice_queue_ui_styles()
 
-    _inject_opportunity_workspace_styles()
-    st.subheader("Favorites")
-    st.caption("관심 공고를 리스트와 Summary Panel로 나눠 검토합니다.")
-    if source_df is None or source_df.empty:
-        st.info("표시할 관심 공고가 없습니다.")
-        return
-    favorite_rows = source_df[_review_series(source_df).eq(FAVORITE_REVIEW_STATUS)].copy()
-    if favorite_rows.empty:
-        st.info("표시할 관심 공고가 없습니다.")
-        return
-    favorite_rows["_favorite_type"] = favorite_rows["_queue_project_name"].fillna("").astype(str).str.strip().apply(
-        lambda value: "RFP 연결" if clean(value) else "Notice"
-    )
-    favorite_rows["_favorite_deadline"] = favorite_rows.apply(
-        lambda row: format_dashboard_deadline_badge(
-            clean(first_non_empty(row, "notice_period", "접수기간", "period")),
-            normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태")) or "-",
-        ),
-        axis=1,
-    )
-    route_filters = dict(current_route.get("filters") or {})
-    type_key = "favorites_filter_type"
-    review_key = "favorites_filter_review"
-    deadline_key = "favorites_filter_deadline"
-    page_size_key = "favorites_page_size"
-    page_index_key = "favorites_page_index"
-    st.session_state.setdefault(type_key, route_filters.get("type", []))
-    st.session_state.setdefault(review_key, route_filters.get("review", []))
-    st.session_state.setdefault(deadline_key, route_filters.get("deadline", []))
-    st.session_state.setdefault(page_size_key, int(route_filters.get("page_size") or current_route.get("page_size") or 20))
-    st.session_state.setdefault(page_index_key, int(current_route.get("page_no") or 1))
-
-    display_col, summary_col = st.columns([5.4, 2.15], gap="large")
-    with display_col:
-        filter_cols = st.columns(4)
-        with filter_cols[0]:
-            st.multiselect("타입", options=["Notice", "RFP 연결"], key=type_key, placeholder="전체")
-        with filter_cols[1]:
-            review_options = sorted(
-                {
-                    value
-                    for value in favorite_rows["review_status"].fillna("").astype(str).tolist()
-                    if clean(value)
-                }
-            )
-            st.multiselect("검토상태", options=review_options, key=review_key, placeholder="전체")
-        with filter_cols[2]:
-            st.multiselect("D-day", options=["진행중", "7일 이내", "30일 이내", "예정", "마감"], key=deadline_key, placeholder="전체")
-        with filter_cols[3]:
-            st.selectbox("Page size", options=[20, 50, 100], key=page_size_key)
-
-        filters = {
-            "type": st.session_state.get(type_key, []),
-            "review": st.session_state.get(review_key, []),
-            "deadline": st.session_state.get(deadline_key, []),
-            "page_size": int(st.session_state.get(page_size_key, 20) or 20),
+    @st.fragment
+    def _render_favorites_workspace_fragment() -> None:
+        datasets = {
+            "notice_current": filter_current_notice_rows(notice_view_df),
+            "pending": notice_view_df[build_notice_status_scope_mask(notice_view_df, "예정")].copy() if not notice_view_df.empty else pd.DataFrame(),
+            "notice_archive": filter_archived_notice_rows(notice_view_df),
+            "opportunity": opportunity_df,
         }
-        filtered_rows = favorite_rows.copy()
-        if filters["type"]:
-            filtered_rows = filtered_rows[filtered_rows["_favorite_type"].isin(filters["type"])].copy()
-        if filters["review"]:
-            filtered_rows = filtered_rows[_review_series(filtered_rows).isin(filters["review"])].copy()
-        if filters["deadline"]:
-            def _favorite_deadline_match(row: pd.Series) -> bool:
-                deadline_text = clean(row.get("_favorite_deadline"))
-                status_text = normalize_notice_status_label(first_non_empty(row, "status", "rcve_status", "공고상태")) or "-"
-                buckets: set[str] = set()
-                if "마감" in status_text:
-                    buckets.add("마감")
-                elif "예정" in status_text:
-                    buckets.add("예정")
-                else:
-                    buckets.add("진행중")
-                period_end = extract_period_end(clean(first_non_empty(row, "notice_period", "접수기간", "period")))
-                if pd.notna(period_end):
-                    days_left = int((period_end.normalize() - pd.Timestamp.now().normalize()).days)
-                    if days_left <= 7:
-                        buckets.add("7일 이내")
-                    if days_left <= 30:
-                        buckets.add("30일 이내")
-                if deadline_text == "-":
-                    buckets.add("마감")
-                return any(option in buckets for option in filters["deadline"])
-            filtered_rows = filtered_rows[filtered_rows.apply(_favorite_deadline_match, axis=1)].copy()
+        opportunity_rows = build_dashboard_opportunity_index({"opportunity": opportunity_df}, source_datasets)
+        notice_rows = _build_workspace_notice_rows(datasets, source_datasets, opportunity_rows)
+        favorite_entries = _build_favorites_workspace_entries(opportunity_rows, notice_rows)
+        if favorite_entries.empty:
+            st.info("저장된 관심 항목이 없습니다.")
+            return
 
-        page_size = int(filters["page_size"] or 20)
-        total_rows = len(filtered_rows)
+        with st.container(key="favorites_toolbar_shell"):
+            toolbar_cols = st.columns([5.4, 0.95], gap="small")
+            with toolbar_cols[0]:
+                with st.container(key="favorites_toolbar_group"):
+                    group_cols = st.columns([1.3, 3.9], gap="small")
+                    with group_cols[0]:
+                        type_filter = st.selectbox(
+                            "타입",
+                            options=["All", "RFP", "Notice"],
+                            index=0,
+                            key="favorites_workspace_type",
+                            label_visibility="collapsed",
+                        )
+                    with group_cols[1]:
+                        search_text = st.text_input(
+                            "검색",
+                            key="favorites_workspace_search",
+                            placeholder="제목, 기관 검색",
+                            label_visibility="collapsed",
+                        )
+            with toolbar_cols[1]:
+                with st.container(key="favorites_toolbar_action"):
+                    st.button(
+                        "초기화",
+                        key="favorites_workspace_reset",
+                        use_container_width=True,
+                        on_click=_reset_favorites_workspace_filters,
+                    )
+        filtered_entries = favorite_entries.copy()
+        if type_filter != "All":
+            filtered_entries = filtered_entries[filtered_entries["Type"].eq(type_filter)]
+        if clean(search_text):
+            filtered_entries = filtered_entries[
+                build_contains_mask(filtered_entries, ["Title", "Subtitle", "Agency"], search_text)
+            ]
+        st.markdown(f'<div class="notice-queue-toolbar-meta">저장된 관심 항목 {len(filtered_entries):,}건</div>', unsafe_allow_html=True)
+        _render_favorites_table(filtered_entries, key_prefix="favorites_workspace")
+
+    _render_favorites_workspace_fragment()
+
+def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
+    opportunity_rows = build_dashboard_opportunity_index(datasets, source_datasets)
+    source_df = build_crawled_notice_collection(datasets, source_datasets)
+    notice_rows = _normalize_workspace_notice_rows(source_df, opportunity_rows)
+    if not notice_rows.empty:
+        rfp_count_lookup = _build_notice_rfp_count_lookup(opportunity_rows)
+        notice_rows["RFP Count"] = notice_rows.apply(
+            lambda row: rfp_count_lookup.get(
+                (clean(row.get("source_key")) or "iris", clean(row.get("Notice ID"))),
+                int(row.get("RFP Count") or 0),
+            ),
+            axis=1,
+        )
+    page_state_key = "notice_queue_workspace_page_index"
+    page_size = 10
+    filter_reset_keys = [
+        "notice_queue_workspace_search",
+        "notice_queue_workspace_status_inline",
+        "notice_queue_workspace_recommendation",
+        "notice_queue_workspace_sort",
+    ]
+
+    @st.fragment
+    def _render_notice_queue_workspace_fragment() -> None:
+        render_notice_queue_ui_styles()
+        with st.container(key="notice_queue_toolbar_shell"):
+            toolbar_cols = st.columns([4.45, 1.15, 1.15, 1.05, 0.8], gap="small")
+            with toolbar_cols[0]:
+                search_text = st.text_input(
+                    "Notice Search",
+                    key="notice_queue_workspace_search",
+                    placeholder="공고명 / 기관명 / 공고번호 / 요약 검색",
+                    label_visibility="collapsed",
+                )
+            status_options = sorted({
+                normalize_notice_status_label(value) or clean(value)
+                for value in notice_rows["Status"].tolist()
+                if clean(value)
+            }) if not notice_rows.empty else []
+            with toolbar_cols[1]:
+                selected_status = st.multiselect(
+                    "공고상태",
+                    options=status_options,
+                    key="notice_queue_workspace_status_inline",
+                    placeholder="공고상태",
+                    label_visibility="collapsed",
+                )
+            recommendation_options = sorted({
+                clean(value)
+                for value in notice_rows["Recommendation"].tolist()
+                if clean(value) and clean(value) != "-"
+            }) if not notice_rows.empty else []
+            with toolbar_cols[2]:
+                selected_recommendations = st.multiselect(
+                    "추천",
+                    options=recommendation_options,
+                    key="notice_queue_workspace_recommendation",
+                    placeholder="추천",
+                    label_visibility="collapsed",
+                )
+            with toolbar_cols[3]:
+                sort_option = st.selectbox(
+                    "정렬",
+                    options=["최신 등록일순", "마감 임박순", "추천도순"],
+                    key="notice_queue_workspace_sort",
+                    label_visibility="collapsed",
+                )
+            with toolbar_cols[4]:
+                st.button(
+                    "초기화",
+                    key="notice_queue_reset_top",
+                    use_container_width=True,
+                    on_click=_reset_notice_queue_filters,
+                    kwargs={
+                        "page_state_key": page_state_key,
+                        "filter_reset_keys": filter_reset_keys,
+                    },
+                )
+
+        current_signature = _notice_queue_filter_signature(
+            search_text=search_text,
+            selected_status=selected_status,
+            selected_recommendations=selected_recommendations,
+            sort_option=sort_option,
+        )
+        previous_signature = st.session_state.get("notice_queue_workspace_filter_signature")
+        if previous_signature != current_signature:
+            st.session_state[page_state_key] = 1
+            st.session_state["notice_queue_workspace_filter_signature"] = current_signature
+
+        filtered = notice_rows.copy()
+        if not selected_status:
+            filtered = filtered[
+                filtered["Status"].apply(lambda value: (normalize_notice_status_label(value) or clean(value)) != "마감")
+            ]
+        if clean(search_text):
+            filtered = filtered[
+                build_contains_mask(filtered, ["Title", "Agency", "Ministry", "Notice No", "Notice ID", "Summary"], search_text)
+            ]
+        if selected_status:
+            filtered = filtered[
+                filtered["Status"].apply(lambda value: normalize_notice_status_label(value) or clean(value)).isin(selected_status)
+            ]
+        if selected_recommendations:
+            filtered = filtered[filtered["Recommendation"].isin(selected_recommendations)]
+
+        if sort_option == "마감 임박순":
+            filtered = filtered.assign(
+                _queue_deadline_sort=filtered["D-Day"].apply(
+                    lambda value: 0
+                    if clean(value) == "D-Day"
+                    else (int(re.fullmatch(r"D-(\d+)", clean(value)).group(1)) if re.fullmatch(r"D-(\d+)", clean(value)) else 9999)
+                )
+            ).sort_values(by=["_queue_deadline_sort", "_sort_date", "Title"], ascending=[True, False, True], na_position="last")
+        elif sort_option == "추천도순":
+            filtered = filtered.assign(
+                _queue_score_sort=to_numeric_column(filtered["Score"])
+            ).sort_values(by=["_queue_score_sort", "_sort_date", "Title"], ascending=[False, False, True], na_position="last")
+        else:
+            filtered = filtered.sort_values(by=["_sort_date", "Title"], ascending=[False, True], na_position="last")
+
+        total_rows = len(filtered)
         total_pages = max(1, math.ceil(total_rows / page_size)) if page_size else 1
-        current_page = int(current_route.get("page_no") or st.session_state.get(page_index_key, 1) or 1)
+        query_page_no = safe_int(get_query_param("page_no"), 0)
+        query_signature = _notice_queue_query_signature()
+        if query_page_no and current_signature == query_signature:
+            current_page = query_page_no
+        else:
+            current_page = int(st.session_state.get(page_state_key, 1) or 1)
         current_page = max(1, min(current_page, total_pages))
-        st.session_state[page_index_key] = current_page
-        selected_notice_id = clean(current_route.get("item_id")) if clean(current_route.get("view")) == "summary" else ""
-
-        def _select_favorite_preview(row: pd.Series) -> None:
-            route = route_core.build_favorites_route(
-                filters=filters,
-                page_no=current_page,
-                page_size=page_size,
-                view="summary",
-                item_id=_resolve_notice_id(row),
-                source_key=resolve_route_source_key_for_row(row, source_key=row.get("source_key")) or "favorites",
-            )
-            route_core.set_current_route(route)
-            replace_query_params(with_auth_params(route_core.serialize_route(route)))
-
+        st.session_state[page_state_key] = current_page
         start_idx = (current_page - 1) * page_size
-        page_rows = filtered_rows.iloc[start_idx:start_idx + page_size].copy()
-        render_crawled_notice_rows(
-            page_rows,
-            key_prefix=f"{NOTICE_QUEUE_DETAIL_PAGE_KEY}_favorite_page",
-            page_key="favorites",
-            empty_message="표시할 관심 공고가 없습니다.",
-            selected_notice_id=selected_notice_id,
-            on_select=_select_favorite_preview,
+        page_rows = filtered.iloc[start_idx:start_idx + page_size].copy()
+
+        st.markdown(
+            f'<div class="notice-queue-toolbar-meta">검색 결과 {total_rows:,}건</div>',
+            unsafe_allow_html=True,
         )
-        pagination_route = route_core.build_favorites_route(
-            filters=filters,
-            page_no=current_page,
-            page_size=page_size,
-            view="list",
-            item_id="",
-            source_key="favorites",
-        )
-        _render_workspace_pagination(
-            route=pagination_route,
+        _render_notice_queue_table(page_rows, key_prefix="notice_queue_workspace")
+
+        pagination_html = _render_notice_queue_pagination_controls(
+            page_state_key=page_state_key,
+            control_key_prefix="notice_queue_workspace_bottom",
             current_page=current_page,
             total_pages=total_pages,
             total_rows=total_rows,
+            page_size=page_size,
+        )
+        st.markdown(
+            '<div class="notice-queue-footer">'
+            f'<div class="notice-queue-page-slot">{pagination_html}</div>'
+            '</div>',
+            unsafe_allow_html=True,
         )
 
-    with summary_col:
-        selected_notice_id = clean(current_route.get("item_id")) if clean(current_route.get("view")) == "summary" else ""
-        selected_row = _get_notice_row_by_id(favorite_rows, selected_notice_id) if selected_notice_id else None
-        _render_notice_preview_panel(
-            selected_row,
-            panel_key="favorites_preview",
-            empty_title="관심 공고를 선택하면 Summary Panel이 열립니다.",
-            empty_copy="Favorites 리스트는 그대로 두고, 필요한 경우에만 패널의 상세 버튼으로 이동합니다.",
-            close_callback=lambda: (
-                route_core.set_current_route(
-                    route_core.build_favorites_route(
-                        filters=filters,
-                        page_no=int(st.session_state.get(page_index_key, 1) or 1),
-                        page_size=int(st.session_state.get(page_size_key, 20) or 20),
-                    )
-                ),
-                replace_query_params(with_auth_params(route_core.serialize_route(route_core.get_current_route()))),
-                st.rerun(),
-            ),
-            detail_source_key=clean(current_route.get("source_key")) or "favorites",
-        )
-
-    route_snapshot = route_core.build_favorites_route(
-        filters=filters,
-        page_no=int(st.session_state.get(page_index_key, 1) or 1),
-        page_size=int(st.session_state.get(page_size_key, 20) or 20),
-        view="summary" if clean(current_route.get("item_id")) and clean(current_route.get("view")) == "summary" else "list",
-        item_id=clean(current_route.get("item_id")) if clean(current_route.get("view")) == "summary" else "",
-        source_key=clean(current_route.get("source_key")) or "favorites",
-    )
-    route_core.set_current_route(route_snapshot)
-    replace_query_params(with_auth_params(route_core.serialize_route(route_snapshot)))
-
-def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets: dict[str, object] | None) -> None:
-    source_df = build_crawled_notice_collection(datasets, source_datasets)
-    _render_notice_queue_screen(
-        source_df,
-        datasets.get("opportunity", pd.DataFrame()),
-        datasets["opportunity_all"],
-    )
+    _render_notice_queue_workspace_fragment()
 
 def render_notices_source(
     source_config,
@@ -10158,12 +10306,7 @@ def render_notices_source(
     show_internal_tabs: bool = True,
 ) -> None:
     del source_config, mode_config, show_internal_tabs
-    source_df = build_crawled_notice_collection(datasets, source_datasets)
-    _render_notice_queue_screen(
-        source_df,
-        datasets.get("opportunity", pd.DataFrame()),
-        datasets["opportunity_all"],
-    )
+    render_notice_queue_page(datasets, source_datasets)
 
 def resolve_route_source_key_for_row(row: dict | pd.Series | None, source_key: str | None = None) -> str:
     candidate_values = [source_key]
@@ -14279,6 +14422,199 @@ def render_notice_queue_kpi_cards(
     st.markdown(f'<div class="notice-kpi-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
 
 
+def _render_notice_queue_table(rows: pd.DataFrame, *, key_prefix: str) -> None:
+    if rows.empty:
+        st.markdown('<div class="notice-mailbox-empty">표시할 공고가 없습니다.</div>', unsafe_allow_html=True)
+        return
+    del key_prefix
+
+    def _deadline_sort_value(value: object) -> int | None:
+        text = clean(value)
+        if not text or text in {"-", "예정", "마감"}:
+            return None
+        if text == "D-Day":
+            return 0
+        match = re.fullmatch(r"D-(\d+)", text)
+        if not match:
+            return None
+        return int(match.group(1))
+
+    def _detail_href(notice_id: str) -> str:
+        return build_route_href("notice_queue", notice_id, source_key="notices")
+
+    row_html: list[str] = []
+    for _, row in rows.iterrows():
+        notice_id = _workspace_notice_id(row)
+        detail_href = _detail_href(notice_id)
+        dday_label = clean(row.get("D-Day")) or "-"
+        dday_sort = _deadline_sort_value(dday_label)
+        tone_class = "is-calm"
+        if dday_sort is not None and dday_sort <= 3:
+            tone_class = "is-critical"
+        elif dday_sort is not None and dday_sort <= 14:
+            tone_class = "is-warning"
+        subtitle = " / ".join(
+            part for part in [clean(row.get("Source")), clean(row.get("Notice No"))] if part and part != "-"
+        )
+        review_value = clean(row.get("Review"))
+        favorite_href = build_favorite_toggle_href(
+            page_key="notice_queue",
+            notice_id=notice_id,
+            current_value=review_value,
+            source_key=clean(row.get("source_key")) or "iris",
+        )
+        favorite_label = "해제" if review_value == FAVORITE_REVIEW_STATUS else "등록"
+        favorite_class = " is-active" if review_value == FAVORITE_REVIEW_STATUS else ""
+        rfp_count_value = int(row.get("RFP Count") or 0)
+        rfp_count = escape(str(rfp_count_value))
+        agency_value = clean(row.get("Agency")) or ""
+        keyword_values = _extract_dashboard_keywords(row, limit=3)
+        keyword_chips = "".join(
+            f'<span class="queue-grid-chip">{escape(keyword)}</span>'
+            for keyword in keyword_values
+        )
+        if not keyword_values:
+            keyword_chips = '<span class="queue-grid-chip is-empty">키워드 없음</span>'
+        keywords_html = f'<div class="queue-grid-keywords">{keyword_chips}</div>'
+        period_value = clean(row.get("Period")) or "미정"
+        status_badge = notice_status_badge_html(row.get("Status"))
+        row_html.append(
+            "".join(
+                [
+                    '<div class="queue-grid-row">',
+                    f'<div class="queue-grid-cell">{status_badge}</div>',
+                    '<div class="queue-grid-cell is-title">',
+                    f'<a class="queue-grid-title" href="{escape(detail_href, quote=True)}" target="_self">{escape(truncate_text(row.get("Title"), max_chars=106))}</a>',
+                    (f'<div class="queue-grid-subtitle">{escape(truncate_text(subtitle, max_chars=74))}</div>' if subtitle else ""),
+                    '</div>',
+                    f'<div class="queue-grid-cell is-keywords">{keywords_html}</div>',
+                    f'<div class="queue-grid-cell">{escape(truncate_text(agency_value or "미정", max_chars=20))}</div>',
+                    f'<div class="queue-grid-cell queue-grid-period">{escape(truncate_text(period_value, max_chars=28))}</div>',
+                    f'<div class="queue-grid-cell"><span class="queue-grid-dday {tone_class}">{escape(dday_label)}</span></div>',
+                    f'<div class="queue-grid-cell queue-grid-rfp-count is-center">{rfp_count}</div>',
+                    f'<div class="queue-grid-cell is-center"><a class="queue-grid-favorite{favorite_class}" href="{escape(favorite_href, quote=True)}" target="_self">{favorite_label}</a></div>',
+                    '</div>',
+                ]
+            )
+        )
+    st.markdown(
+        (
+            '<div class="queue-grid-scroll"><div class="queue-grid">'
+            '<div class="queue-grid-head">'
+            '<div>상태</div><div class="queue-grid-col-title">공고명</div><div>키워드</div><div>기관</div><div>기간</div><div>D-day</div><div>RFP 수</div><div>관심</div>'
+            '</div>'
+            + "".join(row_html)
+            + '</div></div>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _build_notice_rfp_count_lookup(opportunity_rows: pd.DataFrame) -> dict[tuple[str, str], int]:
+    if opportunity_rows is None or opportunity_rows.empty:
+        return {}
+    working = opportunity_rows.copy()
+    working["source_key"] = series_from_candidates(working, ["source_key", "_source_key"]).fillna("").astype(str).str.strip().str.lower()
+    working["Notice ID"] = series_from_candidates(working, ["Notice ID", "notice_id", "공고ID"]).fillna("").astype(str).str.strip()
+    working = working[(working["source_key"] != "") & (working["Notice ID"] != "")]
+    if working.empty:
+        return {}
+    counts = (
+        working.groupby(["source_key", "Notice ID"], dropna=False)
+        .size()
+        .reset_index(name="rfp_count")
+    )
+    return {
+        (clean(row["source_key"]), clean(row["Notice ID"])): int(row["rfp_count"])
+        for _, row in counts.iterrows()
+    }
+
+
+def _render_rfp_queue_pagination_controls(
+    *,
+    page_param_key: str,
+    current_page: int,
+    total_pages: int,
+) -> str:
+    def _page_href(page_number: int) -> str:
+        params = get_query_params_dict()
+        params[page_param_key] = str(max(1, min(page_number, total_pages)))
+        return f"?{urlencode(params)}"
+
+    page_numbers = _notice_queue_pagination_window(current_page, total_pages)
+    prev_class = " is-disabled" if current_page <= 1 else ""
+    next_class = " is-disabled" if current_page >= total_pages else ""
+    number_links: list[str] = []
+    for page_number in page_numbers:
+        active_class = " is-active" if page_number == current_page else ""
+        number_links.append(
+            f'<a class="queue-page-link{active_class}" href="{escape(_page_href(page_number), quote=True)}" target="_self">{page_number}</a>'
+        )
+    if total_pages > page_numbers[-1]:
+        if total_pages > page_numbers[-1] + 1:
+            number_links.append('<span class="queue-page-ellipsis">…</span>')
+        number_links.append(
+            f'<a class="queue-page-link" href="{escape(_page_href(total_pages), quote=True)}" target="_self">{total_pages}</a>'
+        )
+
+    nav_html = (
+        f'<div class="queue-pagination-row">'
+        f'<a class="queue-page-nav{prev_class}" href="{escape(_page_href(current_page - 1), quote=True)}" target="_self">‹ 이전</a>'
+        f'<a class="queue-page-nav{next_class}" href="{escape(_page_href(current_page + 1), quote=True)}" target="_self">다음 ›</a>'
+        '</div>'
+    )
+    number_html = f'<div class="queue-pagination-row">{"".join(number_links)}</div>'
+    return f'<nav class="queue-pagination-wrap" aria-label="RFP Queue pagination">{number_html}{nav_html}</nav>'
+
+
+def _render_notice_queue_pagination_controls(
+    *,
+    page_state_key: str,
+    control_key_prefix: str,
+    current_page: int,
+    total_pages: int,
+    total_rows: int,
+    page_size: int,
+) -> str:
+    del page_state_key, control_key_prefix, total_rows, page_size
+
+    def _page_href(page_number: int) -> str:
+        params = get_query_params_dict()
+        params.update({
+            "source": "notices",
+            "page": "notice_queue",
+            "view": "table",
+            "page_no": str(max(1, min(page_number, total_pages))),
+        })
+        params.update(_current_notice_queue_filter_params())
+        return f"?{urlencode(params)}"
+
+    page_numbers = _notice_queue_pagination_window(current_page, total_pages)
+    prev_class = " is-disabled" if current_page <= 1 else ""
+    next_class = " is-disabled" if current_page >= total_pages else ""
+    number_links = []
+    for page_number in page_numbers:
+        active_class = " is-active" if page_number == current_page else ""
+        number_links.append(
+            f'<a class="notice-queue-page-link{active_class}" href="{escape(_page_href(page_number), quote=True)}" target="_self">{page_number}</a>'
+        )
+    if total_pages > page_numbers[-1]:
+        if total_pages > page_numbers[-1] + 1:
+            number_links.append('<span class="notice-queue-page-ellipsis">…</span>')
+        number_links.append(
+            f'<a class="notice-queue-page-link" href="{escape(_page_href(total_pages), quote=True)}" target="_self">{total_pages}</a>'
+        )
+
+    nav_html = (
+        f'<div class="notice-queue-pagination">'
+        f'<a class="notice-queue-page-nav{prev_class}" href="{escape(_page_href(current_page - 1), quote=True)}" target="_self">‹ 이전</a>'
+        f'<a class="notice-queue-page-nav{next_class}" href="{escape(_page_href(current_page + 1), quote=True)}" target="_self">다음 ›</a>'
+        '</div>'
+    )
+    number_html = f'<div class="notice-queue-pagination">{"".join(number_links)}</div>'
+    return f'<nav class="notice-queue-pagination-wrap" aria-label="Notice Queue pagination">{number_html}{nav_html}</nav>'
+
+
 
 
 
@@ -14295,266 +14631,128 @@ def render_opportunity_page(
     title = title or ("Opportunity Archive" if archive else "RFP Queue")
     source_df = ensure_opportunity_row_ids(df)
     all_source_df = ensure_opportunity_row_ids(all_df) if all_df is not None and not all_df.empty else source_df
-    default_route = route_core.build_rfp_queue_route()
-    current_route = route_core.get_current_route(default_route)
+    page_state_key = f"{page_key}_page_index"
+    filter_signature_key = f"{page_key}_filter_signature"
+    page_param_key = "rfp_archive_page_no" if archive else "rfp_page_no"
+    page_size = 10
 
-    if clean(current_route.get("page")) == page_key and clean(current_route.get("view")) == "detail":
-        selected_document_id = clean(current_route.get("item_id"))
+    current_view, selected_document_id = get_route_state(page_key)
+    if current_view == "detail":
         selected_row = get_row_by_column_value(source_df, "_row_id", selected_document_id)
         if selected_row is None and not all_source_df.empty:
             selected_row = get_row_by_column_value(all_source_df, "_row_id", selected_document_id)
-        back_col, info_col = st.columns([1.8, 4.2])
-        with back_col:
-            if st.button(f"← {title}로 돌아가기", key=f"{page_key}_back_to_table_ui", use_container_width=False, type="secondary"):
-                go_back_route(route_core.build_rfp_queue_route())
-                st.rerun()
-        with info_col:
-            st.markdown(f'<div class="page-note">{escape(title)} / RFP Detail</div>', unsafe_allow_html=True)
         render_opportunity_detail_from_row(selected_row)
         return
 
-    render_page_header(
-        title,
-        "분석 완료된 Opportunity를 추천순으로 검토하는 메인 Intelligence Workspace입니다." if not archive else "보관된 Opportunity 묶음을 검토 이력 기준으로 다시 탐색할 수 있습니다.",
-        eyebrow="Opportunity",
-    )
-    st.markdown(
-        '<div class="queue-shell-note">추천 상태와 공고 상태만 빠르게 좁히고, 상위 Opportunity를 카드 캐러셀로 넘겨보면서 바로 상세 검토로 이어질 수 있게 구성했습니다.</div>',
-        unsafe_allow_html=True,
-    )
+    @st.fragment
+    def _render_opportunity_queue_fragment() -> None:
+        base_rows = filter_archived_opportunity_rows(all_source_df) if archive else filter_current_opportunity_rows(source_df)
+        base_rows = filter_rankable_opportunity_rows(base_rows)
+        working = _build_queue_filter_frame(base_rows)
+        option_rows = filter_archived_opportunity_rows(all_source_df) if archive else all_source_df
+        option_working = _build_queue_filter_frame(option_rows)
+        if working.empty and option_working.empty:
+            st.info("표시할 RFP가 없습니다.")
+            return
 
-    base_rows = filter_archived_opportunity_rows(all_source_df) if archive else filter_current_opportunity_rows(source_df)
-    base_rows = filter_rankable_opportunity_rows(base_rows)
-    working = _build_queue_filter_frame(base_rows)
-    option_rows = filter_archived_opportunity_rows(all_source_df) if archive else all_source_df
-    option_working = _build_queue_filter_frame(option_rows)
-    if working.empty and option_working.empty:
-        st.info("표시할 RFP가 없습니다.")
-        return
+        recommendation_options = build_queue_recommendation_options(working["_queue_recommendation"]) if not working.empty else []
+        status_options = build_queue_status_options(option_working["_queue_status"]) if not option_working.empty else ["마감"]
+        archive_reason_options = sorted(
+            [
+                value
+                for value in working["_queue_archive_reason"].dropna().astype(str).unique().tolist()
+                if clean(value) and value != "-"
+            ]
+        ) if not working.empty else []
 
-    recommendation_options = build_queue_recommendation_options(working["_queue_recommendation"]) if not working.empty else []
-    status_options = build_queue_status_options(option_working["_queue_status"]) if not option_working.empty else ["마감"]
-    application_field_series = series_from_candidates(
-        option_working if not option_working.empty else working,
-        ["llm_application_field", "application_field", "활용분야"],
-    ).fillna("").astype(str).str.strip()
-    application_field_options = sorted({value for value in application_field_series.tolist() if clean(value) and value != "-"})
-    archive_reason_options = sorted(
-        [
-            value
-            for value in working["_queue_archive_reason"].dropna().astype(str).unique().tolist()
-            if clean(value) and value != "-"
-        ]
-    ) if not working.empty else []
-    route_filters = dict(current_route.get("filters") or {})
-    recommendation_key = f"{page_key}_filter_recommendation"
-    status_key = f"{page_key}_filter_status"
-    deadline_key = f"{page_key}_filter_deadline"
-    field_key = f"{page_key}_filter_field"
-    review_key = f"{page_key}_filter_review"
-    sort_key = f"{page_key}_sort"
-    archive_reason_key = f"{page_key}_filter_archive_reason"
-    st.session_state.setdefault(recommendation_key, route_filters.get("recommendation", []))
-    st.session_state.setdefault(status_key, route_filters.get("status", []))
-    st.session_state.setdefault(deadline_key, route_filters.get("deadline", []))
-    st.session_state.setdefault(field_key, route_filters.get("field", []))
-    st.session_state.setdefault(review_key, route_filters.get("review", []))
-    st.session_state.setdefault(sort_key, clean(route_filters.get("sort")) or "추천순")
-    if archive:
-        st.session_state.setdefault(archive_reason_key, route_filters.get("archive_reason", []))
-
-    _inject_opportunity_workspace_styles()
-    filter_cols = st.columns(5 if archive else 4)
-    with filter_cols[0]:
-        selected_recommendation = st.multiselect(
-            "추천 상태",
-            options=recommendation_options,
-            key=f"{page_key}_filter_recommendation",
-            placeholder="전체",
-        )
-    with filter_cols[1]:
-        selected_status = st.multiselect(
-            "공고 상태",
-            options=status_options,
-            key=f"{page_key}_filter_status",
-            placeholder="전체",
-        )
-    with filter_cols[2]:
-        selected_deadline = st.multiselect(
-            "D-day",
-            options=["진행중", "7일 이내", "30일 이내", "예정", "마감"],
-            key=deadline_key,
-            placeholder="전체",
-        )
-    with filter_cols[3]:
-        selected_field = st.multiselect(
-            "연구분야",
-            options=application_field_options,
-            key=field_key,
-            placeholder="전체",
-        )
-
-    selected_archive_reason: list[str] = []
-    if archive:
-        with filter_cols[4]:
-            selected_archive_reason = st.multiselect(
-                "보관 사유",
-                options=archive_reason_options,
-                key=archive_reason_key,
+        filter_cols = st.columns(3 if archive else 2)
+        with filter_cols[0]:
+            selected_recommendation = st.multiselect(
+                "추천 상태",
+                options=recommendation_options,
+                default=[],
+                key=f"{page_key}_filter_recommendation",
                 placeholder="전체",
             )
-    sort_col, spacer_col = st.columns([1.2, 4.8])
-    with sort_col:
-        sort_option = st.selectbox(
-            "정렬",
-            options=["추천순", "마감임박순", "과제명순"],
-            key=sort_key,
+        with filter_cols[1]:
+            selected_status = st.multiselect(
+                "공고 상태",
+                options=status_options,
+                default=[],
+                key=f"{page_key}_filter_status",
+                placeholder="전체",
+            )
+
+        selected_archive_reason: list[str] = []
+        if archive:
+            with filter_cols[2]:
+                selected_archive_reason = st.multiselect(
+                    "보관 사유",
+                    options=archive_reason_options,
+                    default=[],
+                    key=f"{page_key}_filter_archive_reason",
+                    placeholder="전체",
+                )
+
+        current_filter_signature = (
+            tuple(sorted(clean(value) for value in selected_recommendation if clean(value))),
+            tuple(sorted(clean(value) for value in selected_status if clean(value))),
+            tuple(sorted(clean(value) for value in selected_archive_reason if clean(value))),
         )
-    with spacer_col:
-        st.markdown("", unsafe_allow_html=True)
+        previous_filter_signature = st.session_state.get(filter_signature_key)
+        filters_changed = previous_filter_signature != current_filter_signature
+        if filters_changed:
+            st.session_state[page_state_key] = 1
+            st.session_state[filter_signature_key] = current_filter_signature
 
-    include_closed = archive or ("마감" in selected_status)
-    filter_source = (
-        filter_archived_opportunity_rows(all_source_df)
-        if archive
-        else (all_source_df if include_closed else filter_current_opportunity_rows(source_df))
-    )
-    filter_source = filter_rankable_opportunity_rows(filter_source)
-    filtered = filter_queue_working_frame(
-        _build_queue_filter_frame(filter_source),
-        selected_recommendation=selected_recommendation,
-        selected_status=selected_status,
-        archive=archive,
-    )
-    if selected_archive_reason:
-        filtered = filtered[filtered["_queue_archive_reason"].isin(selected_archive_reason)]
-    if selected_field:
-        field_source = series_from_candidates(filtered, ["llm_application_field", "application_field", "활용분야"]).fillna("").astype(str)
-        filtered = filtered[field_source.apply(lambda value: any(option in value for option in selected_field))]
-    selected_review = st.session_state.get(review_key, [])
-    if selected_review:
-        review_source = series_from_candidates(filtered, ["Review", "review_status", "검토 여부", "검토여부"]).fillna("").astype(str).str.strip()
-        filtered = filtered[review_source.isin(selected_review)].copy()
-    if selected_deadline:
-        today = pd.Timestamp.now().normalize()
-
-        def _deadline_bucket_match(row: pd.Series) -> bool:
-            buckets: set[str] = set()
-            deadline = row.get("_queue_deadline_sort")
-            status_text = clean(row.get("_queue_status"))
-            if "마감" in status_text or bool(row.get("_queue_is_closed")):
-                buckets.add("마감")
-            elif "예정" in status_text:
-                buckets.add("예정")
-            else:
-                buckets.add("진행중")
-            if pd.notna(deadline):
-                days_left = int((deadline.normalize() - today).days)
-                if days_left <= 7:
-                    buckets.add("7일 이내")
-                if days_left <= 30:
-                    buckets.add("30일 이내")
-            return any(option in buckets for option in selected_deadline)
-
-        filtered = filtered[filtered.apply(_deadline_bucket_match, axis=1)]
-
-    if filtered.empty:
-        st.info("검색 조건에 맞는 RFP가 없습니다.")
-        return
-
-    if sort_option == "마감임박순":
-        filtered = filtered.sort_values(
-            by=["_queue_deadline_sort", "_queue_sort_score", "_queue_project_sort"],
-            ascending=[True, False, True],
-            na_position="last",
+        include_closed = archive or ("마감" in selected_status)
+        filter_source = (
+            filter_archived_opportunity_rows(all_source_df)
+            if archive
+            else (all_source_df if include_closed else filter_current_opportunity_rows(source_df))
         )
-    elif sort_option == "과제명순":
-        filtered = filtered.sort_values(
-            by=["_queue_project_sort", "_queue_sort_score"],
-            ascending=[True, False],
-            na_position="last",
+        filter_source = filter_rankable_opportunity_rows(filter_source)
+        filtered = filter_queue_working_frame(
+            _build_queue_filter_frame(filter_source),
+            selected_recommendation=selected_recommendation,
+            selected_status=selected_status,
+            archive=archive,
         )
-    else:
+        if selected_archive_reason:
+            filtered = filtered[filtered["_queue_archive_reason"].isin(selected_archive_reason)]
+
+        if filtered.empty:
+            st.info("검색 조건에 맞는 RFP가 없습니다.")
+            return
+
         filtered = filtered.sort_values(
             by=["_queue_sort_score", "_queue_deadline_sort", "_queue_project_sort"],
             ascending=[False, True, True],
             na_position="last",
         )
 
-    selected_document_id = clean(current_route.get("item_id")) if clean(current_route.get("view")) == "summary" else ""
-    current_filters = {
-        "recommendation": selected_recommendation,
-        "status": selected_status,
-        "deadline": selected_deadline,
-        "field": selected_field,
-        "review": selected_review,
-        "sort": sort_option,
-        "archive_reason": selected_archive_reason,
-    }
+        total_rows = len(filtered)
+        total_pages = max(1, math.ceil(total_rows / page_size)) if page_size else 1
+        query_page_no = safe_int(get_query_param(page_param_key), 0)
+        if filters_changed:
+            current_page = 1
+        else:
+            current_page = query_page_no or int(st.session_state.get(page_state_key, 1) or 1)
+        current_page = max(1, min(current_page, total_pages))
+        st.session_state[page_state_key] = current_page
+        start_idx = (current_page - 1) * page_size
+        page_rows = filtered.iloc[start_idx:start_idx + page_size].copy()
 
-    def _select_rfp_preview(row: pd.Series) -> None:
-        row_id = clean(first_non_empty(row, "_row_id", "Row ID"))
-        route = route_core.build_rfp_queue_route(
-            filters=current_filters,
-            page_no=1,
-            page_size=20,
-            view="summary",
-            item_id=row_id,
-            source_key=resolve_route_source_key_for_row(row) or "iris",
-        )
-        route["page"] = page_key
-        route["source"] = "iris"
-        route_core.set_current_route(route)
-        replace_query_params(with_auth_params(route_core.serialize_route(route)))
-
-    display_col, summary_col = st.columns([5.4, 2.15], gap="large")
-    with display_col:
         st.markdown('<div class="queue-results-label">추천 결과</div>', unsafe_allow_html=True)
-        _render_recommended_opportunity_cards(
-            filtered.head(30),
-            page_key=page_key,
-            carousel_key=f"{page_key}_carousel",
-            visible_count=4,
-            show_rank=not archive,
-            selected_item_id=selected_document_id,
-            on_select=_select_rfp_preview,
+        _render_rfp_queue_list(page_rows, page_key=page_key)
+        pagination_html = _render_rfp_queue_pagination_controls(
+            page_param_key=page_param_key,
+            current_page=current_page,
+            total_pages=total_pages,
         )
-    with summary_col:
-        selected_row = get_row_by_column_value(filtered, "_row_id", selected_document_id)
-        if selected_row is None and not all_source_df.empty and selected_document_id:
-            selected_row = get_row_by_column_value(all_source_df, "_row_id", selected_document_id)
-        _render_rfp_preview_panel(
-            selected_row,
-            panel_key=f"{page_key}_preview",
-            empty_title="RFP를 선택하면 미리보기가 열립니다.",
-            empty_copy="카드 선택은 우측 Preview Panel만 갱신하고, 상세 화면은 버튼을 눌렀을 때만 전환됩니다.",
-            close_callback=lambda: (
-                route_core.set_current_route(
-                    route_core.build_rfp_queue_route(
-                        filters=current_filters,
-                        page_no=1,
-                        page_size=20,
-                        view="list",
-                        item_id="",
-                    )
-                ),
-                replace_query_params(with_auth_params(route_core.serialize_route(route_core.get_current_route()))),
-                st.rerun(),
-            ),
-        )
+        st.markdown(pagination_html, unsafe_allow_html=True)
 
-    route_snapshot = route_core.build_rfp_queue_route(
-        filters=current_filters,
-        page_no=1,
-        page_size=20,
-        view="summary" if selected_document_id else "list",
-        item_id=selected_document_id,
-        source_key=clean(current_route.get("source_key")) or "iris",
-    )
-    route_snapshot["page"] = page_key
-    route_snapshot["source"] = "iris"
-    route_core.set_current_route(route_snapshot)
-    replace_query_params(with_auth_params(route_core.serialize_route(route_snapshot)))
+    _render_opportunity_queue_fragment()
 
 # END VIEWER LAYOUT OVERRIDES
 
@@ -14563,6 +14761,119 @@ def render_notice_queue_ui_styles() -> None:
     st.markdown(
         """
         <style>
+        .notice-queue-toolbar-meta {
+          margin: 0 0 0.95rem;
+          color: #6b7280;
+          font-size: 0.83rem;
+          font-weight: 700;
+        }
+        [class*="st-key-notice_queue_workspace_search"],
+        [class*="st-key-notice_queue_workspace_status_inline"],
+        [class*="st-key-notice_queue_workspace_recommendation"],
+        [class*="st-key-notice_queue_workspace_sort"],
+        [class*="st-key-notice_queue_reset_top"] {
+          margin: 0;
+          overflow: visible !important;
+        }
+        [class*="st-key-notice_queue_workspace_search"] [data-testid="stTextInput"],
+        [class*="st-key-notice_queue_workspace_search"] [data-testid="stTextInput"] > div,
+        [class*="st-key-notice_queue_workspace_search"] [data-testid="stTextInputRootElement"] {
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          overflow: visible !important;
+        }
+        [class*="st-key-notice_queue_workspace_search"] [data-testid="stTextInputRootElement"] > div,
+        [class*="st-key-notice_queue_workspace_status_inline"] [data-baseweb="select"] > div,
+        [class*="st-key-notice_queue_workspace_recommendation"] [data-baseweb="select"] > div,
+        [class*="st-key-notice_queue_workspace_sort"] [data-baseweb="select"] > div {
+          min-height: 52px;
+          height: auto !important;
+          border: 1px solid #cfd8e3 !important;
+          border-radius: 999px !important;
+          background: #fbfdff !important;
+          color: #0f172a !important;
+          font-size: 0.92rem !important;
+          font-weight: 500 !important;
+          box-shadow: none !important;
+        }
+        [class*="st-key-notice_queue_workspace_search"] input {
+          min-height: 50px !important;
+          padding: 0 1.4rem !important;
+          color: #0f172a !important;
+          font-size: 0.98rem !important;
+          font-weight: 500 !important;
+        }
+        [class*="st-key-notice_queue_reset_top"] button {
+          min-height: 52px;
+          height: 52px !important;
+          border: 1px solid #cfd8e3 !important;
+          border-radius: 999px !important;
+          background: #ffffff !important;
+          color: #475569 !important;
+          font-size: 0.92rem !important;
+          font-weight: 600 !important;
+        }
+        [class*="st-key-favorites_toolbar_shell"] {
+          margin: 0.15rem 0 0.85rem;
+        }
+        .queue-pagination-wrap {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.55rem;
+          margin-top: 1rem;
+          padding-bottom: 0.25rem;
+        }
+        .queue-pagination-row {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.7rem;
+        }
+        .queue-page-nav {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: #4b5563 !important;
+          font-size: 1rem;
+          font-weight: 800;
+          text-decoration: none !important;
+        }
+        .queue-page-nav.is-disabled {
+          color: #cbd5e1 !important;
+          pointer-events: none;
+        }
+        .queue-page-link {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 38px;
+          height: 38px;
+          padding: 0 0.62rem;
+          border: 1px solid transparent;
+          border-radius: 9px;
+          background: transparent;
+          color: #4b5563 !important;
+          font-size: 1rem;
+          font-weight: 800;
+          text-decoration: none !important;
+        }
+        .queue-page-link.is-active {
+          border-color: #2563eb;
+          background: #2563eb;
+          color: #ffffff !important;
+        }
+        .queue-page-ellipsis {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 34px;
+          height: 38px;
+          color: #4b5563;
+          font-size: 1.05rem;
+          font-weight: 900;
+        }
         .notice-queue-footer {
           display: flex;
           flex-direction: column;
