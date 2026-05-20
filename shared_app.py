@@ -730,13 +730,11 @@ def build_dashboard_recent_comments_table(limit: int = 5) -> pd.DataFrame:
     recent = recent.head(limit).copy()
     if recent.empty:
         return pd.DataFrame(columns=["작성시각", "작성자", "댓글"])
-    recent["댓글"] = recent["comment"].apply(lambda value: compact_table_value(value, max_chars=42))
-    return recent.rename(
-        columns={
-            "created_at": "작성시각",
-            "author": "작성자",
-        }
-    )[["작성시각", "작성자", "댓글"]]
+    recent["작성자"] = series_from_candidates(recent, ["nickname", "user_id", "author"])
+    recent["댓글"] = series_from_candidates(recent, ["content", "comment"]).apply(
+        lambda value: compact_table_value(value, max_chars=42)
+    )
+    return recent.rename(columns={"created_at": "작성시각"})[["작성시각", "작성자", "댓글"]]
 
 
 def render_dashboard_chart_block(title: str, chart_df: pd.DataFrame, *, chart_type: str = "bar") -> None:
@@ -10355,51 +10353,358 @@ def save_review_status(
         )
 
 
+def _inject_detail_comment_styles() -> None:
+    if st.session_state.get("_detail_comment_styles_injected"):
+        return
+    st.session_state["_detail_comment_styles_injected"] = True
+    st.markdown(
+        """
+        <style>
+        .detail-comments-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 20px 28px;
+          border-bottom: 1px solid #eef2f7;
+          background: #dfe2ff;
+        }
+        .detail-comments-header-copy {
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .detail-comments-subtitle {
+          color: #475569;
+          font-size: 0.82rem;
+          font-weight: 700;
+          line-height: 1.55;
+        }
+        .detail-comments-count {
+          display: inline-flex;
+          align-items: center;
+          min-height: 30px;
+          padding: 0 12px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.78);
+          color: #1d4ed8;
+          font-size: 0.8rem;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+        [class*="st-key-detail_comments_rows_"] [data-testid="stVerticalBlock"] {
+          gap: 0 !important;
+        }
+        [class*="st-key-detail_comments_compose_"] [data-testid="stVerticalBlock"] {
+          gap: 0.7rem !important;
+          padding: 18px 24px 20px;
+          border-bottom: 1px solid #f1f5f9;
+        }
+        [class*="st-key-detail_comments_row_"] [data-testid="stVerticalBlockBorderWrapper"],
+        [class*="st-key-detail_comment_entry_"] [data-testid="stVerticalBlockBorderWrapper"] {
+          border: 0 !important;
+          border-radius: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          padding: 0 !important;
+        }
+        [class*="st-key-detail_comments_row_"] [data-testid="stHorizontalBlock"] {
+          align-items: flex-start !important;
+          gap: 20px !important;
+          padding: 17px 28px !important;
+          border-bottom: 1px solid #f1f5f9;
+        }
+        [class*="st-key-detail_comments_row_history_"] [data-testid="stHorizontalBlock"] {
+          border-bottom: 0 !important;
+          align-items: flex-start !important;
+        }
+        .detail-comments-section-label,
+        .detail-comments-row-label {
+          color: #64748b;
+          font-size: 0.78rem;
+          font-weight: 800;
+          letter-spacing: 0.02em;
+          line-height: 1.55;
+          margin: 0;
+          white-space: nowrap;
+        }
+        .detail-comments-chip {
+          display: inline-flex;
+          align-items: center;
+          min-height: 30px;
+          padding: 0 12px;
+          border-radius: 999px;
+          border: 1px solid #dbe4f0;
+          background: #f8fafc;
+          color: #334155;
+          font-size: 0.82rem;
+          font-weight: 700;
+        }
+        .detail-comments-entry-meta {
+          color: #64748b;
+          font-size: 0.8rem;
+          font-weight: 700;
+          line-height: 1.55;
+          margin: 0;
+        }
+        .detail-comments-entry-text {
+          margin-top: 6px;
+          color: #334155;
+          font-size: 0.92rem;
+          font-weight: 500;
+          line-height: 1.6;
+          word-break: break-word;
+        }
+        .detail-comments-empty {
+          margin: 0;
+          color: #94a3b8;
+          font-size: 0.9rem;
+          font-weight: 600;
+        }
+        .detail-comments-divider {
+          height: 1px;
+          margin: 14px 0 0;
+          background: #eef2f7;
+        }
+        [class*="st-key-detail_comments_row_history_"] [data-testid="stVerticalBlock"] {
+          gap: 0.8rem !important;
+          padding: 18px 24px 18px;
+        }
+        [class*="st-key-detail_comments_panel_"] [data-testid="stVerticalBlockBorderWrapper"] {
+          border: 1px solid #e5e7eb !important;
+          border-radius: 20px !important;
+          background: #ffffff !important;
+          box-shadow: none !important;
+          overflow: hidden !important;
+          padding: 0 !important;
+        }
+        [class*="st-key-detail_comments_panel_"] [data-testid="stVerticalBlock"] {
+          gap: 0 !important;
+        }
+        [class*="st-key-detail_comments_panel_"] [data-testid="stForm"],
+        [class*="st-key-detail_comments_panel_"] [data-testid="stForm"] > div {
+          border: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          padding: 0 !important;
+          margin: 0 !important;
+        }
+        [class*="st-key-detail_comments_panel_"] .stTextArea textarea {
+          min-height: 112px;
+          border-radius: 14px !important;
+          border: 1px solid #dbe4f0 !important;
+          background: #ffffff !important;
+          box-shadow: none !important;
+          line-height: 1.6 !important;
+        }
+        [class*="st-key-detail_comments_panel_"] .stTextArea textarea:focus {
+          border-color: #94a3b8 !important;
+          box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12) !important;
+        }
+        [class*="st-key-detail_comments_panel_"] .stButton > button {
+          border-radius: 14px !important;
+          white-space: nowrap !important;
+          min-height: 42px !important;
+        }
+        [class*="st-key-detail_comments_panel_"] .stFormSubmitButton > button {
+          font-size: 0.92rem !important;
+          font-weight: 700 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
-def render_notice_comments(row: dict, section_key: str) -> None:
+def _push_ui_flash(scope_key: str, kind: str, message: str) -> None:
+    st.session_state[f"_ui_flash::{clean(scope_key)}"] = {
+        "kind": clean(kind) or "info",
+        "message": clean(message),
+    }
+
+
+def _render_ui_flash(scope_key: str, *, presentation: str = "inline") -> None:
+    flash = st.session_state.pop(f"_ui_flash::{clean(scope_key)}", None)
+    if not isinstance(flash, dict):
+        return
+    message = clean(flash.get("message"))
+    if not message:
+        return
+    kind = clean(flash.get("kind")).lower()
+    if presentation == "toast" and hasattr(st, "toast"):
+        icon = "❌" if kind == "error" else ("⚠️" if kind == "warning" else "✅")
+        st.toast(message, icon=icon)
+        return
+    if kind == "error":
+        st.error(message)
+    elif kind == "warning":
+        st.warning(message)
+    else:
+        st.success(message)
+
+
+def _delete_notice_comment_with_flash(*, comment_id: str, current_user_id: str, flash_scope: str) -> None:
+    try:
+        delete_notice_comment(comment_id, current_user_id)
+        _push_ui_flash(flash_scope, "success", "댓글을 삭제했습니다.")
+    except Exception as exc:
+        _push_ui_flash(flash_scope, "error", f"댓글 삭제 실패: {exc}")
+
+
+
+
+def render_notice_comments(
+    row: dict,
+    section_key: str,
+    *,
+    show_title: bool = True,
+    modern_layout: bool = False,
+) -> None:
+    if modern_layout:
+        _inject_detail_comment_styles()
+
     notice_id = clean(first_non_empty(row, *NOTICE_ID_CANDIDATES))
     notice_title = clean(first_non_empty(row, *NOTICE_TITLE_CANDIDATES))
     source_key = resolve_notice_source_key(row)
-    current_user_id = get_current_user_id()
-    current_user_label = get_current_user_label()
-    widget_key_base = _css_safe_key(f"{section_key}_{source_key}_{notice_id}_comments")
+    current_user_id = clean(get_current_user_id())
+    author_id = current_user_id or clean(get_env("DEFAULT_COMMENT_AUTHOR")) or "익명"
+    flash_scope = f"comments::{section_key}"
+    save_feedback = ""
 
     if not notice_id:
-        st.info("공고ID가 없어 댓글을 연결할 수 없습니다.")
+        if modern_layout:
+            with st.container(border=True, key=f"detail_comments_panel_{section_key}"):
+                st.markdown(
+                    (
+                        '<div class="detail-comments-header">'
+                        '<div class="detail-comments-header-copy">'
+                        '<div class="detail-fact-title">댓글</div>'
+                        '<div class="detail-comments-subtitle">작성자는 로그인 ID로 자동 기록됩니다.</div>'
+                        "</div>"
+                        '<div class="detail-comments-count">댓글 0건</div>'
+                        "</div>"
+                    ),
+                    unsafe_allow_html=True,
+                )
+                with st.container(key=f"detail_comments_rows_{section_key}"):
+                    with st.container(key=f"detail_comments_row_empty_{section_key}"):
+                        label_col, value_col = st.columns([1.15, 4.85], gap="small")
+                        with label_col:
+                            st.markdown('<div class="detail-comments-row-label">안내</div>', unsafe_allow_html=True)
+                        with value_col:
+                            st.markdown('<div class="detail-comments-empty">공고ID가 없어 댓글을 연결할 수 없습니다.</div>', unsafe_allow_html=True)
+        else:
+            st.caption("공고ID가 없어 댓글을 연결할 수 없습니다.")
         return
 
-    try:
-        comments_df = load_notice_comments()
-    except Exception as exc:
-        st.warning(f"댓글 이력을 불러오지 못했습니다: {exc}")
-        comments_df = _empty_comment_dataframe()
+    def _load_matched_comments() -> pd.DataFrame:
+        try:
+            comments_df = load_notice_comments()
+        except Exception as exc:
+            st.warning(f"댓글 이력을 불러오지 못했습니다: {exc}")
+            return _empty_comment_dataframe()
+        return filter_notice_comments(comments_df, source_key=source_key, notice_id=notice_id)
 
-    matched = filter_notice_comments(comments_df, source_key=source_key, notice_id=notice_id)
-    comment_count = len(matched)
+    if modern_layout:
+        with st.container(border=True, key=f"detail_comments_panel_{section_key}"):
+            matched = _load_matched_comments()
+            st.markdown(
+                (
+                    '<div class="detail-comments-header">'
+                    '<div class="detail-comments-header-copy">'
+                    '<div class="detail-fact-title">댓글</div>'
+                    '<div class="detail-comments-subtitle">작성자는 로그인 ID로 자동 기록됩니다.</div>'
+                    "</div>"
+                    f'<div class="detail-comments-count">댓글 {len(matched)}건</div>'
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+            _render_ui_flash(flash_scope, presentation="toast")
 
-    render_detail_card(
-        "댓글",
-        [
-            ("작성자", current_user_label),
-            ("안내", "작성자는 로그인 ID로 자동 기록됩니다."),
-            ("댓글 수", f"{comment_count}건"),
-        ],
-    )
+            with st.container(key=f"detail_comments_rows_{section_key}"):
+                with st.form(f"{section_key}_comment_form", clear_on_submit=True):
+                    with st.container(key=f"detail_comments_compose_{section_key}"):
+                        st.markdown(
+                            (
+                                '<div class="detail-comments-compose-meta">'
+                                '<div class="detail-comments-section-label">작성자</div>'
+                                f'<span class="detail-comments-chip">{escape(author_id)}</span>'
+                                "</div>"
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                        comment_text = st.text_area(
+                            "의견",
+                            key=f"{section_key}_comment_text",
+                            height=150,
+                            placeholder="이 공고에 대한 메모나 검토 의견을 남겨주세요.",
+                            label_visibility="collapsed",
+                        )
+                        action_cols = st.columns([1.25, 0.9], gap="small")
+                        with action_cols[1]:
+                            submitted = st.form_submit_button("댓글 저장", use_container_width=True)
+                    if submitted:
+                        try:
+                            append_notice_comment(
+                                source_key=source_key,
+                                notice_id=notice_id,
+                                notice_title=notice_title,
+                                author=author_id,
+                                comment=comment_text,
+                            )
+                            save_feedback = "댓글을 저장했습니다."
+                        except Exception as exc:
+                            st.error(f"댓글 저장 실패: {exc}")
 
-    with st.form(f"{widget_key_base}_form", clear_on_submit=True):
-        st.text_input(
-            "작성자",
-            value=current_user_label,
-            key=f"{widget_key_base}_author",
-            disabled=True,
-        )
-        comment = st.text_area(
-            "의견",
-            key=f"{widget_key_base}_text",
-            height=120,
-            placeholder="이 공고에 대한 메모나 검토 의견을 남겨주세요.",
-        )
+                matched = _load_matched_comments()
+                if save_feedback:
+                    st.success(save_feedback)
+                with st.container(key=f"detail_comments_row_history_{section_key}"):
+                    st.markdown('<div class="detail-comments-section-label">댓글 이력</div>', unsafe_allow_html=True)
+                    if matched.empty:
+                        st.markdown('<div class="detail-comments-empty">아직 등록된 댓글이 없습니다.</div>', unsafe_allow_html=True)
+                    else:
+                        comment_rows = matched.to_dict("records")
+                        for idx, comment_row in enumerate(comment_rows):
+                            comment_id = clean(comment_row.get("comment_id"))
+                            created_at = clean(comment_row.get("created_at"))
+                            nickname = clean(comment_row.get("nickname")) or clean(comment_row.get("author")) or "익명"
+                            content = clean(comment_row.get("content")) or clean(comment_row.get("comment"))
+                            allow_delete = bool(comment_id and can_delete_comment(comment_row, current_user_id))
+
+                            with st.container(key=f"detail_comment_entry_{section_key}_{comment_id or idx}"):
+                                meta_col, action_col = st.columns([3.8, 0.9], gap="small")
+                                with meta_col:
+                                    stamp_parts = [value for value in [created_at, nickname] if value]
+                                    st.markdown(
+                                        f'<div class="detail-comments-entry-meta">{escape(" · ".join(stamp_parts))}</div>',
+                                        unsafe_allow_html=True,
+                                    )
+                                with action_col:
+                                    if allow_delete:
+                                        st.button(
+                                            "삭제",
+                                            key=f"{section_key}_delete_comment_{comment_id}",
+                                            use_container_width=False,
+                                            on_click=_delete_notice_comment_with_flash,
+                                            kwargs={
+                                                "comment_id": comment_id,
+                                                "current_user_id": current_user_id,
+                                                "flash_scope": flash_scope,
+                                            },
+                                        )
+                                st.markdown(
+                                    f'<div class="detail-comments-entry-text">{escape(content).replace(chr(10), "<br>")}</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                if idx < len(comment_rows) - 1:
+                                    st.markdown('<div class="detail-comments-divider"></div>', unsafe_allow_html=True)
+        return
+
+    with st.form(f"{section_key}_comment_form", clear_on_submit=True):
+        comment = st.text_area("의견", key=f"{section_key}_comment_text", height=110)
         submitted = st.form_submit_button("댓글 저장")
         if submitted:
             try:
@@ -10407,42 +10712,44 @@ def render_notice_comments(row: dict, section_key: str) -> None:
                     source_key=source_key,
                     notice_id=notice_id,
                     notice_title=notice_title,
-                    author=current_user_label,
+                    author=author_id,
                     comment=comment,
                 )
-                comments_df = load_notice_comments()
-                st.success("댓글을 저장했습니다.")
+                save_feedback = "댓글을 저장했습니다."
             except Exception as exc:
                 st.error(f"댓글 저장 실패: {exc}")
 
-    matched = filter_notice_comments(comments_df, source_key=source_key, notice_id=notice_id)
-    st.markdown("### 댓글 이력")
+    matched = _load_matched_comments()
+    if save_feedback:
+        st.success(save_feedback)
+    if show_title:
+        st.markdown('<div class="detail-section-title">댓글</div>', unsafe_allow_html=True)
     if matched.empty:
         st.info("아직 등록된 댓글이 없습니다.")
         return
 
-    for _, comment_row in matched.iterrows():
+    st.caption(f"댓글 이력 {len(matched)}건")
+    for comment_row in matched.to_dict("records"):
         comment_id = clean(comment_row.get("comment_id"))
         created_at = clean(comment_row.get("created_at"))
-        author = clean(comment_row.get("nickname") or comment_row.get("author")) or "익명"
-        comment_text = clean(comment_row.get("content") or comment_row.get("comment"))
-        delete_key = f"{widget_key_base}_delete_{comment_id}"
+        author = clean(comment_row.get("nickname")) or clean(comment_row.get("author")) or "익명"
+        comment_text = clean(comment_row.get("content")) or clean(comment_row.get("comment"))
+        allow_delete = bool(comment_id and can_delete_comment(comment_row, current_user_id))
         with st.container(border=True):
-            header_col, action_col = st.columns([6, 1])
-            with header_col:
-                st.caption(" · ".join([value for value in [created_at, author] if value]))
-            with action_col:
-                if comment_id and can_delete_comment(comment_row, current_user_id) and st.button("삭제", key=delete_key, use_container_width=True):
-                    try:
-                        delete_notice_comment(comment_id, current_user_id)
-                        st.success("댓글을 삭제했습니다.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"댓글 삭제 실패: {exc}")
-            if comment_text:
-                st.write(comment_text)
-            else:
-                st.caption("내용 없음")
+            st.caption(" · ".join([value for value in [created_at, author] if value]))
+            st.write(comment_text)
+            if allow_delete:
+                st.button(
+                    "댓글 삭제",
+                    key=f"{section_key}_delete_comment_{comment_id}",
+                    on_click=_delete_notice_comment_with_flash,
+                    kwargs={
+                        "comment_id": comment_id,
+                        "current_user_id": current_user_id,
+                        "flash_scope": flash_scope,
+                    },
+                )
+    _render_ui_flash(flash_scope, presentation="toast")
 
 
 def _legacy_render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
