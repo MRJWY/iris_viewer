@@ -12004,51 +12004,95 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
         st.info("표시할 RFP가 없습니다.")
         return
 
-    items: list[str] = []
+    def _deadline_sort_value(value: object) -> int | None:
+        text = clean(value)
+        if not text or text in {"-", "예정", "마감"}:
+            return None
+        if text == "D-Day":
+            return 0
+        match = re.fullmatch(r"D-(\d+)", text)
+        if not match:
+            return None
+        return int(match.group(1))
+
+    row_html: list[str] = []
     archive_mode = "archive" in clean(page_key).lower()
     for _, row in rows.iterrows():
         ctx = _queue_row_context(row)
         row_id = clean(first_non_empty(row, "_row_id", "Row ID"))
+        notice_id = _workspace_notice_id(row)
+        source_key = _workspace_source_key(row)
         href = build_route_href(
             page_key,
             row_id,
-            source_key=resolve_route_source_key_for_row(row, source_key=row.get("source_key")),
+            source_key=source_key,
         ) if row_id else ""
-        badges = "".join(
-            [
-                _pill_html(ctx["recommendation"]),
-                _pill_html(ctx["score"], kind="score"),
-                _pill_html(ctx["deadline"], kind="deadline"),
-                _pill_html(ctx["archive_reason_label"], kind="archive") if archive_mode else "",
-            ]
+        recommendation_badge = _pill_html(
+            ctx["archive_reason_label"] if archive_mode and clean(ctx["archive_reason_label"]) else ctx["recommendation"]
         )
-        archive_reason_html = (
-            f'<div class="queue-list-card-reason muted">보관 사유: {escape(ctx["archive_reason_label"])}</div>'
-            if archive_mode and clean(ctx["archive_reason_label"])
-            else ""
+        keyword_values = _extract_dashboard_keywords(row, limit=3)
+        keyword_chips = "".join(
+            f'<span class="queue-grid-chip">{escape(keyword)}</span>'
+            for keyword in keyword_values
         )
-        card_markup = (
-            '<div class="queue-card queue-list-card">'
-            f'<div class="queue-badge-row">{badges}</div>'
-            f'<div class="queue-list-card-title">{escape(truncate_text(ctx["project"], max_chars=96))}</div>'
-            f'<div class="queue-list-card-subtitle">{escape(truncate_text(ctx["notice"], max_chars=120))}</div>'
-            '<div class="queue-list-card-meta">'
-            f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">전문기관</div><div class="queue-list-card-meta-value">{escape(ctx["agency"])}</div></div>'
-            f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">지원금</div><div class="queue-list-card-meta-value">{escape(ctx["budget"])}</div></div>'
-            f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">공고 상태</div><div class="queue-list-card-meta-value">{escape(ctx["status"])}</div></div>'
-            '</div>'
-            f'<div class="queue-list-card-reason">{escape(ctx["reason"])}</div>'
-            f'{archive_reason_html}'
-            '</div>'
+        if not keyword_chips:
+            keyword_chips = '<span class="queue-grid-chip is-empty">키워드 없음</span>'
+        keyword_class = "queue-grid-keywords is-single" if len(keyword_values) <= 1 else "queue-grid-keywords"
+        keywords_html = f'<div class="{keyword_class}">{keyword_chips}</div>'
+        subtitle_parts = [ctx["source"]]
+        if clean(ctx["notice"]) and ctx["notice"] != "-":
+            subtitle_parts.append(ctx["notice"])
+        if archive_mode and clean(ctx["archive_reason_label"]):
+            subtitle_parts.append(f"보관 사유: {ctx['archive_reason_label']}")
+        subtitle = " / ".join(part for part in subtitle_parts if clean(part) and part != "-")
+        dday_label = clean(ctx["deadline"]) or "-"
+        dday_sort = _deadline_sort_value(dday_label)
+        tone_class = "is-calm"
+        if dday_sort is not None and dday_sort <= 3:
+            tone_class = "is-critical"
+        elif dday_sort is not None and dday_sort <= 14:
+            tone_class = "is-warning"
+        review_value = clean(ctx["review"])
+        favorite_href = build_favorite_toggle_href(
+            page_key=page_key,
+            notice_id=notice_id,
+            current_value=review_value,
+            source_key=source_key,
+            notice_title=ctx["notice"],
         )
-        if href:
-            items.append(
-                f'<a class="queue-list-link" href="{escape(href, quote=True)}" target="_self">{card_markup}</a>'
+        favorite_label = "해제" if review_value == FAVORITE_REVIEW_STATUS else "등록"
+        favorite_class = " is-active" if review_value == FAVORITE_REVIEW_STATUS else ""
+        row_html.append(
+            "".join(
+                [
+                    '<div class="queue-grid-row">',
+                    f'<div class="queue-grid-cell">{recommendation_badge}</div>',
+                    '<div class="queue-grid-cell is-title">',
+                    f'<a class="queue-grid-title" href="{escape(href, quote=True)}" target="_self">{escape(truncate_text(ctx["project"], max_chars=106))}</a>',
+                    (f'<div class="queue-grid-subtitle">{escape(truncate_text(subtitle, max_chars=96))}</div>' if subtitle else ""),
+                    '</div>',
+                    f'<div class="queue-grid-cell is-keywords">{keywords_html}</div>',
+                    f'<div class="queue-grid-cell">{escape(truncate_text(ctx["agency"], max_chars=20))}</div>',
+                    f'<div class="queue-grid-cell queue-grid-period">{escape(truncate_text(ctx["period"], max_chars=28))}</div>',
+                    f'<div class="queue-grid-cell"><span class="queue-grid-dday {tone_class}">{escape(dday_label)}</span></div>',
+                    f'<div class="queue-grid-cell queue-grid-rfp-count is-center">{escape(ctx["score"])}</div>',
+                    f'<div class="queue-grid-cell is-center"><a class="queue-grid-favorite{favorite_class}" href="{escape(favorite_href, quote=True)}" target="_self">{favorite_label}</a></div>',
+                    '</div>',
+                ]
             )
-        else:
-            items.append(card_markup)
+        )
 
-    st.markdown(f'<div class="queue-list-shell">{"".join(items)}</div>', unsafe_allow_html=True)
+    st.markdown(
+        (
+            '<div class="queue-grid-scroll"><div class="queue-grid">'
+            '<div class="queue-grid-head">'
+            '<div>추천</div><div class="queue-grid-col-title">과제명</div><div>키워드</div><div>기관</div><div>기간</div><div>D-day</div><div>점수</div><div>관심</div>'
+            '</div>'
+            + "".join(row_html)
+            + '</div></div>'
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _legacy_render_opportunity_detail_from_row(row: dict) -> None:
@@ -14671,23 +14715,23 @@ def _render_rfp_queue_pagination_controls(
     for page_number in page_numbers:
         active_class = " is-active" if page_number == current_page else ""
         number_links.append(
-            f'<a class="queue-page-link{active_class}" href="{escape(_page_href(page_number), quote=True)}" target="_self">{page_number}</a>'
+            f'<a class="notice-queue-page-link{active_class}" href="{escape(_page_href(page_number), quote=True)}" target="_self">{page_number}</a>'
         )
     if total_pages > page_numbers[-1]:
         if total_pages > page_numbers[-1] + 1:
-            number_links.append('<span class="queue-page-ellipsis">…</span>')
+            number_links.append('<span class="notice-queue-page-ellipsis">…</span>')
         number_links.append(
-            f'<a class="queue-page-link" href="{escape(_page_href(total_pages), quote=True)}" target="_self">{total_pages}</a>'
+            f'<a class="notice-queue-page-link" href="{escape(_page_href(total_pages), quote=True)}" target="_self">{total_pages}</a>'
         )
 
     nav_html = (
-        f'<div class="queue-pagination-row">'
-        f'<a class="queue-page-nav{prev_class}" href="{escape(_page_href(current_page - 1), quote=True)}" target="_self">‹ 이전</a>'
-        f'<a class="queue-page-nav{next_class}" href="{escape(_page_href(current_page + 1), quote=True)}" target="_self">다음 ›</a>'
+        f'<div class="notice-queue-pagination">'
+        f'<a class="notice-queue-page-nav{prev_class}" href="{escape(_page_href(current_page - 1), quote=True)}" target="_self">‹ 이전</a>'
+        f'<a class="notice-queue-page-nav{next_class}" href="{escape(_page_href(current_page + 1), quote=True)}" target="_self">다음 ›</a>'
         '</div>'
     )
-    number_html = f'<div class="queue-pagination-row">{"".join(number_links)}</div>'
-    return f'<nav class="queue-pagination-wrap" aria-label="RFP Queue pagination">{number_html}{nav_html}</nav>'
+    number_html = f'<div class="notice-queue-pagination">{"".join(number_links)}</div>'
+    return f'<nav class="notice-queue-pagination-wrap" aria-label="RFP Queue pagination">{number_html}{nav_html}</nav>'
 
 
 def _render_notice_queue_pagination_controls(
@@ -14877,7 +14921,10 @@ def render_opportunity_page(
         start_idx = (current_page - 1) * page_size
         page_rows = filtered.iloc[start_idx:start_idx + page_size].copy()
 
-        st.markdown('<div class="queue-results-label">추천 결과</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="notice-queue-toolbar-meta">검색 결과 {total_rows:,}건</div>',
+            unsafe_allow_html=True,
+        )
         _render_rfp_queue_list(page_rows, page_key=page_key)
         pagination_route = route_core.build_rfp_queue_route(
             page_no=current_page,
