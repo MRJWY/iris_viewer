@@ -470,6 +470,8 @@ def render_iris_page(
     source_datasets: dict[str, object] | None = None,
 ) -> None:
     if page_key in {"opportunity", "rfp_queue"}:
+        if source_datasets is None:
+            source_datasets = build_source_datasets()
         rfp_current_df, rfp_all_df = build_rfp_queue_frames(datasets, source_datasets)
         render_opportunity_page(
             rfp_current_df,
