@@ -15125,7 +15125,10 @@ def render_opportunity_page(
 
     @st.fragment
     def _render_opportunity_queue_fragment() -> None:
-        base_rows = filter_archived_opportunity_rows(all_source_df) if archive else filter_current_opportunity_rows(source_df)
+        # `source_df` is already scoped to current opportunity sheets for the active queue.
+        # Re-applying the current mask here can incorrectly drop rows when some source sheets
+        # have sparse period/status fields despite belonging to the current sheet.
+        base_rows = filter_archived_opportunity_rows(all_source_df) if archive else source_df.copy()
         base_rows = filter_rankable_opportunity_rows(base_rows)
         working = _build_queue_filter_frame(base_rows)
         option_rows = filter_archived_opportunity_rows(all_source_df) if archive else all_source_df
@@ -15188,7 +15191,7 @@ def render_opportunity_page(
         filter_source = (
             filter_archived_opportunity_rows(all_source_df)
             if archive
-            else (all_source_df if include_closed else filter_current_opportunity_rows(source_df))
+            else (all_source_df if include_closed else source_df.copy())
         )
         filter_source = filter_rankable_opportunity_rows(filter_source)
         filtered = filter_queue_working_frame(
