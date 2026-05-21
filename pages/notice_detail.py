@@ -388,5 +388,6 @@ def render_page(st, row, opportunity_df: pd.DataFrame, *, api) -> None:
                     render_comments=lambda: api.render_notice_comments(
                         row_dict,
                         section_key=f"notice_{notice_id}",
+                        modern_layout=True,
                     ),
                 )

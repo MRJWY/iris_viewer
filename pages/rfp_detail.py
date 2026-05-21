@@ -358,5 +358,6 @@ def render_page(st, row, *, api) -> None:
                     render_comments=lambda: api.render_notice_comments(
                         row_dict,
                         section_key=f"rfp_{notice_id or row_id}",
+                        modern_layout=True,
                     ),
                 )
