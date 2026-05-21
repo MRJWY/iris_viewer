@@ -1,5 +1,10 @@
 ﻿import json
 import hashlib
+# Legacy local shared app copy for the public viewer bundle.
+# Active runtime entrypoints in `iris_viewer_repo/` now delegate to the
+# repository-root `app.py`, which is the source of truth for Dashboard,
+# queue, and detail behavior. Keep this file only for compatibility/fallback
+# while the remaining local duplicates are phased out.
 import hmac
 import math
 import os
@@ -12004,95 +12009,51 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
         st.info("표시할 RFP가 없습니다.")
         return
 
-    def _deadline_sort_value(value: object) -> int | None:
-        text = clean(value)
-        if not text or text in {"-", "예정", "마감"}:
-            return None
-        if text == "D-Day":
-            return 0
-        match = re.fullmatch(r"D-(\d+)", text)
-        if not match:
-            return None
-        return int(match.group(1))
-
-    row_html: list[str] = []
+    items: list[str] = []
     archive_mode = "archive" in clean(page_key).lower()
     for _, row in rows.iterrows():
         ctx = _queue_row_context(row)
         row_id = clean(first_non_empty(row, "_row_id", "Row ID"))
-        notice_id = _workspace_notice_id(row)
-        source_key = _workspace_source_key(row)
         href = build_route_href(
             page_key,
             row_id,
-            source_key=source_key,
+            source_key=resolve_route_source_key_for_row(row, source_key=row.get("source_key")),
         ) if row_id else ""
-        recommendation_badge = _pill_html(
-            ctx["archive_reason_label"] if archive_mode and clean(ctx["archive_reason_label"]) else ctx["recommendation"]
+        badges = "".join(
+            [
+                _pill_html(ctx["recommendation"]),
+                _pill_html(ctx["score"], kind="score"),
+                _pill_html(ctx["deadline"], kind="deadline"),
+                _pill_html(ctx["archive_reason_label"], kind="archive") if archive_mode else "",
+            ]
         )
-        keyword_values = _extract_dashboard_keywords(row, limit=3)
-        keyword_chips = "".join(
-            f'<span class="queue-grid-chip">{escape(keyword)}</span>'
-            for keyword in keyword_values
+        archive_reason_html = (
+            f'<div class="queue-list-card-reason muted">보관 사유: {escape(ctx["archive_reason_label"])}</div>'
+            if archive_mode and clean(ctx["archive_reason_label"])
+            else ""
         )
-        if not keyword_chips:
-            keyword_chips = '<span class="queue-grid-chip is-empty">키워드 없음</span>'
-        keyword_class = "queue-grid-keywords is-single" if len(keyword_values) <= 1 else "queue-grid-keywords"
-        keywords_html = f'<div class="{keyword_class}">{keyword_chips}</div>'
-        subtitle_parts = [ctx["source"]]
-        if clean(ctx["notice"]) and ctx["notice"] != "-":
-            subtitle_parts.append(ctx["notice"])
-        if archive_mode and clean(ctx["archive_reason_label"]):
-            subtitle_parts.append(f"보관 사유: {ctx['archive_reason_label']}")
-        subtitle = " / ".join(part for part in subtitle_parts if clean(part) and part != "-")
-        dday_label = clean(ctx["deadline"]) or "-"
-        dday_sort = _deadline_sort_value(dday_label)
-        tone_class = "is-calm"
-        if dday_sort is not None and dday_sort <= 3:
-            tone_class = "is-critical"
-        elif dday_sort is not None and dday_sort <= 14:
-            tone_class = "is-warning"
-        review_value = clean(ctx["review"])
-        favorite_href = build_favorite_toggle_href(
-            page_key=page_key,
-            notice_id=notice_id,
-            current_value=review_value,
-            source_key=source_key,
-            notice_title=ctx["notice"],
+        card_markup = "".join(
+            [
+                '<div class="queue-card queue-list-card">',
+                f'<div class="queue-badge-row">{badges}</div>',
+                f'<div class="queue-list-card-title">{escape(truncate_text(ctx["project"], max_chars=96))}</div>',
+                f'<div class="queue-list-card-subtitle">{escape(truncate_text(ctx["notice"], max_chars=120))}</div>',
+                '<div class="queue-list-card-meta">',
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">전문기관</div><div class="queue-list-card-meta-value">{escape(ctx["agency"])}</div></div>',
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">지원금</div><div class="queue-list-card-meta-value">{escape(ctx["budget"])}</div></div>',
+                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">공고 상태</div><div class="queue-list-card-meta-value">{escape(ctx["status"])}</div></div>',
+                '</div>',
+                f'<div class="queue-list-card-reason">{escape(ctx["reason"])}</div>',
+                archive_reason_html,
+                '</div>',
+            ]
         )
-        favorite_label = "해제" if review_value == FAVORITE_REVIEW_STATUS else "등록"
-        favorite_class = " is-active" if review_value == FAVORITE_REVIEW_STATUS else ""
-        row_html.append(
-            "".join(
-                [
-                    '<div class="queue-grid-row">',
-                    f'<div class="queue-grid-cell">{recommendation_badge}</div>',
-                    '<div class="queue-grid-cell is-title">',
-                    f'<a class="queue-grid-title" href="{escape(href, quote=True)}" target="_self">{escape(truncate_text(ctx["project"], max_chars=106))}</a>',
-                    (f'<div class="queue-grid-subtitle">{escape(truncate_text(subtitle, max_chars=96))}</div>' if subtitle else ""),
-                    '</div>',
-                    f'<div class="queue-grid-cell is-keywords">{keywords_html}</div>',
-                    f'<div class="queue-grid-cell">{escape(truncate_text(ctx["agency"], max_chars=20))}</div>',
-                    f'<div class="queue-grid-cell queue-grid-period">{escape(truncate_text(ctx["period"], max_chars=28))}</div>',
-                    f'<div class="queue-grid-cell"><span class="queue-grid-dday {tone_class}">{escape(dday_label)}</span></div>',
-                    f'<div class="queue-grid-cell queue-grid-rfp-count is-center">{escape(ctx["score"])}</div>',
-                    f'<div class="queue-grid-cell is-center"><a class="queue-grid-favorite{favorite_class}" href="{escape(favorite_href, quote=True)}" target="_self">{favorite_label}</a></div>',
-                    '</div>',
-                ]
-            )
-        )
+        if href:
+            items.append(f'<a class="queue-list-link" href="{escape(href, quote=True)}" target="_self">{card_markup}</a>')
+        else:
+            items.append(card_markup)
 
-    st.markdown(
-        (
-            '<div class="queue-grid-scroll"><div class="queue-grid">'
-            '<div class="queue-grid-head">'
-            '<div>추천</div><div class="queue-grid-col-title">과제명</div><div>키워드</div><div>기관</div><div>기간</div><div>D-day</div><div>점수</div><div>관심</div>'
-            '</div>'
-            + "".join(row_html)
-            + '</div></div>'
-        ),
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<div class="queue-list-shell">{"".join(items)}</div>', unsafe_allow_html=True)
 
 
 def _legacy_render_opportunity_detail_from_row(row: dict) -> None:
@@ -14622,7 +14583,7 @@ def _render_notice_queue_table(rows: pd.DataFrame, *, key_prefix: str) -> None:
         )
         favorite_label = "해제" if review_value == FAVORITE_REVIEW_STATUS else "등록"
         favorite_class = " is-active" if review_value == FAVORITE_REVIEW_STATUS else ""
-        rfp_count_value = int(row.get("RFP Count") or 0)
+        rfp_count_value = _score_value(row.get("RFP Count"))
         rfp_count = escape(str(rfp_count_value))
         agency_value = clean(row.get("Agency")) or ""
         keyword_values = _extract_dashboard_keywords(row, limit=3)
@@ -14632,7 +14593,8 @@ def _render_notice_queue_table(rows: pd.DataFrame, *, key_prefix: str) -> None:
         )
         if not keyword_values:
             keyword_chips = '<span class="queue-grid-chip is-empty">키워드 없음</span>'
-        keywords_html = f'<div class="queue-grid-keywords">{keyword_chips}</div>'
+        keyword_class = "queue-grid-keywords is-single" if len(keyword_values) <= 1 else "queue-grid-keywords"
+        keywords_html = f'<div class="{keyword_class}">{keyword_chips}</div>'
         period_value = clean(row.get("Period")) or "미정"
         status_badge = notice_status_badge_html(row.get("Status"))
         row_html.append(
@@ -14715,23 +14677,23 @@ def _render_rfp_queue_pagination_controls(
     for page_number in page_numbers:
         active_class = " is-active" if page_number == current_page else ""
         number_links.append(
-            f'<a class="notice-queue-page-link{active_class}" href="{escape(_page_href(page_number), quote=True)}" target="_self">{page_number}</a>'
+            f'<a class="queue-page-link{active_class}" href="{escape(_page_href(page_number), quote=True)}" target="_self">{page_number}</a>'
         )
     if total_pages > page_numbers[-1]:
         if total_pages > page_numbers[-1] + 1:
-            number_links.append('<span class="notice-queue-page-ellipsis">…</span>')
+            number_links.append('<span class="queue-page-ellipsis">…</span>')
         number_links.append(
-            f'<a class="notice-queue-page-link" href="{escape(_page_href(total_pages), quote=True)}" target="_self">{total_pages}</a>'
+            f'<a class="queue-page-link" href="{escape(_page_href(total_pages), quote=True)}" target="_self">{total_pages}</a>'
         )
 
     nav_html = (
-        f'<div class="notice-queue-pagination">'
-        f'<a class="notice-queue-page-nav{prev_class}" href="{escape(_page_href(current_page - 1), quote=True)}" target="_self">‹ 이전</a>'
-        f'<a class="notice-queue-page-nav{next_class}" href="{escape(_page_href(current_page + 1), quote=True)}" target="_self">다음 ›</a>'
+        f'<div class="queue-pagination-row">'
+        f'<a class="queue-page-nav{prev_class}" href="{escape(_page_href(current_page - 1), quote=True)}" target="_self">&lt; 이전</a>'
+        f'<a class="queue-page-nav{next_class}" href="{escape(_page_href(current_page + 1), quote=True)}" target="_self">다음 &gt;</a>'
         '</div>'
     )
-    number_html = f'<div class="notice-queue-pagination">{"".join(number_links)}</div>'
-    return f'<nav class="notice-queue-pagination-wrap" aria-label="RFP Queue pagination">{number_html}{nav_html}</nav>'
+    number_html = f'<div class="queue-pagination-row">{"".join(number_links)}</div>'
+    return f'<nav class="queue-pagination-wrap" aria-label="RFP Queue pagination">{number_html}{nav_html}</nav>'
 
 
 def _render_notice_queue_pagination_controls(
@@ -15265,7 +15227,7 @@ def render_notice_queue_ui_styles() -> None:
           overflow-x: auto;
         }
         .queue-grid {
-          min-width: 1500px;
+          min-width: 1280px;
           border: 1px solid #e5e7eb;
           border-radius: 18px;
           background: #ffffff;
@@ -15281,10 +15243,10 @@ def render_notice_queue_ui_styles() -> None:
         .queue-grid-head,
         .queue-grid-row {
           display: grid;
-          grid-template-columns: 106px minmax(520px, 1.35fr) 380px 170px 210px 92px 74px 82px;
-          gap: 1rem;
+          grid-template-columns: 96px minmax(320px, 1.55fr) minmax(220px, 1fr) 156px 184px 88px 72px 80px;
+          gap: 0.8rem;
           align-items: center;
-          padding: 1.22rem 1.2rem;
+          padding: 1rem 1.05rem;
         }
         .queue-grid-head {
           background: #fbfcfe;
@@ -15301,7 +15263,7 @@ def render_notice_queue_ui_styles() -> None:
         }
         .queue-grid-row {
           border-top: 1px solid #eef3f8;
-          min-height: 98px;
+          min-height: 88px;
         }
         .queue-grid-row:first-of-type {
           border-top: none;
@@ -15403,7 +15365,7 @@ def render_notice_queue_ui_styles() -> None:
           justify-self: start;
           max-width: 100%;
           width: 100%;
-          padding-left: 0.9rem;
+          padding-left: 0.4rem;
         }
         .queue-grid-cell.is-keywords {
           align-items: center;
@@ -15414,15 +15376,17 @@ def render_notice_queue_ui_styles() -> None:
         .queue-grid-title {
           display: block;
           color: #111827 !important;
-          font-size: 1.04rem;
+          font-size: 1rem;
           font-weight: 800;
-          line-height: 1.5;
+          line-height: 1.42;
           text-align: center;
           width: 100%;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
+          white-space: normal;
+          overflow: visible;
           text-decoration: none !important;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
         }
         .queue-grid-cell.is-title .queue-grid-title,
         .queue-grid-cell.is-title .queue-grid-subtitle {
@@ -15432,15 +15396,17 @@ def render_notice_queue_ui_styles() -> None:
           color: #111827 !important;
         }
         .queue-grid-subtitle {
-          margin-top: 0.48rem;
+          margin-top: 0.38rem;
           color: #94a3b8;
           font-size: 0.8rem;
           line-height: 1.45;
           text-align: center;
           width: 100%;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
+          white-space: normal;
+          overflow: visible;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
         }
         .queue-grid-period {
           line-height: 1.45;
@@ -15465,11 +15431,10 @@ def render_notice_queue_ui_styles() -> None:
         }
         .queue-grid-keywords {
           display: flex;
-          flex-wrap: nowrap;
+          flex-wrap: wrap;
           gap: 0.42rem;
           width: 100%;
           max-width: 100%;
-          overflow: hidden;
           justify-content: center;
         }
         .queue-grid-chip {
@@ -15555,7 +15520,7 @@ def render_notice_queue_ui_styles() -> None:
         }
         @media (max-width: 1100px) {
           .queue-grid {
-            min-width: 1180px;
+            min-width: 1080px;
           }
           .favorites-grid {
             min-width: 1140px;
@@ -16258,8 +16223,8 @@ def _inject_compact_public_dashboard_styles() -> None:
         .dashboard-section,
         .queue-table-card,
         .summary-panel {
-          border-radius: 14px;
-          padding: 1rem 1.05rem;
+          border-radius: 20px;
+          padding: 1.08rem 1.15rem;
         }
         .dashboard-kpi-grid {
           display: grid;
@@ -16271,104 +16236,174 @@ def _inject_compact_public_dashboard_styles() -> None:
           position: relative;
           display: block;
           min-height: 108px;
-          padding: 0.95rem 1rem;
-          background: #ffffff;
-          border: 1px solid #e5e5e5;
-          border-radius: 10px;
-          color: #000000;
+          padding: 1.02rem 1.08rem;
+          background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+          border: 1px solid #dbe4f0;
+          border-radius: 20px;
+          color: #15233b;
           text-decoration: none !important;
-          box-shadow: none;
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+          transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+        }
+        .dashboard-kpi-card:hover {
+          transform: translateY(-1px);
+          border-color: rgba(15, 23, 42, 0.18);
+          background: #fbfdff;
+          box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
         }
         .dashboard-kpi-label {
-          font-size: 0.92rem;
-          margin-bottom: 0.42rem;
-          color: #757575;
-          font-weight: 600;
+          font-size: 0.86rem;
+          margin-bottom: 0.48rem;
+          color: #6c7f9d;
+          font-weight: 700;
         }
         .dashboard-kpi-value {
           font-size: 2rem;
-          color: #000000;
-          font-weight: 700;
+          color: #15233b;
+          font-weight: 800;
         }
         .dashboard-kpi-caption {
           font-size: 0.82rem;
-          color: #757575;
+          color: #94a3b8;
           font-weight: 600;
         }
         .dashboard-kpi-symbol {
           position: absolute;
-          top: 0.95rem;
-          right: 0.9rem;
-          width: 40px;
-          height: 40px;
+          top: 1rem;
+          right: 1rem;
+          width: 42px;
+          height: 42px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          border-radius: 10px;
+          border-radius: 12px;
           font-size: 0.78rem;
           font-weight: 800;
-          border: 1px solid #e5e5e5;
-          background: #f5f5f5;
-          color: #0050a9;
+          border: 1px solid #dbe4f0;
+          background: #f8fbff;
+          color: #2563eb;
         }
         .dashboard-kpi-card.is-blue .dashboard-kpi-symbol {
-          background: #ecf5fa;
-          border-color: #bcd7ee;
-          color: #0050a9;
+          background: #eef4ff;
+          border-color: #c7d8ff;
+          color: #2563eb;
         }
         .dashboard-kpi-card.is-red .dashboard-kpi-symbol {
-          background: #fff1f1;
-          border-color: #f0c1c1;
-          color: #cb0000;
+          background: #fff3f2;
+          border-color: #fecaca;
+          color: #dc2626;
         }
         .dashboard-kpi-card.is-green .dashboard-kpi-symbol {
-          background: #eef8f0;
-          border-color: #c7dfcb;
-          color: #0d7a3b;
+          background: #eefbf3;
+          border-color: #ccebd7;
+          color: #0f9f6e;
         }
         .dashboard-section {
           margin-top: 1rem;
           background: #ffffff;
-          border: 1px solid #e5e5e5;
-          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
+          border: 1px solid #dbe4f0;
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
         }
         .dashboard-section-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 0.75rem;
-          margin-bottom: 0.9rem;
-          padding-bottom: 0.75rem;
-          border-bottom: 1px solid #e5e5e5;
+          margin-bottom: 0.95rem;
+          padding-bottom: 0.85rem;
+          border-bottom: 1px solid rgba(15, 23, 42, 0.06);
         }
         .dashboard-section-title {
-          position: relative;
-          padding-left: 12px;
-          color: #000000;
-          font-size: 1.04rem;
-          font-weight: 700;
+          color: #15233b;
+          font-size: 1.02rem;
+          font-weight: 800;
           letter-spacing: -0.02em;
         }
         .dashboard-section-title::before {
-          content: "";
-          position: absolute;
-          left: 0;
-          top: 0.15rem;
-          width: 5px;
-          height: 1.1rem;
-          background: #0050a9;
+          display: none;
         }
         .dashboard-section-link {
-          color: #0050a9 !important;
-          font-size: 0.8rem;
+          color: #2563eb !important;
+          font-size: 0.82rem;
           font-weight: 700;
           text-decoration: none !important;
         }
         .dashboard-carousel-note {
           margin: -0.2rem 0 0.9rem;
-          color: #6b7280;
+          color: #6c7f9d;
           font-size: 0.82rem;
-          font-weight: 500;
+          font-weight: 600;
+        }
+        [class*="st-key-dashboard_compact_search_text"],
+        [class*="st-key-public_dashboard_compact_search_text"] {
+          margin: 0;
+          overflow: visible !important;
+        }
+        [class*="st-key-dashboard_compact_search_text"] [data-testid="stTextInput"],
+        [class*="st-key-dashboard_compact_search_text"] [data-testid="stTextInput"] > div,
+        [class*="st-key-dashboard_compact_search_text"] [data-testid="stTextInputRootElement"],
+        [class*="st-key-public_dashboard_compact_search_text"] [data-testid="stTextInput"],
+        [class*="st-key-public_dashboard_compact_search_text"] [data-testid="stTextInput"] > div,
+        [class*="st-key-public_dashboard_compact_search_text"] [data-testid="stTextInputRootElement"] {
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          overflow: visible !important;
+        }
+        [class*="st-key-dashboard_compact_search_text"] [data-testid="stTextInputRootElement"][data-baseweb="input"],
+        [class*="st-key-public_dashboard_compact_search_text"] [data-testid="stTextInputRootElement"][data-baseweb="input"] {
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          padding: 0 !important;
+          overflow: visible !important;
+        }
+        [class*="st-key-dashboard_compact_search_text"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"],
+        [class*="st-key-public_dashboard_compact_search_text"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"] {
+          display: flex !important;
+          align-items: center !important;
+          min-height: 54px;
+          height: auto !important;
+          border: 1px solid #dbe4f0 !important;
+          border-radius: 999px !important;
+          background: #fbfdff !important;
+          box-shadow: none !important;
+          padding-top: 0 !important;
+          padding-bottom: 0 !important;
+          overflow: visible !important;
+          transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+        }
+        [class*="st-key-dashboard_compact_search_text"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"]:hover,
+        [class*="st-key-public_dashboard_compact_search_text"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"]:hover {
+          border-color: rgba(15, 23, 42, 0.14) !important;
+          background: #ffffff !important;
+        }
+        [class*="st-key-dashboard_compact_search_text"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"]:focus-within,
+        [class*="st-key-public_dashboard_compact_search_text"] [data-testid="stTextInputRootElement"] [data-baseweb="base-input"]:focus-within {
+          border-color: #93c5fd !important;
+          background: #ffffff !important;
+          box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08) !important;
+        }
+        [class*="st-key-dashboard_compact_search_text"] input,
+        [class*="st-key-public_dashboard_compact_search_text"] input {
+          display: block !important;
+          min-height: 52px !important;
+          height: auto !important;
+          padding: 0 1.35rem !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          color: #15233b !important;
+          font-size: 0.96rem !important;
+          font-weight: 600 !important;
+          line-height: 1.35 !important;
+          align-self: center !important;
+        }
+        [class*="st-key-dashboard_compact_search_text"] input::placeholder,
+        [class*="st-key-public_dashboard_compact_search_text"] input::placeholder {
+          color: #94a3b8 !important;
+          font-size: 0.96rem !important;
+          font-weight: 500 !important;
+          line-height: 1.35 !important;
         }
         .rfp-card-row {
           display: flex;
@@ -16394,27 +16429,28 @@ def _inject_compact_public_dashboard_styles() -> None:
         .rfp-card {
           flex: 0 0 360px;
           min-height: 236px;
-          padding: 0.95rem;
+          padding: 1.15rem 1.2rem;
           display: flex;
           flex-direction: column;
           background: #ffffff;
-          border: 1px solid #e5e7eb;
-          border-radius: 14px;
-          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+          border: 1px solid #dbe4f0;
+          border-radius: 20px;
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
           text-decoration: none !important;
-          color: #000000;
+          color: #15233b;
           scroll-snap-align: start;
           transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
         }
         .rfp-card:hover {
-          transform: translateY(-2px);
-          border-color: #cbd5e1;
-          box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
+          transform: translateY(-1px);
+          border-color: rgba(15, 23, 42, 0.18);
+          background: #fbfdff;
+          box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
         }
         .rfp-card-title {
-          color: #000000;
-          font-size: 1rem;
-          font-weight: 700;
+          color: #15233b;
+          font-size: 1.04rem;
+          font-weight: 800;
           line-height: 1.4;
           margin-bottom: 0.45rem;
         }
@@ -16423,8 +16459,8 @@ def _inject_compact_public_dashboard_styles() -> None:
         .rfp-card-meta,
         .notice-row-meta,
         .notice-row-summary {
-          font-size: 0.78rem;
-          color: #757575;
+          font-size: 0.8rem;
+          color: #6c7f9d;
         }
         .rfp-card-topline,
         .rfp-card-topline-left,
@@ -16447,8 +16483,8 @@ def _inject_compact_public_dashboard_styles() -> None:
           min-width: 28px;
           height: 28px;
           padding: 0 0.5rem;
-          border-radius: 5px;
-          background: #0050a9;
+          border-radius: 8px;
+          background: #2563eb;
           color: #ffffff;
           font-size: 0.75rem;
           font-weight: 800;
@@ -16458,22 +16494,25 @@ def _inject_compact_public_dashboard_styles() -> None:
           align-items: center;
           justify-content: center;
           min-height: 24px;
-          padding: 0 0.5rem;
-          border-radius: 5px;
+          padding: 0 0.6rem;
+          border-radius: 999px;
           font-size: 0.7rem;
           font-weight: 700;
+          border: 1px solid transparent;
         }
         .dashboard-pill.is-recommend {
-          background: #ecf5fa;
-          color: #0050a9;
+          background: #eef4ff;
+          border-color: #c7d8ff;
+          color: #2563eb;
         }
         .dashboard-pill.is-review {
-          background: #fff5eb;
-          color: #f89321;
+          background: #fff7ed;
+          border-color: #fed7aa;
+          color: #d97706;
         }
         .rfp-card-score {
           font-size: 0.98rem;
-          color: #0050a9;
+          color: #2563eb;
           font-weight: 800;
         }
         .rfp-card-keywords {
@@ -16483,29 +16522,32 @@ def _inject_compact_public_dashboard_styles() -> None:
           margin-top: 0.75rem;
         }
         .rfp-card-keyword {
+          display: inline-flex;
+          align-items: center;
           font-size: 0.72rem;
-          padding: 0.18rem 0.42rem;
-          border-radius: 5px;
-          background: #ecf5fa;
-          color: #0050a9;
+          padding: 0.22rem 0.56rem;
+          border-radius: 999px;
+          border: 1px solid rgba(15, 23, 42, 0.06);
+          background: rgba(15, 23, 42, 0.03);
+          color: #21314d;
           font-weight: 700;
         }
         .rfp-card-agency {
           margin: 0.7rem 0 0.75rem;
-          color: #333333;
-          font-weight: 600;
+          color: #21314d;
+          font-weight: 650;
         }
         .rfp-card-meta {
           margin-top: auto;
           justify-content: space-between;
           gap: 0.5rem;
-          border-top: 1px solid #eeeeee;
+          border-top: 1px solid rgba(15, 23, 42, 0.06);
           padding-top: 0.7rem;
         }
         .dashboard-search-meta {
-          color: #64748b;
+          color: #6c7f9d;
           font-size: 0.78rem;
-          font-weight: 600;
+          font-weight: 700;
           display: flex;
           align-items: center;
           justify-content: flex-end;
@@ -16532,45 +16574,49 @@ def _inject_compact_public_dashboard_styles() -> None:
           grid-template-columns: auto minmax(0, 1fr) auto;
           align-items: center;
           gap: 0.9rem;
-          padding: 0.9rem 0.95rem;
-          color: #000000;
+          padding: 1rem 1.05rem;
+          color: #15233b;
           text-decoration: none !important;
-          border: 1px solid #e5e7eb;
-          border-radius: 14px;
+          border: 1px solid #dbe4f0;
+          border-radius: 20px;
           background: #ffffff;
-          box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
           transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
         }
         .dashboard-list-item:hover {
           transform: translateY(-1px);
-          border-color: #cbd5e1;
-          background: #f8fafc;
-          box-shadow: 0 10px 22px rgba(15, 23, 42, 0.07);
+          border-color: rgba(15, 23, 42, 0.18);
+          background: #fbfdff;
+          box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
         }
         .dashboard-list-main {
           min-width: 0;
         }
         .dashboard-list-title {
-          color: #000000;
-          font-size: 0.9rem;
-          font-weight: 700;
+          color: #15233b;
+          font-size: 0.94rem;
+          font-weight: 800;
           line-height: 1.38;
         }
         .dashboard-list-meta {
           margin-top: 0.22rem;
-          color: #757575;
-          font-size: 0.78rem;
+          color: #6c7f9d;
+          font-size: 0.8rem;
           line-height: 1.4;
         }
         .dashboard-list-side {
           display: flex;
           flex-direction: column;
           align-items: flex-end;
+          justify-content: center;
           gap: 0.3rem;
-          color: #64748b;
-          font-size: 0.76rem;
-          font-weight: 600;
+          color: #21314d;
+          font-size: 0.78rem;
+          font-weight: 700;
           line-height: 1.2;
+          white-space: nowrap;
+          min-width: 78px;
+          text-align: right;
         }
         .dashboard-dday-pill {
           display: inline-flex;
@@ -16580,7 +16626,7 @@ def _inject_compact_public_dashboard_styles() -> None:
           height: 28px;
           padding: 0 0.7rem;
           border-radius: 999px;
-          font-size: 0.76rem;
+          font-size: 0.8rem;
           font-weight: 850;
           letter-spacing: 0.01em;
           white-space: nowrap;
@@ -16603,18 +16649,22 @@ def _inject_compact_public_dashboard_styles() -> None:
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          color: #0050a9;
-          background: #ecf5fa;
+          color: #2563eb;
+          background: #f8fbff;
+          border: 1px solid #dbe4f0;
           border-radius: 12px;
           font-size: 0.76rem;
           font-weight: 850;
         }
         .dashboard-list-date {
-          color: #6b7280;
+          color: #6c7f9d;
+          font-size: 0.76rem;
+          font-weight: 600;
+          line-height: 1.2;
         }
         .dashboard-list-empty,
         .dashboard-empty {
-          color: #757575;
+          color: #6c7f9d;
           font-size: 0.92rem;
           padding: 0.4rem 0 0.1rem;
         }
