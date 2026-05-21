@@ -11834,7 +11834,15 @@ def _pill_html(text: object, *, kind: str = "recommendation", base_class: str = 
 
 def _queue_row_context(row: dict[str, object] | pd.Series) -> dict[str, str]:
     row_dict = normalize_row_dict(row)
-    recommendation = first_non_empty(row_dict, "recommendation", "llm_recommendation", "Recommendation") or "검토"
+    recommendation = first_non_empty(
+        row_dict,
+        "_queue_recommendation",
+        "Recommendation",
+        "recommendation",
+        "추천여부",
+        "llm_recommendation",
+        "대표추천도",
+    ) or "검토"
     score = _score_value(first_non_empty(row_dict, "llm_fit_score", "rfp_score", "점수", "Score"))
     period = first_non_empty(row_dict, "notice_period", "period", "Period", "접수기간", "요청기간")
     deadline = format_dashboard_deadline_badge(period, first_non_empty(row_dict, "status", "Status"))
