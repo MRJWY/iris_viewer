@@ -11121,6 +11121,12 @@ def _inject_detail_comment_styles() -> None:
     st.markdown(
         """
         <style>
+        [class*="st-key-detail_comments_panel_"] {
+          border: 1px solid var(--border);
+          border-radius: 20px;
+          background: var(--surface);
+          overflow: visible;
+        }
         .detail-comments-header {
           display: flex;
           align-items: flex-start;
@@ -11165,28 +11171,17 @@ def _inject_detail_comment_styles() -> None:
         }
         .detail-comments-compose-meta {
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           flex-wrap: wrap;
-          gap: 0.55rem;
+          flex-direction: column;
+          gap: 0.2rem;
           margin: 0;
         }
-        [class*="st-key-detail_comments_row_"] [data-testid="stVerticalBlockBorderWrapper"],
-        [class*="st-key-detail_comment_entry_"] [data-testid="stVerticalBlockBorderWrapper"] {
-          border: 0 !important;
-          border-radius: 0 !important;
-          background: transparent !important;
-          box-shadow: none !important;
-          padding: 0 !important;
-        }
-        [class*="st-key-detail_comments_row_"] [data-testid="stHorizontalBlock"] {
-          align-items: flex-start !important;
-          gap: 20px !important;
-          padding: 17px 28px !important;
-          border-bottom: 1px solid var(--border);
-        }
-        [class*="st-key-detail_comments_row_history_"] [data-testid="stHorizontalBlock"] {
-          border-bottom: 0 !important;
-          align-items: flex-start !important;
+        .detail-comments-compose-copy {
+          color: var(--text-subtle);
+          font-size: 0.84rem;
+          font-weight: 600;
+          line-height: 1.55;
         }
         .detail-comments-section-label,
         .detail-comments-row-label {
@@ -11232,17 +11227,13 @@ def _inject_detail_comment_styles() -> None:
           margin: 14px 0 0;
           background: var(--border);
         }
+        [class*="st-key-detail_comments_row_empty_"] [data-testid="stVerticalBlock"] {
+          gap: 0.35rem !important;
+          padding: 18px 24px 20px;
+        }
         [class*="st-key-detail_comments_row_history_"] [data-testid="stVerticalBlock"] {
           gap: 0.8rem !important;
           padding: 18px 24px 18px;
-        }
-        [class*="st-key-detail_comments_panel_"] [data-testid="stVerticalBlockBorderWrapper"] {
-          border: 1px solid var(--border) !important;
-          border-radius: 20px !important;
-          background: var(--surface) !important;
-          box-shadow: none !important;
-          overflow: hidden !important;
-          padding: 0 !important;
         }
         [class*="st-key-detail_comments_panel_"] [data-testid="stVerticalBlock"] {
           gap: 0 !important;
@@ -11256,7 +11247,7 @@ def _inject_detail_comment_styles() -> None:
           margin: 0 !important;
         }
         [class*="st-key-detail_comments_panel_"] [data-testid="stTextArea"] {
-          margin-top: 0.15rem !important;
+          margin-top: 0.35rem !important;
         }
         [class*="st-key-detail_comments_panel_"] .stTextArea textarea {
           min-height: 132px;
@@ -11292,6 +11283,28 @@ def _inject_detail_comment_styles() -> None:
           font-size: 0.96rem !important;
           font-weight: 700 !important;
         }
+        [class*="st-key-detail_comment_entry_"] {
+          padding: 0 !important;
+          margin: 0 !important;
+        }
+        [class*="st-key-detail_comment_entry_"] [data-testid="stVerticalBlock"] {
+          gap: 0 !important;
+          padding: 0 !important;
+        }
+        [class*="st-key-detail_comment_entry_"] [data-testid="stHorizontalBlock"] {
+          align-items: start !important;
+          gap: 0.75rem !important;
+        }
+        [class*="st-key-detail_comment_entry_"] .stButton {
+          display: flex;
+          justify-content: flex-end;
+        }
+        [class*="st-key-detail_comment_entry_"] .stButton > button {
+          min-height: 32px !important;
+          padding: 0 0.75rem !important;
+          border-radius: 10px !important;
+          font-size: 0.84rem !important;
+        }
         @media (max-width: 900px) {
           .detail-comments-header {
             flex-direction: column;
@@ -11301,8 +11314,8 @@ def _inject_detail_comment_styles() -> None:
           [class*="st-key-detail_comments_compose_"] [data-testid="stVerticalBlock"] {
             padding: 16px 20px 18px;
           }
-          [class*="st-key-detail_comments_row_"] [data-testid="stHorizontalBlock"] {
-            padding: 15px 20px !important;
+          [class*="st-key-detail_comments_row_empty_"] [data-testid="stVerticalBlock"] {
+            padding: 16px 20px 18px;
           }
           [class*="st-key-detail_comments_row_history_"] [data-testid="stVerticalBlock"] {
             padding: 16px 20px;
@@ -11407,100 +11420,106 @@ def render_notice_comments(
         return filter_notice_comments(comments_df, source_key=source_key, notice_id=notice_id)
 
     if modern_layout:
-        with st.container(border=True, key=f"detail_comments_panel_{section_key}"):
+        @st.fragment
+        def _render_comments_fragment() -> None:
             matched = _load_matched_comments()
-            st.markdown(
-                (
-                    '<div class="detail-comments-header">'
-                    '<div class="detail-comments-header-copy">'
-                    '<div class="detail-fact-title">댓글</div>'
-                    '<div class="detail-comments-subtitle">작성자는 로그인 ID로 자동 기록됩니다.</div>'
-                    "</div>"
-                    f'<div class="detail-comments-count">댓글 {len(matched)}건</div>'
-                    "</div>"
-                ),
-                unsafe_allow_html=True,
-            )
-            _render_ui_flash(flash_scope, presentation="toast")
+            save_feedback = ""
+            with st.container(key=f"detail_comments_panel_{section_key}"):
+                st.markdown(
+                    (
+                        '<div class="detail-comments-header">'
+                        '<div class="detail-comments-header-copy">'
+                        '<div class="detail-fact-title">댓글</div>'
+                        '<div class="detail-comments-subtitle">작성자는 로그인 ID로 자동 기록됩니다.</div>'
+                        "</div>"
+                        f'<div class="detail-comments-count">댓글 {len(matched)}건</div>'
+                        "</div>"
+                    ),
+                    unsafe_allow_html=True,
+                )
+                _render_ui_flash(flash_scope, presentation="inline")
 
-            with st.container(key=f"detail_comments_rows_{section_key}"):
-                with st.form(f"{section_key}_comment_form", clear_on_submit=True):
-                    with st.container(key=f"detail_comments_compose_{section_key}"):
-                        st.markdown(
-                            (
-                                '<div class="detail-comments-compose-meta">'
-                                '<span class="detail-comments-section-label">작성자</span>'
-                                f'<span class="detail-comments-author-value">{escape(author_id)}</span>'
-                                "</div>"
-                            ),
-                            unsafe_allow_html=True,
-                        )
-                        comment_text = st.text_area(
-                            "의견",
-                            key=f"{section_key}_comment_text",
-                            height=150,
-                            placeholder="이 공고에 대한 메모나 검토 의견을 남겨주세요.",
-                            label_visibility="collapsed",
-                        )
-                        action_cols = st.columns([1.25, 0.9], gap="small")
-                        with action_cols[1]:
-                            submitted = st.form_submit_button("댓글 저장", use_container_width=True)
-                    if submitted:
-                        try:
-                            append_notice_comment(
-                                source_key=source_key,
-                                notice_id=notice_id,
-                                notice_title=notice_title,
-                                author=author_id,
-                                comment=comment_text,
+                with st.container(key=f"detail_comments_rows_{section_key}"):
+                    with st.form(f"{section_key}_comment_form", clear_on_submit=True):
+                        with st.container(key=f"detail_comments_compose_{section_key}"):
+                            st.markdown(
+                                (
+                                    '<div class="detail-comments-compose-meta">'
+                                    '<span class="detail-comments-section-label">작성자</span>'
+                                    f'<span class="detail-comments-author-value">{escape(author_id)}</span>'
+                                    '<span class="detail-comments-compose-copy">이 공고에 대한 메모나 검토 의견을 남겨주세요.</span>'
+                                    "</div>"
+                                ),
+                                unsafe_allow_html=True,
                             )
-                            save_feedback = "댓글을 저장했습니다."
-                        except Exception as exc:
-                            st.error(f"댓글 저장 실패: {exc}")
+                            comment_text = st.text_area(
+                                "의견",
+                                key=f"{section_key}_comment_text",
+                                height=150,
+                                placeholder="댓글을 입력하세요.",
+                                label_visibility="collapsed",
+                            )
+                            submitted = st.form_submit_button("댓글 저장", use_container_width=False)
 
-                matched = _load_matched_comments()
-                if save_feedback:
-                    st.success(save_feedback)
-                with st.container(key=f"detail_comments_row_history_{section_key}"):
-                    st.markdown('<div class="detail-comments-section-label">댓글 이력</div>', unsafe_allow_html=True)
-                    if matched.empty:
-                        st.markdown('<div class="detail-comments-empty">아직 등록된 댓글이 없습니다.</div>', unsafe_allow_html=True)
-                    else:
-                        comment_rows = matched.to_dict("records")
-                        for idx, comment_row in enumerate(comment_rows):
-                            comment_id = clean(comment_row.get("comment_id"))
-                            created_at = clean(comment_row.get("created_at"))
-                            nickname = clean(comment_row.get("nickname")) or clean(comment_row.get("author")) or "익명"
-                            content = clean(comment_row.get("content")) or clean(comment_row.get("comment"))
-                            allow_delete = bool(comment_id and can_delete_comment(comment_row, current_user_id))
+                        if submitted:
+                            try:
+                                append_notice_comment(
+                                    source_key=source_key,
+                                    notice_id=notice_id,
+                                    notice_title=notice_title,
+                                    author=author_id,
+                                    comment=comment_text,
+                                )
+                                save_feedback = "댓글을 저장했습니다."
+                                _push_ui_flash(flash_scope, "success", "댓글을 저장했습니다.")
+                                matched = _load_matched_comments()
+                            except Exception as exc:
+                                st.error(f"댓글 저장 실패: {exc}")
 
-                            with st.container(key=f"detail_comment_entry_{section_key}_{comment_id or idx}"):
-                                meta_col, action_col = st.columns([3.8, 0.9], gap="small")
-                                with meta_col:
-                                    stamp_parts = [value for value in [created_at, nickname] if value]
+                    with st.container(key=f"detail_comments_row_history_{section_key}"):
+                        if save_feedback:
+                            st.success(save_feedback)
+                        st.markdown('<div class="detail-comments-section-label">댓글 이력</div>', unsafe_allow_html=True)
+                        if matched.empty:
+                            st.markdown('<div class="detail-comments-empty">아직 등록된 댓글이 없습니다.</div>', unsafe_allow_html=True)
+                        else:
+                            comment_rows = matched.to_dict("records")
+                            for idx, comment_row in enumerate(comment_rows):
+                                comment_id = clean(comment_row.get("comment_id"))
+                                created_at = clean(comment_row.get("created_at"))
+                                nickname = clean(comment_row.get("nickname")) or clean(comment_row.get("author")) or "익명"
+                                content = clean(comment_row.get("content")) or clean(comment_row.get("comment"))
+                                allow_delete = bool(comment_id and can_delete_comment(comment_row, current_user_id))
+
+                                with st.container(key=f"detail_comment_entry_{section_key}_{comment_id or idx}"):
+                                    meta_col, action_col = st.columns([4.2, 0.8], gap="small")
+                                    with meta_col:
+                                        stamp_parts = [value for value in [created_at, nickname] if value]
+                                        st.markdown(
+                                            f'<div class="detail-comments-entry-meta">{escape(" · ".join(stamp_parts))}</div>',
+                                            unsafe_allow_html=True,
+                                        )
+                                    with action_col:
+                                        if allow_delete:
+                                            st.button(
+                                                "삭제",
+                                                key=f"{section_key}_delete_comment_{comment_id}",
+                                                use_container_width=False,
+                                                on_click=_delete_notice_comment_with_flash,
+                                                kwargs={
+                                                    "comment_id": comment_id,
+                                                    "current_user_id": current_user_id,
+                                                    "flash_scope": flash_scope,
+                                                },
+                                            )
                                     st.markdown(
-                                        f'<div class="detail-comments-entry-meta">{escape(" · ".join(stamp_parts))}</div>',
+                                        f'<div class="detail-comments-entry-text">{escape(content).replace(chr(10), "<br>")}</div>',
                                         unsafe_allow_html=True,
                                     )
-                                with action_col:
-                                    if allow_delete:
-                                        st.button(
-                                            "삭제",
-                                            key=f"{section_key}_delete_comment_{comment_id}",
-                                            use_container_width=False,
-                                            on_click=_delete_notice_comment_with_flash,
-                                            kwargs={
-                                                "comment_id": comment_id,
-                                                "current_user_id": current_user_id,
-                                                "flash_scope": flash_scope,
-                                            },
-                                        )
-                                st.markdown(
-                                    f'<div class="detail-comments-entry-text">{escape(content).replace(chr(10), "<br>")}</div>',
-                                    unsafe_allow_html=True,
-                                )
-                                if idx < len(comment_rows) - 1:
-                                    st.markdown('<div class="detail-comments-divider"></div>', unsafe_allow_html=True)
+                                    if idx < len(comment_rows) - 1:
+                                        st.markdown('<div class="detail-comments-divider"></div>', unsafe_allow_html=True)
+
+        _render_comments_fragment()
         return
 
     with st.form(f"{section_key}_comment_form", clear_on_submit=True):
