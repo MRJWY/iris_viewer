@@ -15337,9 +15337,9 @@ def render_notice_queue_ui_styles() -> None:
           padding-left: 0.9rem;
         }
         .queue-grid-cell.is-keywords {
-          align-items: flex-start;
+          align-items: center;
           justify-content: center;
-          text-align: left;
+          text-align: center;
           width: 100%;
         }
         .queue-grid-title {
@@ -15401,9 +15401,6 @@ def render_notice_queue_ui_styles() -> None:
           width: 100%;
           max-width: 100%;
           overflow: hidden;
-          justify-content: flex-start;
-        }
-        .queue-grid-keywords.is-single {
           justify-content: center;
         }
         .queue-grid-chip {
