@@ -16271,13 +16271,13 @@ def _inject_compact_public_dashboard_styles() -> None:
           position: absolute;
           top: 1rem;
           right: 1rem;
-          width: 42px;
-          height: 42px;
+          width: 56px;
+          height: 46px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
           border-radius: 12px;
-          font-size: 0.78rem;
+          font-size: 0.9rem;
           font-weight: 800;
           border: 1px solid #dbe4f0;
           background: #f8fbff;
@@ -16561,6 +16561,7 @@ def _inject_compact_public_dashboard_styles() -> None:
           align-items: center;
           justify-content: flex-end;
           min-height: 52px;
+          min-width: 184px;
           white-space: nowrap;
           text-align: right;
         }
@@ -16821,7 +16822,7 @@ def _render_dashboard_workspace(
         )
     )
 
-    search_cols = st.columns([13.4, 1.2], gap="small")
+    search_cols = st.columns([10.8, 2.2], gap="small")
     with search_cols[0]:
         dashboard_search = clean(
             st.text_input(
