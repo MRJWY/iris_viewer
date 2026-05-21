@@ -426,42 +426,88 @@ def run_gspread_call(operation, *args, **kwargs):
     raise RuntimeError("Google Sheets call failed without an explicit error.")
 
 
-def render_iris_page(page_key: str, datasets: dict[str, pd.DataFrame]) -> None:
+def _source_tagged_opportunity_frame(df: pd.DataFrame, *, source_key: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    tagged = df.copy()
+    if "source_key" not in tagged.columns or tagged["source_key"].fillna("").astype(str).str.strip().eq("").all():
+        tagged["source_key"] = source_key
+    return tagged
+
+
+def build_rfp_queue_frames(
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    current_frames = [_source_tagged_opportunity_frame(datasets["opportunity"], source_key="iris")]
+    all_frames = [
+        _source_tagged_opportunity_frame(datasets["opportunity"], source_key="iris"),
+        _source_tagged_opportunity_frame(datasets["opportunity_archive"], source_key="iris"),
+    ]
+    if source_datasets:
+        current_frames.extend(
+            [
+                _source_tagged_opportunity_frame(source_datasets["mss_opportunity"], source_key="tipa"),
+                _source_tagged_opportunity_frame(source_datasets["nipa_opportunity"], source_key="nipa"),
+            ]
+        )
+        all_frames.extend(
+            [
+                _source_tagged_opportunity_frame(source_datasets["mss_opportunity"], source_key="tipa"),
+                _source_tagged_opportunity_frame(source_datasets["mss_opportunity_archive"], source_key="tipa"),
+                _source_tagged_opportunity_frame(source_datasets["nipa_opportunity"], source_key="nipa"),
+                _source_tagged_opportunity_frame(source_datasets["nipa_opportunity_archive"], source_key="nipa"),
+            ]
+        )
+    current = pd.concat([frame for frame in current_frames if not frame.empty], ignore_index=True) if any(not frame.empty for frame in current_frames) else pd.DataFrame()
+    all_rows = pd.concat([frame for frame in all_frames if not frame.empty], ignore_index=True) if any(not frame.empty for frame in all_frames) else current
+    return current, all_rows
+
+
+def render_iris_page(
+    page_key: str,
+    datasets: dict[str, pd.DataFrame],
+    source_datasets: dict[str, object] | None = None,
+) -> None:
     if page_key in {"opportunity", "rfp_queue"}:
+        rfp_current_df, rfp_all_df = build_rfp_queue_frames(datasets, source_datasets)
         render_opportunity_page(
-            datasets["opportunity"],
+            rfp_current_df,
             page_key="rfp_queue",
-            all_df=datasets["opportunity_all"],
+            all_df=rfp_all_df,
         )
     elif page_key == "summary":
-        render_summary_page(datasets["summary"], datasets["opportunity"])
+        render_summary_page(datasets["summary"], datasets["opportunity_all"])
     elif page_key in {"notice", "notice_queue"}:
         render_notice_page_with_scope(
-            datasets["notice_view"],
-            datasets["opportunity"],
+            datasets["notice_current"],
+            datasets["opportunity_all"],
             page_key="notice_queue",
-            title="Notice Queue",
+            title="진행 공고",
             default_status_scope="접수중",
             current_only_default=True,
+            already_scoped=True,
         )
     elif page_key == "notice_scheduled":
         render_notice_page_with_scope(
-            datasets["notice_view"],
-            datasets["opportunity"],
+            datasets["pending"],
+            datasets["opportunity_all"],
             page_key="notice_scheduled",
             title="예정 공고",
             default_status_scope="예정",
             current_only_default=True,
+            already_scoped=True,
         )
     elif page_key == "notice_archive":
         render_notice_page_with_scope(
-            datasets["notice_view"],
-            datasets["opportunity"],
+            datasets["notice_archive"],
+            datasets["opportunity_all"],
             page_key="notice_archive",
             title="Archive",
             default_status_scope="전체",
             current_only_default=False,
             archive=True,
+            already_scoped=True,
         )
 
 
@@ -766,9 +812,7 @@ def build_dashboard_recent_comments_table(limit: int = 5) -> pd.DataFrame:
     if comments_df.empty:
         return pd.DataFrame(columns=["작성시각", "작성자", "댓글"])
 
-    recent = comments_df.copy()
-    if is_user_scoped_operations_enabled() and "user_id" in recent.columns:
-        recent = recent[recent["user_id"].fillna("").astype(str).str.strip().eq(get_current_operation_scope_key())].copy()
+    recent = filter_comments_by_scope(comments_df)
     recent = recent.head(limit).copy()
     if recent.empty:
         return pd.DataFrame(columns=["작성시각", "작성자", "댓글"])
@@ -3071,7 +3115,7 @@ def render_iris_source(
         render_notice_queue_page(datasets, source_datasets)
         return
 
-    render_iris_page(current_page_key, datasets)
+    render_iris_page(current_page_key, datasets, source_datasets)
 
 
 def _normalize_workspace_shell_route(route: dict[str, object]) -> dict[str, object]:
@@ -4138,6 +4182,34 @@ def load_notice_comments(include_deleted: bool = False) -> pd.DataFrame:
     return working.sort_values(by=["created_at_sort"], ascending=False, na_position="last")
 
 
+def get_current_comment_scope_key() -> str:
+    if not is_user_scoped_operations_enabled():
+        return ""
+    return clean(get_current_operation_scope_key())
+
+
+def _comment_scope_series(df: pd.DataFrame) -> pd.Series:
+    primary_scope = _comment_text_series(df, "ip_based_uid")
+    legacy_scope = _comment_text_series(df, "user_id")
+    legacy_scope_mask = primary_scope.eq("") & legacy_scope.str.match(r"^(domain:|user:)", na=False)
+    return primary_scope.where(primary_scope.ne(""), legacy_scope.where(legacy_scope_mask, ""))
+
+
+def filter_comments_by_scope(comments_df: pd.DataFrame, *, scope_key: str = "") -> pd.DataFrame:
+    if comments_df.empty:
+        return _empty_comment_dataframe()
+
+    working = _normalize_comment_dataframe(comments_df)
+    normalized_scope = clean(scope_key) or get_current_comment_scope_key()
+    if not normalized_scope:
+        return working
+
+    filtered = working[_comment_scope_series(working).eq(normalized_scope)].copy()
+    if filtered.empty:
+        return _empty_comment_dataframe()
+    return filtered
+
+
 @st.cache_data(ttl=30, show_spinner=False)
 def load_auth_user_accounts() -> pd.DataFrame:
     try:
@@ -4478,7 +4550,7 @@ def filter_notice_comments(comments_df: pd.DataFrame, *, source_key: str, notice
     if comments_df.empty:
         return _empty_comment_dataframe()
 
-    working = _normalize_comment_dataframe(comments_df)
+    working = filter_comments_by_scope(comments_df)
     comment_notice_keys = _comment_text_series(working, "notice_id").apply(normalize_notice_id_for_match)
     current_notice_key = normalize_notice_id_for_match(notice_id)
     current_source_key = normalize_opportunity_source_key(source_key) or clean(source_key).lower()
@@ -4512,6 +4584,7 @@ def append_notice_comment(
     ws = get_or_create_worksheet(get_comment_sheet_name(), COMMENT_COLUMNS, rows=1000, cols=len(COMMENT_COLUMNS))
     current_user_id = clean(get_current_user_id()) or clean(author) or clean(get_env("DEFAULT_COMMENT_AUTHOR"))
     nickname = clean(author) or clean(get_current_user_label()) or current_user_id or "익명"
+    scope_key = get_current_comment_scope_key()
     timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
     row = {
         "comment_id": str(uuid.uuid4()),
@@ -4525,7 +4598,7 @@ def append_notice_comment(
         "content": content[:5000],
         "mention": "",
         "ip_address": "",
-        "ip_based_uid": "",
+        "ip_based_uid": scope_key,
         "created_at": timestamp,
         "updated_at": timestamp,
         "deleted_at": "",
@@ -8685,7 +8758,35 @@ def _persist_review_status(*, notice_id: str, source_key: str, review_status: st
         _clear_notice_caches()
 
 def consume_favorite_toggle_query_action() -> None:
-    return
+    if get_query_param("favorite_toggle") != "1":
+        return
+
+    notice_id = clean(get_query_param("favorite_notice_id"))
+    source_key = clean(get_query_param("favorite_source_key")) or "iris"
+    current_value = clean(get_query_param("favorite_current_value"))
+    notice_title = clean(get_query_param("favorite_notice_title"))
+    next_value = UNFAVORITE_REVIEW_STATUS if current_value == FAVORITE_REVIEW_STATUS else FAVORITE_REVIEW_STATUS
+
+    try:
+        if notice_id:
+            _persist_review_status(
+                notice_id=notice_id,
+                source_key=source_key,
+                review_status=next_value,
+                notice_title=notice_title,
+            )
+    finally:
+        params = get_query_params_dict()
+        for key in [
+            "favorite_toggle",
+            "favorite_notice_id",
+            "favorite_source_key",
+            "favorite_current_value",
+            "favorite_notice_title",
+        ]:
+            params.pop(key, None)
+        _replace_params(_auth_params(params))
+        st.rerun()
 
 def render_favorite_scrap_button(
     *,
@@ -10201,7 +10302,9 @@ def _build_recent_comment_lookup() -> dict[tuple[str, str], str]:
         return {}
     if comments_df.empty:
         return {}
-    working = comments_df.copy()
+    working = filter_comments_by_scope(comments_df)
+    if working.empty:
+        return {}
     working["source_key"] = working["source"].fillna("").astype(str).str.strip().str.lower().apply(normalize_opportunity_source_key)
     working["notice_key"] = working["notice_id"].apply(normalize_notice_id_for_match)
     working = working.sort_values(by=["created_at_sort"], ascending=False, na_position="last")
@@ -11017,12 +11120,12 @@ def _inject_detail_comment_styles() -> None:
         <style>
         .detail-comments-header {
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           justify-content: space-between;
           gap: 16px;
           padding: 20px 28px;
-          border-bottom: 1px solid #eef2f7;
-          background: #dfe2ff;
+          border-bottom: 1px solid var(--border);
+          background: linear-gradient(180deg, rgba(59, 130, 246, 0.10) 0%, rgba(59, 130, 246, 0.05) 100%);
         }
         .detail-comments-header-copy {
           min-width: 0;
@@ -11031,20 +11134,21 @@ def _inject_detail_comment_styles() -> None:
           gap: 4px;
         }
         .detail-comments-subtitle {
-          color: #475569;
-          font-size: 0.82rem;
+          color: var(--text-subtle);
+          font-size: 0.84rem;
           font-weight: 700;
           line-height: 1.55;
         }
         .detail-comments-count {
           display: inline-flex;
           align-items: center;
-          min-height: 30px;
+          min-height: 32px;
           padding: 0 12px;
           border-radius: 999px;
-          background: rgba(255, 255, 255, 0.78);
-          color: #1d4ed8;
-          font-size: 0.8rem;
+          border: 1px solid rgba(59, 130, 246, 0.14);
+          background: rgba(255, 255, 255, 0.92);
+          color: var(--text-strong);
+          font-size: 0.84rem;
           font-weight: 800;
           white-space: nowrap;
         }
@@ -11052,9 +11156,16 @@ def _inject_detail_comment_styles() -> None:
           gap: 0 !important;
         }
         [class*="st-key-detail_comments_compose_"] [data-testid="stVerticalBlock"] {
-          gap: 0.7rem !important;
+          gap: 0.75rem !important;
           padding: 18px 24px 20px;
-          border-bottom: 1px solid #f1f5f9;
+          border-bottom: 1px solid var(--border);
+        }
+        .detail-comments-compose-meta {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 0.55rem;
+          margin: 0;
         }
         [class*="st-key-detail_comments_row_"] [data-testid="stVerticalBlockBorderWrapper"],
         [class*="st-key-detail_comment_entry_"] [data-testid="stVerticalBlockBorderWrapper"] {
@@ -11068,7 +11179,7 @@ def _inject_detail_comment_styles() -> None:
           align-items: flex-start !important;
           gap: 20px !important;
           padding: 17px 28px !important;
-          border-bottom: 1px solid #f1f5f9;
+          border-bottom: 1px solid var(--border);
         }
         [class*="st-key-detail_comments_row_history_"] [data-testid="stHorizontalBlock"] {
           border-bottom: 0 !important;
@@ -11076,60 +11187,56 @@ def _inject_detail_comment_styles() -> None:
         }
         .detail-comments-section-label,
         .detail-comments-row-label {
-          color: #64748b;
-          font-size: 0.78rem;
+          color: var(--text-subtle);
+          font-size: 0.84rem;
           font-weight: 800;
-          letter-spacing: 0.02em;
+          letter-spacing: 0.01em;
           line-height: 1.55;
           margin: 0;
           white-space: nowrap;
         }
-        .detail-comments-chip {
-          display: inline-flex;
-          align-items: center;
-          min-height: 30px;
-          padding: 0 12px;
-          border-radius: 999px;
-          border: 1px solid #dbe4f0;
-          background: #f8fafc;
-          color: #334155;
-          font-size: 0.82rem;
-          font-weight: 700;
+        .detail-comments-author-value {
+          color: var(--text-body);
+          font-size: 0.98rem;
+          font-weight: 500;
+          line-height: 1.72;
         }
         .detail-comments-entry-meta {
-          color: #64748b;
-          font-size: 0.8rem;
+          color: var(--text-subtle);
+          font-size: 0.84rem;
           font-weight: 700;
           line-height: 1.55;
           margin: 0;
         }
         .detail-comments-entry-text {
-          margin-top: 6px;
-          color: #334155;
-          font-size: 0.92rem;
-          font-weight: 500;
-          line-height: 1.6;
+          margin-top: 0.45rem;
+          color: var(--text-body);
+          font-size: 0.98rem;
+          font-weight: 400;
+          line-height: 1.72;
           word-break: break-word;
+          white-space: normal;
         }
         .detail-comments-empty {
           margin: 0;
-          color: #94a3b8;
-          font-size: 0.9rem;
-          font-weight: 600;
+          color: var(--text-subtle);
+          font-size: 0.96rem;
+          font-weight: 500;
+          line-height: 1.72;
         }
         .detail-comments-divider {
           height: 1px;
           margin: 14px 0 0;
-          background: #eef2f7;
+          background: var(--border);
         }
         [class*="st-key-detail_comments_row_history_"] [data-testid="stVerticalBlock"] {
           gap: 0.8rem !important;
           padding: 18px 24px 18px;
         }
         [class*="st-key-detail_comments_panel_"] [data-testid="stVerticalBlockBorderWrapper"] {
-          border: 1px solid #e5e7eb !important;
+          border: 1px solid var(--border) !important;
           border-radius: 20px !important;
-          background: #ffffff !important;
+          background: var(--surface) !important;
           box-shadow: none !important;
           overflow: hidden !important;
           padding: 0 !important;
@@ -11145,26 +11252,61 @@ def _inject_detail_comment_styles() -> None:
           padding: 0 !important;
           margin: 0 !important;
         }
+        [class*="st-key-detail_comments_panel_"] [data-testid="stTextArea"] {
+          margin-top: 0.15rem !important;
+        }
         [class*="st-key-detail_comments_panel_"] .stTextArea textarea {
-          min-height: 112px;
-          border-radius: 14px !important;
-          border: 1px solid #dbe4f0 !important;
-          background: #ffffff !important;
+          min-height: 132px;
+          padding: 0.95rem 1rem !important;
+          border-radius: 16px !important;
+          border: 1px solid var(--border) !important;
+          background: var(--surface) !important;
           box-shadow: none !important;
-          line-height: 1.6 !important;
+          color: var(--text-body) !important;
+          font-size: 0.98rem !important;
+          font-weight: 400 !important;
+          line-height: 1.72 !important;
+        }
+        [class*="st-key-detail_comments_panel_"] .stTextArea textarea::placeholder {
+          color: var(--text-subtle) !important;
+          opacity: 1 !important;
         }
         [class*="st-key-detail_comments_panel_"] .stTextArea textarea:focus {
-          border-color: #94a3b8 !important;
-          box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12) !important;
+          border-color: var(--border-strong) !important;
+          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08) !important;
         }
         [class*="st-key-detail_comments_panel_"] .stButton > button {
           border-radius: 14px !important;
           white-space: nowrap !important;
           min-height: 42px !important;
         }
+        [class*="st-key-detail_comments_panel_"] .stFormSubmitButton {
+          display: flex;
+          justify-content: flex-end;
+        }
         [class*="st-key-detail_comments_panel_"] .stFormSubmitButton > button {
-          font-size: 0.92rem !important;
+          min-width: 132px !important;
+          font-size: 0.96rem !important;
           font-weight: 700 !important;
+        }
+        @media (max-width: 900px) {
+          .detail-comments-header {
+            flex-direction: column;
+            align-items: flex-start;
+            padding: 18px 20px;
+          }
+          [class*="st-key-detail_comments_compose_"] [data-testid="stVerticalBlock"] {
+            padding: 16px 20px 18px;
+          }
+          [class*="st-key-detail_comments_row_"] [data-testid="stHorizontalBlock"] {
+            padding: 15px 20px !important;
+          }
+          [class*="st-key-detail_comments_row_history_"] [data-testid="stVerticalBlock"] {
+            padding: 16px 20px;
+          }
+          [class*="st-key-detail_comments_panel_"] .stFormSubmitButton > button {
+            width: 100% !important;
+          }
         }
         </style>
         """,
@@ -11284,8 +11426,8 @@ def render_notice_comments(
                         st.markdown(
                             (
                                 '<div class="detail-comments-compose-meta">'
-                                '<div class="detail-comments-section-label">작성자</div>'
-                                f'<span class="detail-comments-chip">{escape(author_id)}</span>'
+                                '<span class="detail-comments-section-label">작성자</span>'
+                                f'<span class="detail-comments-author-value">{escape(author_id)}</span>'
                                 "</div>"
                             ),
                             unsafe_allow_html=True,
