@@ -16230,7 +16230,7 @@ def _inject_compact_public_dashboard_styles() -> None:
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 1rem;
-          margin: 0.15rem 0 0.9rem;
+          margin: 0.35rem 0 1.25rem;
         }
         .dashboard-kpi-card {
           position: relative;
@@ -16299,18 +16299,21 @@ def _inject_compact_public_dashboard_styles() -> None:
           color: #0f9f6e;
         }
         .dashboard-section {
-          margin-top: 1rem;
+          margin-top: 1.2rem;
           background: #ffffff;
           border: 1px solid #dbe4f0;
           box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+        }
+        .dashboard-section + .dashboard-section {
+          margin-top: 1.28rem;
         }
         .dashboard-section-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 0.75rem;
-          margin-bottom: 0.95rem;
-          padding-bottom: 0.85rem;
+          margin-bottom: 1.05rem;
+          padding-bottom: 0.95rem;
           border-bottom: 1px solid rgba(15, 23, 42, 0.06);
         }
         .dashboard-section-title {
@@ -16329,10 +16332,16 @@ def _inject_compact_public_dashboard_styles() -> None:
           text-decoration: none !important;
         }
         .dashboard-carousel-note {
-          margin: -0.2rem 0 0.9rem;
+          margin: -0.05rem 0 1.05rem;
           color: #6c7f9d;
           font-size: 0.82rem;
           font-weight: 600;
+        }
+        [class*="st-key-dashboard_search_shell"],
+        [class*="st-key-public_dashboard_search_shell"] {
+          margin: 0 0 1.15rem;
+          padding: 0.14rem 0 0.92rem;
+          border-bottom: 1px solid rgba(15, 23, 42, 0.06);
         }
         [class*="st-key-dashboard_compact_search_text"],
         [class*="st-key-public_dashboard_compact_search_text"] {
@@ -16559,7 +16568,7 @@ def _inject_compact_public_dashboard_styles() -> None:
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 1rem;
-          margin-top: 0;
+          margin-top: 1.2rem;
         }
         .dashboard-list-panel {
           min-height: 320px;
@@ -16567,7 +16576,7 @@ def _inject_compact_public_dashboard_styles() -> None:
         .dashboard-list {
           display: flex;
           flex-direction: column;
-          gap: 0.75rem;
+          gap: 0.88rem;
         }
         .dashboard-list-item {
           display: grid;
