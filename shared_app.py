@@ -47,6 +47,17 @@ FAVORITE_REVIEW_STATUS = "관심공고"
 ARCHIVE_REVIEW_STATUS_VALUES = {"완료", "검토완료"}
 
 
+class _PageApiProxy:
+    def __getattr__(self, name: str):
+        try:
+            return globals()[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
+PAGE_API = _PageApiProxy()
+
+
 def _resolve_sheet_name(
     *,
     current_keys: tuple[str, ...],
@@ -11161,43 +11172,32 @@ def _inject_detail_comment_styles() -> None:
           font-weight: 800;
           white-space: nowrap;
         }
-        [class*="st-key-detail_comments_rows_"] [data-testid="stVerticalBlock"] {
-          gap: 0 !important;
-        }
-        [class*="st-key-detail_comments_compose_"] [data-testid="stVerticalBlock"] {
-          gap: 0.75rem !important;
+        [class*="st-key-detail_comments_body_"] [data-testid="stVerticalBlock"] {
+          gap: 0.85rem !important;
           padding: 18px 24px 20px;
-          border-bottom: 1px solid var(--border);
         }
-        .detail-comments-compose-meta {
-          display: flex;
-          align-items: flex-start;
-          flex-wrap: wrap;
-          flex-direction: column;
-          gap: 0.2rem;
+        [class*="st-key-detail_comments_form_"] [data-testid="stForm"],
+        [class*="st-key-detail_comments_form_"] [data-testid="stForm"] > div {
+          border: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          padding: 0 !important;
+          margin: 0 !important;
+        }
+        .detail-comments-author {
+          color: var(--text-body);
+          font-size: 0.98rem;
+          font-weight: 500;
+          line-height: 1.72;
           margin: 0;
         }
-        .detail-comments-compose-copy {
-          color: var(--text-subtle);
-          font-size: 0.84rem;
-          font-weight: 600;
-          line-height: 1.55;
-        }
-        .detail-comments-section-label,
-        .detail-comments-row-label {
+        .detail-comments-history-title {
           color: var(--text-subtle);
           font-size: 0.84rem;
           font-weight: 800;
           letter-spacing: 0.01em;
           line-height: 1.55;
-          margin: 0;
-          white-space: nowrap;
-        }
-        .detail-comments-author-value {
-          color: var(--text-body);
-          font-size: 0.98rem;
-          font-weight: 500;
-          line-height: 1.72;
+          margin: 0.2rem 0 0;
         }
         .detail-comments-entry-meta {
           color: var(--text-subtle);
@@ -11227,29 +11227,13 @@ def _inject_detail_comment_styles() -> None:
           margin: 14px 0 0;
           background: var(--border);
         }
-        [class*="st-key-detail_comments_row_empty_"] [data-testid="stVerticalBlock"] {
-          gap: 0.35rem !important;
-          padding: 18px 24px 20px;
+        [class*="st-key-detail_comments_history_"] [data-testid="stVerticalBlock"] {
+          gap: 0.75rem !important;
         }
-        [class*="st-key-detail_comments_row_history_"] [data-testid="stVerticalBlock"] {
-          gap: 0.8rem !important;
-          padding: 18px 24px 18px;
-        }
-        [class*="st-key-detail_comments_panel_"] [data-testid="stVerticalBlock"] {
-          gap: 0 !important;
-        }
-        [class*="st-key-detail_comments_panel_"] [data-testid="stForm"],
-        [class*="st-key-detail_comments_panel_"] [data-testid="stForm"] > div {
-          border: 0 !important;
-          background: transparent !important;
-          box-shadow: none !important;
-          padding: 0 !important;
-          margin: 0 !important;
-        }
-        [class*="st-key-detail_comments_panel_"] [data-testid="stTextArea"] {
+        [class*="st-key-detail_comments_form_"] [data-testid="stTextArea"] {
           margin-top: 0.35rem !important;
         }
-        [class*="st-key-detail_comments_panel_"] .stTextArea textarea {
+        [class*="st-key-detail_comments_form_"] .stTextArea textarea {
           min-height: 132px;
           padding: 0.95rem 1rem !important;
           border-radius: 16px !important;
@@ -11261,35 +11245,25 @@ def _inject_detail_comment_styles() -> None:
           font-weight: 400 !important;
           line-height: 1.72 !important;
         }
-        [class*="st-key-detail_comments_panel_"] .stTextArea textarea::placeholder {
+        [class*="st-key-detail_comments_form_"] .stTextArea textarea::placeholder {
           color: var(--text-subtle) !important;
           opacity: 1 !important;
         }
-        [class*="st-key-detail_comments_panel_"] .stTextArea textarea:focus {
+        [class*="st-key-detail_comments_form_"] .stTextArea textarea:focus {
           border-color: var(--border-strong) !important;
           box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08) !important;
         }
-        [class*="st-key-detail_comments_panel_"] .stButton > button {
+        [class*="st-key-detail_comments_form_"] .stButton > button {
           border-radius: 14px !important;
           white-space: nowrap !important;
           min-height: 42px !important;
-        }
-        [class*="st-key-detail_comments_panel_"] .stFormSubmitButton {
-          display: flex;
-          justify-content: flex-end;
-        }
-        [class*="st-key-detail_comments_panel_"] .stFormSubmitButton > button {
           min-width: 132px !important;
           font-size: 0.96rem !important;
           font-weight: 700 !important;
         }
-        [class*="st-key-detail_comment_entry_"] {
-          padding: 0 !important;
-          margin: 0 !important;
-        }
-        [class*="st-key-detail_comment_entry_"] [data-testid="stVerticalBlock"] {
-          gap: 0 !important;
-          padding: 0 !important;
+        [class*="st-key-detail_comments_form_"] .stFormSubmitButton {
+          display: flex;
+          justify-content: flex-end;
         }
         [class*="st-key-detail_comment_entry_"] [data-testid="stHorizontalBlock"] {
           align-items: start !important;
@@ -11311,16 +11285,10 @@ def _inject_detail_comment_styles() -> None:
             align-items: flex-start;
             padding: 18px 20px;
           }
-          [class*="st-key-detail_comments_compose_"] [data-testid="stVerticalBlock"] {
+          [class*="st-key-detail_comments_body_"] [data-testid="stVerticalBlock"] {
             padding: 16px 20px 18px;
           }
-          [class*="st-key-detail_comments_row_empty_"] [data-testid="stVerticalBlock"] {
-            padding: 16px 20px 18px;
-          }
-          [class*="st-key-detail_comments_row_history_"] [data-testid="stVerticalBlock"] {
-            padding: 16px 20px;
-          }
-          [class*="st-key-detail_comments_panel_"] .stFormSubmitButton > button {
+          [class*="st-key-detail_comments_form_"] .stFormSubmitButton > button {
             width: 100% !important;
           }
         }
@@ -11387,7 +11355,7 @@ def render_notice_comments(
 
     if not notice_id:
         if modern_layout:
-            with st.container(border=True, key=f"detail_comments_panel_{section_key}"):
+            with st.container(key=f"detail_comments_panel_{section_key}"):
                 st.markdown(
                     (
                         '<div class="detail-comments-header">'
@@ -11400,13 +11368,8 @@ def render_notice_comments(
                     ),
                     unsafe_allow_html=True,
                 )
-                with st.container(key=f"detail_comments_rows_{section_key}"):
-                    with st.container(key=f"detail_comments_row_empty_{section_key}"):
-                        label_col, value_col = st.columns([1.15, 4.85], gap="small")
-                        with label_col:
-                            st.markdown('<div class="detail-comments-row-label">안내</div>', unsafe_allow_html=True)
-                        with value_col:
-                            st.markdown('<div class="detail-comments-empty">공고ID가 없어 댓글을 연결할 수 없습니다.</div>', unsafe_allow_html=True)
+                with st.container(key=f"detail_comments_body_{section_key}"):
+                    st.markdown('<div class="detail-comments-empty">공고ID가 없어 댓글을 연결할 수 없습니다.</div>', unsafe_allow_html=True)
         else:
             st.caption("공고ID가 없어 댓글을 연결할 수 없습니다.")
         return
@@ -11439,47 +11402,40 @@ def render_notice_comments(
                 )
                 _render_ui_flash(flash_scope, presentation="inline")
 
-                with st.container(key=f"detail_comments_rows_{section_key}"):
-                    with st.form(f"{section_key}_comment_form", clear_on_submit=True):
-                        with st.container(key=f"detail_comments_compose_{section_key}"):
-                            st.markdown(
-                                (
-                                    '<div class="detail-comments-compose-meta">'
-                                    '<span class="detail-comments-section-label">작성자</span>'
-                                    f'<span class="detail-comments-author-value">{escape(author_id)}</span>'
-                                    '<span class="detail-comments-compose-copy">이 공고에 대한 메모나 검토 의견을 남겨주세요.</span>'
-                                    "</div>"
-                                ),
-                                unsafe_allow_html=True,
-                            )
-                            comment_text = st.text_area(
-                                "의견",
-                                key=f"{section_key}_comment_text",
-                                height=150,
-                                placeholder="댓글을 입력하세요.",
-                                label_visibility="collapsed",
-                            )
-                            submitted = st.form_submit_button("댓글 저장", use_container_width=False)
+                with st.container(key=f"detail_comments_body_{section_key}"):
+                    with st.form(f"{section_key}_comment_form", clear_on_submit=True, border=False):
+                        st.markdown(
+                            f'<div class="detail-comments-author">작성자 {escape(author_id)}</div>',
+                            unsafe_allow_html=True,
+                        )
+                        comment_text = st.text_area(
+                            "의견",
+                            key=f"{section_key}_comment_text",
+                            height=150,
+                            placeholder="이 공고에 대한 메모나 검토 의견을 남겨주세요.",
+                            label_visibility="collapsed",
+                        )
+                        submitted = st.form_submit_button("댓글 저장", use_container_width=True)
 
-                        if submitted:
-                            try:
-                                append_notice_comment(
-                                    source_key=source_key,
-                                    notice_id=notice_id,
-                                    notice_title=notice_title,
-                                    author=author_id,
-                                    comment=comment_text,
-                                )
-                                save_feedback = "댓글을 저장했습니다."
-                                _push_ui_flash(flash_scope, "success", "댓글을 저장했습니다.")
-                                matched = _load_matched_comments()
-                            except Exception as exc:
-                                st.error(f"댓글 저장 실패: {exc}")
+                    if submitted:
+                        try:
+                            append_notice_comment(
+                                source_key=source_key,
+                                notice_id=notice_id,
+                                notice_title=notice_title,
+                                author=author_id,
+                                comment=comment_text,
+                            )
+                            save_feedback = "댓글을 저장했습니다."
+                            _push_ui_flash(flash_scope, "success", "댓글을 저장했습니다.")
+                            matched = _load_matched_comments()
+                        except Exception as exc:
+                            st.error(f"댓글 저장 실패: {exc}")
 
-                    with st.container(key=f"detail_comments_row_history_{section_key}"):
+                    with st.container(key=f"detail_comments_history_{section_key}"):
                         if save_feedback:
                             st.success(save_feedback)
-                        st.markdown('<div class="detail-comments-section-label">댓글 이력</div>', unsafe_allow_html=True)
+                        st.markdown('<div class="detail-comments-history-title">댓글 이력</div>', unsafe_allow_html=True)
                         if matched.empty:
                             st.markdown('<div class="detail-comments-empty">아직 등록된 댓글이 없습니다.</div>', unsafe_allow_html=True)
                         else:
@@ -14047,265 +14003,9 @@ def build_analysis_story_bundle(
     }
 
 def render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
-    row = normalize_row_dict(row)
-    if not row:
-        st.info("표시할 공고가 없습니다.")
-        return
+    from pages.notice_detail import render_page
 
-    current_source = get_query_param("source") or "iris"
-    source_key = resolve_notice_source_key(row)
-    is_mss = source_key == "tipa" or current_source == "tipa"
-    is_nipa = source_key == "nipa" or current_source == "nipa"
-    if is_mss:
-        detail_kicker = "MSS Notice Detail"
-        detail_button_label = "MSS 상세 바로가기"
-        review_caption = "공고 검토 상태를 바꾸면 MSS 시트에 즉시 반영됩니다."
-        source_label = "MSS"
-    elif is_nipa:
-        detail_kicker = "NIPA Notice Detail"
-        detail_button_label = "NIPA 상세 바로가기"
-        review_caption = "공고 검토 상태를 바꾸면 NIPA 시트에 즉시 반영됩니다."
-        source_label = "NIPA"
-    else:
-        detail_kicker = "Notice Master Detail"
-        detail_button_label = "IRIS 상세 바로가기"
-        review_caption = "공고 검토 상태를 바꾸면 NOTICE_MASTER에 즉시 반영됩니다."
-        source_label = "IRIS"
-
-    header_col, favorite_col = st.columns([4.6, 1.15], gap="medium")
-    with header_col:
-        render_detail_header(
-            title=clean(row.get("공고명")),
-            kicker=detail_kicker,
-            chips=[
-                (clean(row.get("추천정도")), "accent"),
-                (f"점수 {clean(row.get('추천점수'))}" if clean(row.get("추천점수")) else "", "neutral"),
-                (clean(row.get("공고상태")), "accent"),
-                (clean(row.get("전문기관") or row.get("담당부처")), "neutral"),
-                (clean(row.get("공고일자")), "neutral"),
-                (f"검토 {clean(row.get('검토여부') or '미정')}", "neutral"),
-            ],
-        )
-    with favorite_col:
-        st.markdown('<div style="height: 1.1rem;"></div>', unsafe_allow_html=True)
-        render_favorite_scrap_button(
-            notice_id=clean(row.get("공고ID")),
-            current_value=clean(first_non_empty(row, "검토여부", "검토 여부", "review_status")),
-            source_key=source_key,
-            notice_title=clean(row.get("공고명")),
-            button_key=f"favorite_notice_header_{clean(row.get('공고ID'))}",
-            compact=True,
-        )
-
-    related = find_related_opportunities_for_notice(row, opportunity_df)
-    top_related: dict[str, object] = {}
-    if not related.empty:
-        related = related.sort_values(
-            by=["rfp_score", "project_name"],
-            ascending=[False, True],
-            na_position="last",
-        )
-        top_related = related.iloc[0].to_dict()
-        row = ensure_notice_analysis_fallback(row, top_related)
-
-    detail_link = resolve_external_detail_link(row, source_key=source_key)
-    keyword_text = first_non_empty(top_related, "llm_keywords", "keywords", "대표키워드")
-    target_market_text = first_non_empty(top_related, "target_market", "대표관심영역")
-    summary_text = first_non_empty(
-        top_related,
-        "llm_reason",
-        "reason",
-        "추천제안이유",
-        "llm_concept_and_development",
-        "concept_and_development",
-    )
-    if not clean(summary_text):
-        summary_text = "연결된 RFP 분석 요약이 아직 없습니다. 공고 원문 정보와 연결된 Opportunity를 함께 확인해주세요."
-
-    overview_steps = [
-        {
-            "title": "사업 개요 및 배경",
-            "body": first_non_empty(
-                top_related,
-                "llm_support_necessity",
-                "support_necessity",
-                "llm_technical_background",
-                "technical_background",
-            ),
-        },
-        {
-            "title": "과제 목표",
-            "body": first_non_empty(
-                top_related,
-                "llm_concept_and_development",
-                "concept_and_development",
-            ),
-        },
-        {
-            "title": "과제 내용",
-            "body": first_non_empty(
-                top_related,
-                "llm_development_content",
-                "development_content",
-                "llm_support_plan",
-                "support_plan",
-            ),
-        },
-    ]
-
-    total_budget_text = first_non_empty(
-        top_related,
-        "llm_total_budget_text",
-        "total_budget_text",
-        "budget",
-        "대표예산",
-    )
-    per_project_budget_text = first_non_empty(
-        top_related,
-        "llm_per_project_budget_text",
-        "per_project_budget_text",
-    )
-    eligibility_text = first_non_empty(top_related, "llm_eligibility", "eligibility")
-    application_field_text = first_non_empty(top_related, "llm_application_field", "application_field")
-    support_need_text = first_non_empty(top_related, "llm_support_need", "support_need")
-    support_plan_text = first_non_empty(top_related, "llm_support_plan", "support_plan")
-
-    content_col, sidebar_col = st.columns([1.7, 0.95], gap="large")
-
-    with content_col:
-        render_notice_detail_rows_panel(
-            "주요 정보",
-            [
-                {"label": "지원 유형", "value": first_non_empty(top_related, "pbofr_type"), "kind": "chips"},
-                {"label": "핵심 키워드", "value": keyword_text, "kind": "chips"},
-                {"label": "관심영역", "value": target_market_text, "kind": "chips"},
-                {"label": "사업 규모", "value": total_budget_text, "kind": "accent"},
-                {"label": "지원금", "value": per_project_budget_text, "kind": "success"},
-                {"label": "지원 가능 기관", "value": eligibility_text, "kind": "chips"},
-                {"label": "공고 등록일", "value": row.get("공고일자")},
-                {"label": "공고 마감일", "value": row.get("마감일자")},
-                {"label": "신청 기간", "value": row.get("접수기간"), "kind": "deadline"},
-            ],
-        )
-
-        render_notice_detail_text_panel("과제 분석", build_project_analysis_text(row, top_related), tone="blue")
-
-        render_notice_detail_rows_panel(
-            "분석 하이라이트",
-            [
-                {"label": "추천 상태", "value": first_non_empty(top_related, "llm_recommendation", "recommendation", "추천정도")},
-                {"label": "적합 점수", "value": clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("추천점수"))},
-                {"label": "활용 분야", "value": application_field_text, "kind": "multiline"},
-                {"label": "지원 필요성", "value": support_need_text, "kind": "multiline"},
-                {"label": "연결 과제명", "value": first_non_empty(top_related, "llm_project_name", "project_name", "대표과제명"), "kind": "multiline"},
-                {"label": "연결 RFP 수", "value": str(len(related)) if not related.empty else "0"},
-            ],
-            tone="green",
-        )
-
-        render_notice_detail_rows_panel(
-            "지원 요건",
-            [
-                {"label": "지원 가능 기관", "value": eligibility_text, "kind": "multiline"},
-                {"label": "지원 필요성", "value": support_need_text, "kind": "multiline"},
-                {"label": "지원기간 및 예산·추진체계", "value": support_plan_text, "kind": "multiline"},
-            ],
-            tone="amber",
-        )
-
-        render_notice_detail_steps_panel("과제 개요", overview_steps, tone="blue")
-
-        render_notice_detail_rows_panel(
-            "과제 세부 내용",
-            [
-                {"label": "공고명", "value": row.get("공고명"), "kind": "multiline"},
-                {"label": "사업명", "value": row.get("사업명"), "kind": "multiline"},
-                {"label": "공고ID", "value": row.get("공고ID")},
-                {"label": "공고번호", "value": row.get("공고번호")},
-                {"label": "현재 공고 상태", "value": row.get("공고상태")},
-                {"label": "현재공고 여부", "value": row.get("is_current")},
-                {"label": "전문기관", "value": row.get("전문기관") or row.get("담당부처")},
-                {"label": "소관부처", "value": row.get("소관부처")},
-                {"label": "RFP 제목", "value": first_non_empty(top_related, "llm_rfp_title", "rfp_title"), "kind": "multiline"},
-                {"label": "지원기간 및 예산·추진체계", "value": support_plan_text, "kind": "multiline"},
-            ],
-        )
-
-        st.markdown('<div class="detail-section-title">검토 상태</div>', unsafe_allow_html=True)
-        review_left, review_right = st.columns([1, 1])
-        with review_left:
-            render_notice_detail_rows_panel(
-                "현재 상태",
-                [
-                    {"label": "검토여부", "value": row.get("검토여부")},
-                    {"label": "추천 여부", "value": first_non_empty(top_related, "llm_recommendation", "recommendation", "추천정도")},
-                    {"label": "적합도 점수", "value": clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("추천점수"))},
-                ],
-            )
-        with review_right:
-            with st.container(border=True):
-                st.caption(review_caption)
-                render_review_editor(
-                    notice_id=clean(row.get("공고ID")),
-                    current_value=clean(row.get("검토여부")),
-                    form_key=f"notice_review_form_{clean(row.get('공고ID'))}",
-                    source_key=source_key,
-                )
-
-        render_notice_comments(row, section_key=f"notice_{clean(row.get('공고ID'))}")
-
-        st.markdown('<div class="detail-section-title">연결된 Opportunity</div>', unsafe_allow_html=True)
-
-    related_view = ensure_opportunity_row_ids(related.copy()) if not related.empty else pd.DataFrame()
-    primary_rfp_id = ""
-    if not related_view.empty:
-        primary_rfp_id = clean(first_non_empty(related_view.iloc[0].to_dict(), "_row_id", "document_id"))
-
-    with sidebar_col:
-        render_notice_detail_sidebar_card(
-            source_label=source_label,
-            keyword_text=keyword_text,
-            total_budget=total_budget_text,
-            per_project_budget=per_project_budget_text,
-            period_value=row.get("접수기간"),
-            agency=row.get("전문기관") or row.get("담당부처"),
-            ministry=row.get("소관부처"),
-            recommendation=first_non_empty(top_related, "llm_recommendation", "recommendation", "추천정도"),
-            score=clean(top_related.get("llm_fit_score") or top_related.get("rfp_score") or row.get("추천점수")),
-            detail_link="",
-            detail_button_label="",
-            related_count=len(related),
-        )
-        if detail_link:
-            st.link_button("원문 공고", detail_link, use_container_width=True)
-        if primary_rfp_id:
-            if st.button("연결 RFP 보기", key=f"notice_related_rfp_{clean(row.get('怨듦퀬ID'))}", use_container_width=True):
-                switch_to_detail("rfp_queue", primary_rfp_id)
-
-    if related.empty:
-        st.info("이 공고에 연결된 Opportunity가 아직 없습니다.")
-        return
-
-    related_view = ensure_opportunity_row_ids(related)
-    related_view["연결 과제명"] = series_from_candidates(related_view, ["llm_project_name", "project_name"])
-    related_view["추천도"] = series_from_candidates(related_view, ["llm_recommendation", "recommendation", "추천여부"])
-    related_view["점수"] = series_from_candidates(related_view, ["llm_fit_score", "rfp_score"])
-    related_view["예산"] = series_from_candidates(related_view, ["llm_total_budget_text", "total_budget_text", "budget"])
-    related_view["파일명"] = series_from_candidates(related_view, ["file_name"])
-    render_clickable_table(
-        related_view,
-        [
-            "공고명",
-            "notice_title",
-            "연결 과제명",
-            "추천도",
-            "점수",
-            "예산",
-            "파일명",
-        ],
-        page_key="rfp_queue",
-        id_column="_row_id",
-    )
+    render_page(st, row, opportunity_df, api=PAGE_API)
 
 def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> None:
     row = normalize_row_dict(row)
@@ -14521,128 +14221,9 @@ def render_notice_page_with_scope(
     )
 
 def render_opportunity_detail_from_row(row: dict) -> None:
-    row = normalize_row_dict(row)
-    if not row:
-        st.info("표시할 Opportunity가 없습니다.")
-        return
+    from pages.rfp_detail import render_page
 
-    source_key = resolve_notice_source_key(row)
-    detail_link = resolve_external_detail_link(row, source_key=source_key)
-    download_path = resolve_local_file_path(row)
-    ctx = _queue_row_context(row)
-    score_value = _score_value(first_non_empty(row, "llm_fit_score", "rfp_score"))
-    period = first_non_empty(row, "notice_period", "period", "접수기간", "신청기간") or "-"
-    period_end = extract_period_end(period)
-    deadline_label = period_end.strftime("%Y-%m-%d") if pd.notna(period_end) else "-"
-    story = build_analysis_story_bundle(row, period_text=period)
-    summary_text = clean(story["summary_text"]) or ctx["reason"] or "-"
-    detail_text = clean(story["detail_text"]) or "-"
-    objective_text = clean(story["objective_text"]) or "-"
-    eligibility_text = clean(story["eligibility_text"]) or "-"
-    support_type = first_non_empty(row, "support_type", "사업유형", "business_type", "document_type") or "-"
-    keyword_text = first_non_empty(row, "llm_keywords", "keywords")
-    target_market_text = first_non_empty(row, "target_market")
-    overview_steps = story["overview_steps"]
-
-    render_page_header("RFP Analysis", "", eyebrow="Analysis")
-    badges = "".join(
-        [
-            _pill_html(ctx["recommendation"], base_class="detail-badge"),
-            _pill_html(ctx["score"], kind="score", base_class="detail-badge"),
-            _pill_html(ctx["deadline"], kind="deadline", base_class="detail-badge"),
-        ]
-    )
-    st.markdown(
-        (
-            '<div class="analysis-hero">'
-            f'<div class="detail-badge-row">{badges}</div>'
-            f'<div class="analysis-title">{escape(ctx["project"])}</div>'
-            f'<div class="analysis-subtitle">{escape(ctx["notice"])}</div>'
-            '</div>'
-        ),
-        unsafe_allow_html=True,
-    )
-
-    info_col, summary_col = st.columns([1.65, 0.95], gap="large")
-    with info_col:
-        _, favorite_col = st.columns([4.2, 1.1], gap="small")
-        with favorite_col:
-            render_favorite_scrap_button(
-                notice_id=clean(row.get("notice_id")),
-                current_value=clean(row.get("review_status")),
-                source_key=source_key,
-                notice_title=first_non_empty(row, "notice_title", "공고명"),
-                button_key=f"favorite_opportunity_main_{clean(row.get('notice_id'))}",
-            )
-        render_notice_detail_rows_panel(
-            "주요 정보",
-            [
-                {"label": "지원유형", "value": support_type},
-                {"label": "핵심 키워드", "value": keyword_text, "kind": "chips"},
-                {"label": "관심영역", "value": target_market_text, "kind": "chips"},
-                {"label": "지원금", "value": ctx["budget"], "kind": "accent"},
-                {"label": "지원 가능 기관", "value": eligibility_text, "kind": "multiline"},
-                {"label": "공고 등록일", "value": ctx["registered_at"]},
-                {"label": "공고 마감일", "value": deadline_label},
-                {"label": "신청 기간", "value": period, "kind": "deadline"},
-            ],
-            tone="blue",
-        )
-    with summary_col:
-        render_notice_detail_rows_panel(
-            "빠른 요약",
-            [
-                {"label": "주관 부처", "value": ctx["ministry"]},
-                {"label": "전문 기관", "value": ctx["agency"]},
-                {"label": "추천 상태", "value": ctx["recommendation"], "kind": "success"},
-                {"label": "적합 점수", "value": str(score_value if score_value else "-"), "kind": "accent"},
-                {"label": "공고 상태", "value": ctx["status"]},
-                {"label": "문서 단서", "value": ctx["file_name"], "kind": "multiline"},
-            ],
-            tone="green",
-        )
-
-    action_cols = st.columns([1, 1, 1.2])
-    with action_cols[0]:
-        if detail_link:
-            st.link_button("원문 보기", detail_link, use_container_width=True)
-    with action_cols[1]:
-        if download_path:
-            with open(download_path, "rb") as file_handle:
-                st.download_button(
-                    "RFP 다운로드",
-                    data=file_handle.read(),
-                    file_name=download_path.name,
-                    mime="application/octet-stream",
-                    use_container_width=True,
-                )
-    with action_cols[2]:
-        if st.button("관련 공고 보기", key=f"oppty_notice_detail_{clean(row.get('_row_id'))}", use_container_width=True):
-            navigate_to_notice_detail(source_key, clean(row.get("notice_id")))
-
-    render_notice_detail_text_panel("과제 분석", build_project_analysis_text(row), tone="blue")
-    render_notice_detail_rows_panel(
-        "지원 요건",
-        [
-            {"label": "지원 가능 기관", "value": eligibility_text, "kind": "multiline"},
-            {"label": "지원 유형", "value": support_type},
-            {"label": "핵심 키워드", "value": keyword_text, "kind": "chips"},
-            {"label": "관심영역", "value": target_market_text, "kind": "chips"},
-            {"label": "지원 내용 및 혜택", "value": clean(story["support_plan_text"]) or clean(story["support_need_text"]), "kind": "multiline"},
-        ],
-        tone="amber",
-    )
-    render_notice_detail_steps_panel("과제 개요", overview_steps, tone="blue")
-    render_notice_detail_rows_panel(
-        "과제 세부 내용",
-        [
-            {"label": "공고명", "value": first_non_empty(row, "notice_title", "공고명"), "kind": "multiline"},
-            {"label": "RFP 제목", "value": first_non_empty(row, "llm_rfp_title", "rfp_title"), "kind": "multiline"},
-            {"label": "활용 분야", "value": objective_text, "kind": "multiline"},
-            {"label": "상세 내용", "value": detail_text, "kind": "multiline"},
-        ],
-        tone="blue",
-    )
+    render_page(st, row, api=PAGE_API)
 
 
 def render_summary_page(df: pd.DataFrame, opportunity_df: pd.DataFrame) -> None:
