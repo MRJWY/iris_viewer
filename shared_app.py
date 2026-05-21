@@ -39,6 +39,7 @@ except Exception:
 
 
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
 DEFAULT_PAGE_SIZE = 300
 REVIEW_OPTIONS = ["", "검토전", "관심공고", "보류", "완료", "검토완료"]
