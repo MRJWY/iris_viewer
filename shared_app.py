@@ -9990,13 +9990,13 @@ def render_crawled_notice_rows(
 
     current_route = route_core.get_current_route()
 
-    def _summary_href(notice_id: str, source_key: str) -> str:
+    def _detail_href(notice_id: str, source_key: str) -> str:
         route_builder = route_core.build_favorites_route if page_key == "favorites" else route_core.build_notice_queue_route
         route = route_builder(
             filters=dict(current_route.get("filters") or {}),
             page_no=int(current_route.get("page_no") or 1),
             page_size=int(current_route.get("page_size") or 20),
-            view="summary",
+            view="detail",
             item_id=notice_id,
             source_key=source_key or ("favorites" if page_key == "favorites" else "iris"),
         )
@@ -10064,7 +10064,7 @@ def render_crawled_notice_rows(
                     f'<div class="notice-table-row{selected_class}">',
                     f'<div class="notice-table-cell"><span class="{_status_badge_class(status)}">{escape(status)}</span></div>',
                     '<div class="notice-table-cell">',
-                    f'<a class="notice-table-title" href="{escape(_summary_href(notice_id, source_key or "iris"), quote=True)}" target="_self">{escape(_truncate_queue_text(title, max_chars=110))}</a>',
+                    f'<a class="notice-table-title" href="{escape(_detail_href(notice_id, source_key or "iris"), quote=True)}" target="_self">{escape(_truncate_queue_text(title, max_chars=110))}</a>',
                     f'<div class="notice-table-subtitle">{escape(subtitle_text)}</div>',
                     '</div>',
                     f'<div class="notice-table-cell">{escape(_truncate_queue_text(agency_text, max_chars=24))}</div>',
@@ -10098,7 +10098,10 @@ def _render_notice_queue_screen(
     del opportunity_df
     source_df = _enrich_notice_rows(source_df, detail_opportunity_df)
     current_route = route_core.get_current_route(route_core.build_notice_queue_route())
-    if clean(current_route.get("page")) == NOTICE_QUEUE_DETAIL_PAGE_KEY and clean(current_route.get("view")) == "detail":
+    if (
+        clean(current_route.get("page")) == NOTICE_QUEUE_DETAIL_PAGE_KEY
+        and clean(current_route.get("view")) in {"detail", "summary"}
+    ):
         selected_row = _get_notice_row_by_id(source_df, clean(current_route.get("item_id")))
         back_col, info_col = st.columns([1.9, 4.1])
         with back_col:
@@ -12016,6 +12019,12 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
     archive_mode = "archive" in clean(page_key).lower()
     for _, row in rows.iterrows():
         ctx = _queue_row_context(row)
+        row_id = clean(first_non_empty(row, "_row_id", "Row ID"))
+        href = build_route_href(
+            page_key,
+            row_id,
+            source_key=resolve_route_source_key_for_row(row, source_key=row.get("source_key")),
+        ) if row_id else ""
         badges = "".join(
             [
                 _pill_html(ctx["recommendation"]),
@@ -12029,22 +12038,26 @@ def _render_rfp_queue_list(rows: pd.DataFrame, *, page_key: str) -> None:
             if archive_mode and clean(ctx["archive_reason_label"])
             else ""
         )
-        items.append(
-            (
-                '<div class="queue-card queue-list-card">'
-                f'<div class="queue-badge-row">{badges}</div>'
-                f'<div class="queue-list-card-title">{escape(truncate_text(ctx["project"], max_chars=96))}</div>'
-                f'<div class="queue-list-card-subtitle">{escape(truncate_text(ctx["notice"], max_chars=120))}</div>'
-                '<div class="queue-list-card-meta">'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">전문기관</div><div class="queue-list-card-meta-value">{escape(ctx["agency"])}</div></div>'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">지원금</div><div class="queue-list-card-meta-value">{escape(ctx["budget"])}</div></div>'
-                f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">공고 상태</div><div class="queue-list-card-meta-value">{escape(ctx["status"])}</div></div>'
-                '</div>'
-                f'<div class="queue-list-card-reason">{escape(ctx["reason"])}</div>'
-                f'{archive_reason_html}'
-                '</div>'
-            )
+        card_markup = (
+            '<div class="queue-card queue-list-card">'
+            f'<div class="queue-badge-row">{badges}</div>'
+            f'<div class="queue-list-card-title">{escape(truncate_text(ctx["project"], max_chars=96))}</div>'
+            f'<div class="queue-list-card-subtitle">{escape(truncate_text(ctx["notice"], max_chars=120))}</div>'
+            '<div class="queue-list-card-meta">'
+            f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">전문기관</div><div class="queue-list-card-meta-value">{escape(ctx["agency"])}</div></div>'
+            f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">지원금</div><div class="queue-list-card-meta-value">{escape(ctx["budget"])}</div></div>'
+            f'<div class="queue-list-card-meta-item"><div class="queue-list-card-meta-label">공고 상태</div><div class="queue-list-card-meta-value">{escape(ctx["status"])}</div></div>'
+            '</div>'
+            f'<div class="queue-list-card-reason">{escape(ctx["reason"])}</div>'
+            f'{archive_reason_html}'
+            '</div>'
         )
+        if href:
+            items.append(
+                f'<a class="queue-list-link" href="{escape(href, quote=True)}" target="_self">{card_markup}</a>'
+            )
+        else:
+            items.append(card_markup)
 
     st.markdown(f'<div class="queue-list-shell">{"".join(items)}</div>', unsafe_allow_html=True)
 
