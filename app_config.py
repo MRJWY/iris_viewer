@@ -110,7 +110,7 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
 
     sources = (
         SourceRouteConfig("dashboard", "Dashboard", "dashboard", True, "dashboard"),
-        SourceRouteConfig("iris", "IRIS", "rfp_queue", False, "iris"),
+        SourceRouteConfig("iris", "IRIS", "rfp_queue", True, "iris"),
         SourceRouteConfig("tipa", "중소기업기술정보진흥원", "tipa_current", True, "external", page_configs=tipa_pages),
         SourceRouteConfig("nipa", "NIPA", "nipa_current", True, "external", page_configs=nipa_pages),
         SourceRouteConfig("proposal", "제안관리", "proposal", False, "proposal"),

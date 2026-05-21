@@ -111,10 +111,14 @@ def load_public_source_notice_datasets() -> dict[str, object]:
         "mss_current_origin": mss_current_origin,
         "mss_past": mss_past_df,
         "mss_past_origin": mss_past_origin,
+        "mss_opportunity": core.load_mss_opportunity_df(),
+        "mss_opportunity_archive": core.load_mss_opportunity_archive_df(),
         "nipa_current": nipa_current_df,
         "nipa_current_origin": nipa_current_origin,
         "nipa_past": nipa_past_df,
         "nipa_past_origin": nipa_past_origin,
+        "nipa_opportunity": core.load_nipa_opportunity_df(),
+        "nipa_opportunity_archive": core.load_nipa_opportunity_archive_df(),
     }
 
 
@@ -164,7 +168,7 @@ def load_public_viewer_runtime(current_page: str) -> tuple[core.AppModeConfig, d
             sheet_names["opportunity"],
             sheet_names["opportunity_archive"],
         )
-        source_datasets = None
+        source_datasets = load_public_source_notice_datasets()
 
     if core.is_user_scoped_operations_enabled():
         datasets, source_datasets = core.apply_user_review_statuses(
@@ -219,12 +223,13 @@ def render_public_viewer_body(
         )
         return
 
+    rfp_current_df, rfp_all_df = core.build_rfp_queue_frames(datasets, source_datasets)
     viewer_body.render_public_opportunity_page(
-        datasets["opportunity"],
+        rfp_current_df,
         page_key="rfp_queue",
         title="RFP Queue",
         archive=False,
-        all_df=datasets["opportunity_all"],
+        all_df=rfp_all_df,
     )
 
 
