@@ -1347,7 +1347,7 @@ def render_proposal_source(
 ) -> None:
     del source_config, mode_config, show_internal_tabs
     opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
-    recommended_count = int(opportunity_index["Recommendation"].fillna("").astype(str).str.contains("추천").sum()) if not opportunity_index.empty else 0
+    recommended_count = int(build_positive_recommendation_mask(opportunity_index).sum()) if not opportunity_index.empty else 0
     high_score_count = int(opportunity_index["Score"].fillna(0).ge(80).sum()) if not opportunity_index.empty else 0
 
     render_page_header(
@@ -9543,30 +9543,11 @@ def _render_workspace_pagination(
         )
     number_html = f'<div class="notice-queue-pagination">{"".join(page_links)}</div>'
 
-    form_route = route_core.normalize_route(route)
-    form_route["view"] = "list"
-    form_route["item_id"] = ""
-    params = with_auth_params(route_core.serialize_route(form_route))
-    params.pop("page_no", None)
-    hidden_inputs = "".join(
-        f'<input type="hidden" name="{escape(key, quote=True)}" value="{escape(value, quote=True)}">'
-        for key, value in params.items()
-        if clean(key) and clean(value)
-    )
-    jump_html = (
-        '<form class="notice-queue-page-jump" method="get">'
-        f"{hidden_inputs}"
-        f'<input type="number" name="page_no" min="1" max="{total_pages}" value="{current_page}" aria-label="page number">'
-        f'<span class="notice-queue-page-jump-total">/{total_pages}</span>'
-        '<button type="submit">이동</button>'
-        "</form>"
-    )
-
     st.markdown(
         (
             '<div class="notice-queue-footer">'
             f'<div class="notice-queue-footer-meta">총 {total_rows:,}건 · 페이지 {current_page} / {total_pages}</div>'
-            f'<nav class="notice-queue-pagination-wrap" aria-label="pagination">{nav_html}{number_html}{jump_html}</nav>'
+            f'<nav class="notice-queue-pagination-wrap" aria-label="pagination">{number_html}{nav_html}</nav>'
             "</div>"
         ),
         unsafe_allow_html=True,
@@ -14784,6 +14765,13 @@ def render_opportunity_page(
 
         recommendation_options = build_queue_recommendation_options(working["_queue_recommendation"]) if not working.empty else []
         status_options = build_queue_status_options(option_working["_queue_status"]) if not option_working.empty else ["마감"]
+        recommendation_widget_key = f"{page_key}_filter_recommendation"
+        recommendation_init_key = f"{page_key}_filter_recommendation_initialized"
+        if recommendation_widget_key not in st.session_state and not archive:
+            st.session_state[recommendation_widget_key] = [
+                value for value in recommendation_options if is_positive_recommendation(value)
+            ]
+        st.session_state[recommendation_init_key] = True
         archive_reason_options = sorted(
             [
                 value
@@ -14797,8 +14785,8 @@ def render_opportunity_page(
             selected_recommendation = st.multiselect(
                 "추천 상태",
                 options=recommendation_options,
-                default=[],
-                key=f"{page_key}_filter_recommendation",
+                default=st.session_state.get(recommendation_widget_key, []),
+                key=recommendation_widget_key,
                 placeholder="전체",
             )
         with filter_cols[1]:
@@ -15816,7 +15804,7 @@ def render_notice_queue_ui_styles() -> None:
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 0.8rem;
+          gap: 0.55rem;
         }
         .notice-queue-pagination {
           display: inline-flex;
@@ -15828,6 +15816,7 @@ def render_notice_queue_ui_styles() -> None:
           display: inline-flex;
           align-items: center;
           justify-content: center;
+          gap: 2.1rem;
           color: #4b5563 !important;
           font-size: 1rem;
           font-weight: 800;
@@ -15858,6 +15847,13 @@ def render_notice_queue_ui_styles() -> None:
           background: #2563eb;
           color: #ffffff !important;
         }
+        .notice-queue-page-link.is-disabled {
+          color: #cbd5e1 !important;
+          pointer-events: none;
+        }
+        .notice-queue-page-link:hover {
+          border-color: #93c5fd;
+        }
         .notice-queue-page-ellipsis {
           display: inline-flex;
           align-items: center;
@@ -15867,39 +15863,6 @@ def render_notice_queue_ui_styles() -> None:
           color: #4b5563;
           font-size: 1.05rem;
           font-weight: 900;
-        }
-        .notice-queue-page-jump {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 0.55rem;
-        }
-        .notice-queue-page-jump input {
-          width: 64px;
-          height: 38px;
-          border: 1px solid #6b7280;
-          border-radius: 8px;
-          color: #4b5563;
-          font-size: 0.98rem;
-          font-weight: 800;
-          text-align: center;
-          background: #ffffff;
-        }
-        .notice-queue-page-jump-total {
-          color: #4b5563;
-          font-size: 0.98rem;
-          font-weight: 800;
-        }
-        .notice-queue-page-jump button {
-          height: 38px;
-          padding: 0 1rem;
-          border: 1px solid #3b82f6;
-          border-radius: 8px;
-          background: #eff6ff;
-          color: #2563eb;
-          font-size: 0.96rem;
-          font-weight: 900;
-          cursor: pointer;
         }
         .notice-kpi-grid {
           display: grid;
