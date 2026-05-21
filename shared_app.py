@@ -14645,13 +14645,23 @@ def _build_notice_rfp_count_lookup(opportunity_rows: pd.DataFrame) -> dict[tuple
 
 def _render_rfp_queue_pagination_controls(
     *,
-    page_param_key: str,
+    route: dict[str, object] | None = None,
     current_page: int,
     total_pages: int,
 ) -> str:
+    base_route = route_core.normalize_route(route or route_core.build_rfp_queue_route())
+
     def _page_href(page_number: int) -> str:
-        params = get_query_params_dict()
-        params[page_param_key] = str(max(1, min(page_number, total_pages)))
+        next_route = route_core.normalize_route(
+            {
+                **base_route,
+                "view": "list",
+                "item_type": "",
+                "item_id": "",
+                "page_no": max(1, min(int(page_number), total_pages)),
+            }
+        )
+        params = with_auth_params(route_core.serialize_route(next_route))
         return f"?{urlencode(params)}"
 
     page_numbers = _notice_queue_pagination_window(current_page, total_pages)
@@ -14746,7 +14756,6 @@ def render_opportunity_page(
     all_source_df = ensure_opportunity_row_ids(all_df) if all_df is not None and not all_df.empty else source_df
     page_state_key = f"{page_key}_page_index"
     filter_signature_key = f"{page_key}_filter_signature"
-    page_param_key = "rfp_archive_page_no" if archive else "rfp_page_no"
     page_size = 10
 
     current_view, selected_document_id = get_route_state(page_key)
@@ -14852,11 +14861,17 @@ def render_opportunity_page(
 
         total_rows = len(filtered)
         total_pages = max(1, math.ceil(total_rows / page_size)) if page_size else 1
-        query_page_no = safe_int(get_query_param(page_param_key), 0)
+        current_route = route_core.get_current_route()
+        query_page_no = safe_int(get_query_param("page_no"), 0)
+        legacy_query_page_no = safe_int(get_query_param("rfp_archive_page_no" if archive else "rfp_page_no"), 0)
         if filters_changed:
             current_page = 1
         else:
-            current_page = query_page_no or int(st.session_state.get(page_state_key, 1) or 1)
+            current_page = (
+                query_page_no
+                or legacy_query_page_no
+                or int(current_route.get("page_no") or st.session_state.get(page_state_key, 1) or 1)
+            )
         current_page = max(1, min(current_page, total_pages))
         st.session_state[page_state_key] = current_page
         start_idx = (current_page - 1) * page_size
@@ -14864,8 +14879,15 @@ def render_opportunity_page(
 
         st.markdown('<div class="queue-results-label">추천 결과</div>', unsafe_allow_html=True)
         _render_rfp_queue_list(page_rows, page_key=page_key)
+        pagination_route = route_core.build_rfp_queue_route(
+            page_no=current_page,
+            page_size=page_size,
+            view="list",
+            item_id="",
+            source_key=clean(current_route.get("source_key")) or "iris",
+        )
         pagination_html = _render_rfp_queue_pagination_controls(
-            page_param_key=page_param_key,
+            route=pagination_route,
             current_page=current_page,
             total_pages=total_pages,
         )
@@ -15731,8 +15753,7 @@ def render_notice_queue_ui_styles() -> None:
           flex-direction: column;
           align-items: center;
           gap: 0.55rem;
-          margin-top: 1rem;
-          padding-bottom: 0.25rem;
+          margin-top: 1.05rem;
         }
         .queue-pagination-row {
           display: inline-flex;
@@ -15744,6 +15765,7 @@ def render_notice_queue_ui_styles() -> None:
           display: inline-flex;
           align-items: center;
           justify-content: center;
+          gap: 2.1rem;
           color: #4b5563 !important;
           font-size: 1rem;
           font-weight: 800;
@@ -15772,6 +15794,9 @@ def render_notice_queue_ui_styles() -> None:
           border-color: #2563eb;
           background: #2563eb;
           color: #ffffff !important;
+        }
+        .queue-page-link:hover {
+          border-color: #93c5fd;
         }
         .queue-page-ellipsis {
           display: inline-flex;
