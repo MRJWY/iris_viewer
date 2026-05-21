@@ -11200,14 +11200,27 @@ def _inject_detail_comment_styles() -> None:
           margin: 0.2rem 0 0;
         }
         .detail-comments-entry-meta {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 0.45rem;
           color: var(--text-subtle);
           font-size: 0.84rem;
           font-weight: 700;
           line-height: 1.55;
           margin: 0;
         }
+        .detail-comments-entry-date::after {
+          content: "•";
+          margin-left: 0.45rem;
+          color: var(--border-strong);
+        }
+        .detail-comments-entry-author {
+          color: var(--text-strong);
+          font-weight: 800;
+        }
         .detail-comments-entry-text {
-          margin-top: 0.45rem;
+          margin-top: 0.15rem;
           color: var(--text-body);
           font-size: 0.98rem;
           font-weight: 400;
@@ -11229,6 +11242,17 @@ def _inject_detail_comment_styles() -> None:
         }
         [class*="st-key-detail_comments_history_"] [data-testid="stVerticalBlock"] {
           gap: 0.75rem !important;
+        }
+        [class*="st-key-detail_comment_entry_"] {
+          border: 1px solid var(--border);
+          border-radius: 16px;
+          background: linear-gradient(180deg, rgba(248, 250, 252, 0.94) 0%, rgba(255, 255, 255, 1) 100%);
+          box-shadow: 0 10px 22px rgba(15, 23, 42, 0.04);
+          padding: 16px 18px !important;
+        }
+        [class*="st-key-detail_comment_entry_"] [data-testid="stVerticalBlock"] {
+          gap: 0.7rem !important;
+          padding: 0 !important;
         }
         [class*="st-key-detail_comments_form_"] [data-testid="stTextArea"] {
           margin-top: 0.35rem !important;
@@ -11268,15 +11292,16 @@ def _inject_detail_comment_styles() -> None:
         [class*="st-key-detail_comment_entry_"] [data-testid="stHorizontalBlock"] {
           align-items: start !important;
           gap: 0.75rem !important;
+          justify-content: space-between !important;
         }
         [class*="st-key-detail_comment_entry_"] .stButton {
           display: flex;
           justify-content: flex-end;
         }
         [class*="st-key-detail_comment_entry_"] .stButton > button {
-          min-height: 32px !important;
+          min-height: 34px !important;
           padding: 0 0.75rem !important;
-          border-radius: 10px !important;
+          border-radius: 999px !important;
           font-size: 0.84rem !important;
         }
         @media (max-width: 900px) {
@@ -11446,13 +11471,21 @@ def render_notice_comments(
                                 nickname = clean(comment_row.get("nickname")) or clean(comment_row.get("author")) or "익명"
                                 content = clean(comment_row.get("content")) or clean(comment_row.get("comment"))
                                 allow_delete = bool(comment_id and can_delete_comment(comment_row, current_user_id))
+                                meta_parts = []
+                                if created_at:
+                                    meta_parts.append(
+                                        f'<span class="detail-comments-entry-date">{escape(created_at)}</span>'
+                                    )
+                                if nickname:
+                                    meta_parts.append(
+                                        f'<span class="detail-comments-entry-author">{escape(nickname)}</span>'
+                                    )
 
                                 with st.container(key=f"detail_comment_entry_{section_key}_{comment_id or idx}"):
                                     meta_col, action_col = st.columns([4.2, 0.8], gap="small")
                                     with meta_col:
-                                        stamp_parts = [value for value in [created_at, nickname] if value]
                                         st.markdown(
-                                            f'<div class="detail-comments-entry-meta">{escape(" · ".join(stamp_parts))}</div>',
+                                            f'<div class="detail-comments-entry-meta">{"".join(meta_parts)}</div>',
                                             unsafe_allow_html=True,
                                         )
                                     with action_col:
@@ -11472,8 +11505,6 @@ def render_notice_comments(
                                         f'<div class="detail-comments-entry-text">{escape(content).replace(chr(10), "<br>")}</div>',
                                         unsafe_allow_html=True,
                                     )
-                                    if idx < len(comment_rows) - 1:
-                                        st.markdown('<div class="detail-comments-divider"></div>', unsafe_allow_html=True)
 
         _render_comments_fragment()
         return
