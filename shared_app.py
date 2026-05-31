@@ -1,5 +1,6 @@
 ﻿import json
 import hashlib
+from concurrent.futures import Future, ThreadPoolExecutor
 import hmac
 import os
 import re
@@ -8811,8 +8812,215 @@ def _persist_review_status(*, notice_id: str, source_key: str, review_status: st
     finally:
         _clear_notice_caches()
 
+@st.cache_resource(show_spinner=False)
+def get_ui_background_executor() -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(max_workers=4, thread_name_prefix="viewer-ui-bg")
+
+
+def _favorite_toggle_state_key(source_key: str, notice_id: str) -> str:
+    return f"_favorite_value::{clean(source_key) or 'iris'}::{clean(notice_id)}"
+
+
+def _favorite_toggle_inflight_key(source_key: str, notice_id: str) -> str:
+    return f"_favorite_inflight::{clean(source_key) or 'iris'}::{clean(notice_id)}"
+
+
+def _favorite_toggle_pending_key(source_key: str, notice_id: str) -> str:
+    return f"_favorite_pending::{clean(source_key) or 'iris'}::{clean(notice_id)}"
+
+
+def _favorite_toggle_status_key(source_key: str, notice_id: str) -> str:
+    return f"_favorite_status::{clean(source_key) or 'iris'}::{clean(notice_id)}"
+
+
+def _commit_favorite_scrap_toggle(
+    *,
+    notice_id: str,
+    source_key: str,
+    notice_title: str,
+    next_value: str,
+) -> str:
+    _persist_review_status(
+        notice_id=notice_id,
+        source_key=source_key,
+        review_status=next_value,
+        notice_title=notice_title,
+    )
+    return next_value
+
+
+def _schedule_favorite_scrap_toggle(
+    *,
+    notice_id: str,
+    source_key: str,
+    notice_title: str,
+    current_value: str,
+    flash_scope: str,
+    state_key: str,
+    inflight_key: str,
+    pending_key: str,
+    status_key: str,
+) -> None:
+    if st.session_state.get(inflight_key):
+        return
+
+    previous_value = clean(st.session_state.get(state_key, current_value))
+    next_value = UNFAVORITE_REVIEW_STATUS if previous_value == FAVORITE_REVIEW_STATUS else FAVORITE_REVIEW_STATUS
+    st.session_state[state_key] = next_value
+    st.session_state[inflight_key] = True
+    st.session_state[status_key] = "관심공고 해제 중..." if next_value == UNFAVORITE_REVIEW_STATUS else "관심공고 저장 중..."
+    future = get_ui_background_executor().submit(
+        _commit_favorite_scrap_toggle,
+        notice_id=notice_id,
+        source_key=source_key,
+        notice_title=notice_title,
+        next_value=next_value,
+    )
+    st.session_state[pending_key] = {
+        "future": future,
+        "previous_value": previous_value,
+        "next_value": next_value,
+        "flash_scope": clean(flash_scope),
+        "state_key": state_key,
+        "inflight_key": inflight_key,
+        "pending_key": pending_key,
+        "status_key": status_key,
+    }
+
+
+def _reconcile_favorite_scrap_toggle(
+    *,
+    flash_scope: str,
+    state_key: str,
+    inflight_key: str,
+    pending_key: str,
+    status_key: str,
+) -> None:
+    pending = st.session_state.get(pending_key)
+    if not isinstance(pending, dict):
+        return
+
+    future = pending.get("future")
+    if not isinstance(future, Future) or not future.done():
+        return
+
+    resolved_flash_scope = clean(pending.get("flash_scope")) or flash_scope
+    previous_value = clean(pending.get("previous_value"))
+    next_value = clean(pending.get("next_value"))
+    try:
+        future.result()
+        st.session_state[state_key] = next_value
+        _push_ui_flash(
+            resolved_flash_scope,
+            "success",
+            "관심공고에서 제거했습니다." if next_value == UNFAVORITE_REVIEW_STATUS else "관심공고로 저장했습니다.",
+        )
+    except Exception as exc:
+        st.session_state[state_key] = previous_value
+        _push_ui_flash(resolved_flash_scope, "error", f"관심공고 저장 실패: {exc}")
+    finally:
+        st.session_state.pop(pending_key, None)
+        st.session_state.pop(status_key, None)
+        st.session_state[inflight_key] = False
+
+
+def _iter_pending_favorite_toggle_keys() -> list[str]:
+    return sorted(
+        key for key in st.session_state.keys()
+        if key.startswith("_favorite_pending::")
+    )
+
+
+def _has_pending_favorite_toggles() -> bool:
+    return any(isinstance(st.session_state.get(key), dict) for key in _iter_pending_favorite_toggle_keys())
+
+
+def _reconcile_all_pending_favorite_toggles(*, default_flash_scope: str = "_favorite_global") -> bool:
+    reconciled_any = False
+    for pending_key in _iter_pending_favorite_toggle_keys():
+        pending = st.session_state.get(pending_key)
+        if not isinstance(pending, dict):
+            continue
+        state_key = clean(pending.get("state_key"))
+        inflight_key = clean(pending.get("inflight_key"))
+        status_key = clean(pending.get("status_key"))
+        if not state_key or not inflight_key or not status_key:
+            continue
+        if pending_key not in st.session_state:
+            continue
+        before_pending = pending_key in st.session_state
+        _reconcile_favorite_scrap_toggle(
+            flash_scope=clean(pending.get("flash_scope")) or default_flash_scope,
+            state_key=state_key,
+            inflight_key=inflight_key,
+            pending_key=pending_key,
+            status_key=status_key,
+        )
+        if before_pending and pending_key not in st.session_state:
+            reconciled_any = True
+    return reconciled_any
+
+
+def _resolve_live_favorite_value(source_key: str, notice_id: str, current_value: str) -> str:
+    notice_id = clean(notice_id)
+    if not notice_id:
+        return clean(current_value)
+    state_key = _favorite_toggle_state_key(source_key, notice_id)
+    if state_key in st.session_state:
+        return clean(st.session_state.get(state_key))
+    return clean(current_value)
+
+
+def _is_favorite_toggle_inflight(source_key: str, notice_id: str) -> bool:
+    notice_id = clean(notice_id)
+    if not notice_id:
+        return False
+    inflight_key = _favorite_toggle_inflight_key(source_key, notice_id)
+    return bool(st.session_state.get(inflight_key))
+
+
+def render_favorite_toggle_monitor() -> None:
+    @st.fragment(run_every=0.2 if _has_pending_favorite_toggles() else None)
+    def _render_favorite_toggle_monitor_fragment() -> None:
+        reconciled_any = _reconcile_all_pending_favorite_toggles()
+        _render_ui_flash("_favorite_global", presentation="toast")
+        if reconciled_any:
+            st.rerun(scope="app")
+
+    _render_favorite_toggle_monitor_fragment()
+
+
 def consume_favorite_toggle_query_action() -> None:
-    return
+    if get_query_param("favorite_toggle") != "1":
+        return
+
+    notice_id = clean(get_query_param("favorite_notice_id"))
+    source_key = clean(get_query_param("favorite_source_key")) or "iris"
+    current_value = clean(get_query_param("favorite_current_value"))
+    notice_title = clean(get_query_param("favorite_notice_title"))
+    if notice_id:
+        _schedule_favorite_scrap_toggle(
+            notice_id=notice_id,
+            source_key=source_key,
+            notice_title=notice_title,
+            current_value=current_value,
+            flash_scope="_favorite_global",
+            state_key=_favorite_toggle_state_key(source_key, notice_id),
+            inflight_key=_favorite_toggle_inflight_key(source_key, notice_id),
+            pending_key=_favorite_toggle_pending_key(source_key, notice_id),
+            status_key=_favorite_toggle_status_key(source_key, notice_id),
+        )
+
+    params = get_query_params_dict()
+    for key in [
+        "favorite_toggle",
+        "favorite_notice_id",
+        "favorite_source_key",
+        "favorite_current_value",
+        "favorite_notice_title",
+    ]:
+        params.pop(key, None)
+    _replace_params(_auth_params(params))
 
 def render_favorite_scrap_button(
     *,
@@ -8827,10 +9035,20 @@ def render_favorite_scrap_button(
 ) -> None:
     if not clean(notice_id):
         return
-    is_favorite, button_label, _ = favorite_button_props(current_value)
+    normalized_source = clean(source_key) or "iris"
+    state_key = _favorite_toggle_state_key(normalized_source, notice_id)
+    inflight_key = _favorite_toggle_inflight_key(normalized_source, notice_id)
+    pending_key = _favorite_toggle_pending_key(normalized_source, notice_id)
+    status_key = _favorite_toggle_status_key(normalized_source, notice_id)
+    flash_scope = f"favorite::{button_key}"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = clean(current_value)
+
+    live_value = clean(st.session_state.get(state_key, current_value))
+    is_inflight = bool(st.session_state.get(inflight_key))
+    is_favorite, button_label, _ = favorite_button_props(live_value)
     if icon_only:
         button_label = "★" if is_favorite else "☆"
-    next_value = UNFAVORITE_REVIEW_STATUS if is_favorite else FAVORITE_REVIEW_STATUS
     safe_key = _css_safe_key(button_key)
     if compact:
         active_bg = "#fff7ed" if is_favorite else "#ffffff"
@@ -8875,14 +9093,46 @@ def render_favorite_scrap_button(
         )
     if use_container_width is None:
         use_container_width = not compact
-    if st.button(button_label, key=button_key, use_container_width=use_container_width, type="secondary"):
-        _persist_review_status(
-            notice_id=notice_id,
-            source_key=clean(source_key) or "iris",
-            review_status=next_value,
-            notice_title=clean(notice_title),
+    @st.fragment(run_every=0.2 if st.session_state.get(inflight_key) else None)
+    def _render_favorite_button_fragment() -> None:
+        _reconcile_favorite_scrap_toggle(
+            flash_scope=flash_scope,
+            state_key=state_key,
+            inflight_key=inflight_key,
+            pending_key=pending_key,
+            status_key=status_key,
         )
-        st.rerun()
+        refreshed_value = clean(st.session_state.get(state_key, current_value))
+        refreshed_inflight = bool(st.session_state.get(inflight_key))
+        is_active, refreshed_label, _ = favorite_button_props(refreshed_value)
+        if icon_only:
+            refreshed_label = "★" if is_active else "☆"
+        clicked = st.button(
+            refreshed_label,
+            key=button_key,
+            use_container_width=use_container_width,
+            type="secondary",
+            disabled=refreshed_inflight,
+        )
+        status_message = clean(st.session_state.get(status_key))
+        if status_message:
+            st.caption(status_message)
+        _render_ui_flash(flash_scope, presentation="toast")
+        if clicked and not refreshed_inflight:
+            _schedule_favorite_scrap_toggle(
+                notice_id=notice_id,
+                source_key=normalized_source,
+                notice_title=clean(notice_title),
+                current_value=refreshed_value,
+                flash_scope=flash_scope,
+                state_key=state_key,
+                inflight_key=inflight_key,
+                pending_key=pending_key,
+                status_key=status_key,
+            )
+            st.rerun(scope="fragment")
+
+    _render_favorite_button_fragment()
 
 def favorite_button_props(current_value: str) -> tuple[bool, str, str]:
     is_favorite, label = _favorite_button_label(current_value)
@@ -9608,6 +9858,11 @@ def _inject_notice_queue_dashboard_styles() -> None:
           background: #eff6ff;
           color: #1d4ed8 !important;
         }
+        .notice-table-favorite.is-disabled {
+          pointer-events: none;
+          opacity: 0.64;
+          cursor: wait;
+        }
         .notice-queue-card-row {
           display: grid;
           grid-template-columns: minmax(0, 1fr) 44px;
@@ -9909,6 +10164,8 @@ def render_crawled_notice_rows(
         rfp_count = clean(first_non_empty(row, "rfp_count", "RFP Count", "_queue_rfp_count"))
         if not rfp_count:
             rfp_count = "1" if analysis_text else "0"
+        review_value = _resolve_live_favorite_value(source_key or "iris", notice_id, review_value)
+        favorite_inflight = _is_favorite_toggle_inflight(source_key or "iris", notice_id)
         favorite_href = build_favorite_toggle_href(
             page_key=page_key,
             notice_id=notice_id,
@@ -9916,8 +10173,10 @@ def render_crawled_notice_rows(
             source_key=source_key or "iris",
             notice_title=title,
         )
-        favorite_label = "해제" if review_value == FAVORITE_REVIEW_STATUS else "등록"
+        favorite_label = "저장 중" if favorite_inflight else ("해제" if review_value == FAVORITE_REVIEW_STATUS else "등록")
         favorite_class = " is-active" if review_value == FAVORITE_REVIEW_STATUS else ""
+        if favorite_inflight:
+            favorite_class += " is-disabled"
         selected_class = " is-selected" if is_selected else ""
         row_html.append(
             "".join(
@@ -9932,7 +10191,11 @@ def render_crawled_notice_rows(
                     f'<div class="notice-table-cell">{escape(_truncate_queue_text(period_text, max_chars=32))}</div>',
                     f'<div class="notice-table-cell"><span class="notice-table-dday {dday_class}">{escape(dday_text)}</span></div>',
                     f'<div class="notice-table-cell is-center"><strong>{escape(rfp_count)}</strong></div>',
-                    f'<div class="notice-table-cell is-center"><a class="notice-table-favorite{favorite_class}" href="{escape(favorite_href, quote=True)}" target="_self">{escape(favorite_label)}</a></div>',
+                    (
+                        f'<div class="notice-table-cell is-center"><span class="notice-table-favorite{favorite_class}">{escape(favorite_label)}</span></div>'
+                        if favorite_inflight
+                        else f'<div class="notice-table-cell is-center"><a class="notice-table-favorite{favorite_class}" href="{escape(favorite_href, quote=True)}" target="_self">{escape(favorite_label)}</a></div>'
+                    ),
                     '</div>',
                 ]
             )
@@ -15891,6 +16154,7 @@ def main(app_mode: str = "viewer"):
     inject_viewer_layout_styles()
     require_login(mode_config)
     consume_favorite_toggle_query_action()
+    render_favorite_toggle_monitor()
 
     sheet_names = {
         "notice_master": resolve_canonical_notice_master_sheet(get_env),
