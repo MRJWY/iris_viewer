@@ -9,6 +9,7 @@ import base64
 import uuid
 from html import escape
 from pathlib import Path
+from typing import Mapping
 from urllib.parse import urlencode
 
 import gspread
@@ -3821,10 +3822,27 @@ def initialize_route_state(default_route: dict[str, object]) -> dict[str, object
         replace_query_params(with_auth_params(route_core.serialize_route(route)))
         return route
 
-    route = route_core.init_route(
+    query_route = route_core.deserialize_route(
+        query_params,
         default_route=default_route,
-        query_params=query_params,
     )
+    current_route = route_core.get_current_route(default_route)
+    route = current_route
+
+    if route_core.serialize_route(current_route) != route_core.serialize_route(query_route):
+        merged_route = dict(query_route)
+        if (
+            clean(current_route.get("source")) == clean(query_route.get("source"))
+            and clean(current_route.get("page")) == clean(query_route.get("page"))
+        ):
+            merged_route["filters"] = dict(current_route.get("filters") or {})
+            current_source_key = clean(current_route.get("source_key"))
+            if current_source_key:
+                merged_route["source_key"] = current_source_key
+        route = route_core.set_current_route(merged_route)
+    elif not isinstance(st.session_state.get(route_core.ROUTE_STATE_KEY), Mapping):
+        route = route_core.set_current_route(query_route)
+
     replace_query_params(with_auth_params(route_core.serialize_route(route)))
     return route
 
