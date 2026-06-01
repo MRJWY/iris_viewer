@@ -59,8 +59,24 @@ class AppModeConfig:
 
 def build_workspace_nav_items(sources: tuple[SourceRouteConfig, ...]) -> tuple[NavItemConfig, ...]:
     items: list[NavItemConfig] = []
+    source_map = {source.key: source for source in sources}
+    primary_workspace_order = ("dashboard", "iris", "notices", "favorites")
+    for source_key in primary_workspace_order:
+        source = source_map.get(source_key)
+        if source is None:
+            continue
+        items.append(
+            NavItemConfig(
+                f"{source.key}_home",
+                source.label,
+                source.key,
+                source.default_page,
+            )
+        )
     for source in sources:
-        if source.key in {"dashboard", "notices", "iris", "favorites"} or source.page_configs:
+        if source.key in primary_workspace_order:
+            continue
+        if source.page_configs:
             items.append(
                 NavItemConfig(
                     f"{source.key}_home",
@@ -189,8 +205,8 @@ def build_app_mode_config(app_mode: str, *, nipa_view_columns: tuple[str, ...] =
 
     sources = (
         SourceRouteConfig("dashboard", "Dashboard", "dashboard", True, "dashboard"),
-        SourceRouteConfig("notices", "Notice Queue", "notice_queue", True, "notices"),
         SourceRouteConfig("iris", "RFP Queue", "rfp_queue", True, "iris"),
+        SourceRouteConfig("notices", "Notice Queue", "notice_queue", True, "notices"),
         SourceRouteConfig("tipa", "MSS", "tipa_opportunity", True, "tipa", page_configs=tipa_pages),
         SourceRouteConfig("nipa", "NIPA", "nipa_opportunity", True, "nipa", page_configs=nipa_pages),
         SourceRouteConfig("bipa", "BIPA", "bipa_opportunity", True, "bipa", page_configs=bipa_pages),

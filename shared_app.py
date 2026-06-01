@@ -10272,6 +10272,29 @@ def _render_notice_queue_screen(
     st.session_state.setdefault(source_widget_key, filters.get("source", []))
     st.session_state.setdefault(page_size_widget_key, int(filters.get("page_size") or 20))
     st.session_state.setdefault(page_index_state_key, int(current_route.get("page_no") or 1))
+    source_option_df = source_df[["source_key", "source_label"]].copy() if {"source_key", "source_label"}.issubset(source_df.columns) else pd.DataFrame(columns=["source_key", "source_label"])
+    if not source_option_df.empty:
+        source_option_df["source_key"] = source_option_df["source_key"].fillna("").astype(str).str.strip()
+        source_option_df["source_label"] = source_option_df["source_label"].fillna("").astype(str).str.strip()
+        source_option_df = source_option_df[
+            source_option_df["source_key"].ne("") & source_option_df["source_label"].ne("")
+        ].drop_duplicates(subset=["source_key"], keep="first")
+        source_option_df = source_option_df.sort_values(by=["source_label", "source_key"], ascending=[True, True], na_position="last")
+    if source_option_df.empty:
+        source_option_df = pd.DataFrame(
+            [(source_key, label) for label, source_key in TOP_TAB_OPTIONS if source_key not in {"favorite", "archive"}],
+            columns=["source_key", "source_label"],
+        )
+    source_key_to_label = {
+        clean(row.get("source_key")): clean(row.get("source_label"))
+        for _, row in source_option_df.iterrows()
+        if clean(row.get("source_key")) and clean(row.get("source_label"))
+    }
+    source_label_to_key = {
+        clean(row.get("source_label")): clean(row.get("source_key"))
+        for _, row in source_option_df.iterrows()
+        if clean(row.get("source_key")) and clean(row.get("source_label"))
+    }
 
     display_col, summary_col = st.columns([5.4, 2.15], gap="large")
     with display_col:
@@ -10291,10 +10314,9 @@ def _render_notice_queue_screen(
                 placeholder="전체",
             )
         with filter_cols[2]:
-            source_options = [label for label, source_key in TOP_TAB_OPTIONS if source_key not in {"favorite", "archive"}]
             st.multiselect(
-                "출처",
-                options=source_options,
+                "크롤러",
+                options=list(source_label_to_key.keys()),
                 key=source_widget_key,
                 placeholder="전체",
             )
@@ -10340,11 +10362,29 @@ def _render_notice_queue_screen(
         )
         selected_sources = filters["source"]
         if selected_sources:
-            allowed_source_keys = {label: source_key for label, source_key in TOP_TAB_OPTIONS}
-            allowed_values = {allowed_source_keys.get(clean(value), clean(value).lower()) for value in selected_sources}
+            allowed_values = {source_label_to_key.get(clean(value), clean(value).lower()) for value in selected_sources}
             filtered_view_rows = filtered_view_rows[
                 filtered_view_rows["source_key"].fillna("").astype(str).str.strip().isin(allowed_values)
             ].copy()
+        source_count_summary = ""
+        if not filtered_view_rows.empty:
+            source_count_rows = (
+                filtered_view_rows.assign(
+                    _source_label=filtered_view_rows["source_key"].fillna("").astype(str).str.strip().map(source_key_to_label)
+                )
+                .assign(
+                    _source_label=lambda df: df["_source_label"].fillna(df["source_key"].fillna("").astype(str).str.strip().str.upper())
+                )
+                .groupby("_source_label", dropna=False)
+                .size()
+                .reset_index(name="count")
+                .sort_values(by=["count", "_source_label"], ascending=[False, True], na_position="last")
+            )
+            source_count_summary = " / ".join(
+                f"{clean(row.get('_source_label'))} {int(row.get('count') or 0):,}건"
+                for _, row in source_count_rows.iterrows()
+                if clean(row.get("_source_label"))
+            )
 
         page_size = int(filters["page_size"] or 20)
         total_rows = len(filtered_view_rows)
@@ -10356,6 +10396,11 @@ def _render_notice_queue_screen(
 
         start_idx = (current_page - 1) * page_size
         page_rows = filtered_view_rows.iloc[start_idx:start_idx + page_size].copy()
+        st.markdown(
+            f'<div class="notice-queue-toolbar-meta">검색 결과 {total_rows:,}건'
+            f"{' | ' + escape(source_count_summary) if source_count_summary else ''}</div>",
+            unsafe_allow_html=True,
+        )
 
         def _select_notice_preview(row: pd.Series) -> None:
             notice_id = _resolve_notice_id(row)
