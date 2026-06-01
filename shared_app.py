@@ -11597,6 +11597,326 @@ def _delete_notice_comment_with_flash(*, comment_id: str, current_user_id: str, 
         _push_ui_flash(flash_scope, "error", f"댓글 삭제 실패: {exc}")
 
 
+def _notice_comment_scope_key(source_key: str, notice_id: str) -> str:
+    return f"{clean(source_key) or 'iris'}::{clean(notice_id)}"
+
+
+def _notice_comment_submit_inflight_key(scope_key: str) -> str:
+    return f"_comment_submit_inflight::{clean(scope_key)}"
+
+
+def _notice_comment_submit_status_key(scope_key: str) -> str:
+    return f"_comment_submit_status::{clean(scope_key)}"
+
+
+def _notice_comment_pending_save_key(scope_key: str) -> str:
+    return f"_comment_pending_save::{clean(scope_key)}"
+
+
+def _notice_comment_delete_inflight_key(scope_key: str, comment_id: str) -> str:
+    return f"_comment_delete_inflight::{clean(scope_key)}::{clean(comment_id)}"
+
+
+def _notice_comment_pending_delete_key(scope_key: str, comment_id: str) -> str:
+    return f"_comment_pending_delete::{clean(scope_key)}::{clean(comment_id)}"
+
+
+def _build_optimistic_notice_comment_row(
+    *,
+    source_key: str,
+    notice_id: str,
+    notice_title: str,
+    author: str,
+    comment: str,
+    comment_id: str,
+) -> dict:
+    content = clean(comment)[:5000]
+    current_user_id = clean(get_current_user_id()) or clean(author) or clean(get_env("DEFAULT_COMMENT_AUTHOR"))
+    nickname = clean(author) or clean(get_current_user_label()) or current_user_id or "익명"
+    timestamp = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S")
+    return {
+        "comment_id": clean(comment_id),
+        "post_id": build_comment_post_id(source_key, notice_id),
+        "source": normalize_opportunity_source_key(source_key) or clean(source_key).lower() or "iris",
+        "notice_id": clean(notice_id),
+        "notice_title": clean(notice_title),
+        "user_id": current_user_id or nickname,
+        "parent_id": "",
+        "nickname": nickname,
+        "content": content,
+        "mention": "",
+        "ip_address": "",
+        "ip_based_uid": get_current_comment_scope_key(),
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "deleted_at": "",
+        "author": nickname,
+        "comment": content,
+        "_optimistic": True,
+    }
+
+
+def _commit_notice_comment_save(
+    *,
+    source_key: str,
+    notice_id: str,
+    notice_title: str,
+    author: str,
+    comment: str,
+) -> None:
+    append_notice_comment(
+        source_key=source_key,
+        notice_id=notice_id,
+        notice_title=notice_title,
+        author=author,
+        comment=comment,
+    )
+
+
+def _schedule_notice_comment_save(
+    *,
+    scope_key: str,
+    source_key: str,
+    notice_id: str,
+    notice_title: str,
+    author: str,
+    comment: str,
+    text_key: str,
+    flash_scope: str,
+) -> None:
+    submit_inflight_key = _notice_comment_submit_inflight_key(scope_key)
+    pending_key = _notice_comment_pending_save_key(scope_key)
+    status_key = _notice_comment_submit_status_key(scope_key)
+    if st.session_state.get(submit_inflight_key):
+        return
+
+    draft_value = clean(comment)
+    if not draft_value:
+        raise RuntimeError("댓글 내용을 입력해 주세요.")
+
+    optimistic_comment_id = f"pending::{uuid.uuid4()}"
+    st.session_state[submit_inflight_key] = True
+    st.session_state[status_key] = "댓글 저장 중..."
+    st.session_state[text_key] = ""
+    future = get_ui_background_executor().submit(
+        _commit_notice_comment_save,
+        source_key=source_key,
+        notice_id=notice_id,
+        notice_title=notice_title,
+        author=author,
+        comment=draft_value,
+    )
+    st.session_state[pending_key] = {
+        "future": future,
+        "flash_scope": clean(flash_scope),
+        "text_key": text_key,
+        "draft_value": draft_value,
+        "submit_inflight_key": submit_inflight_key,
+        "status_key": status_key,
+        "optimistic_row": _build_optimistic_notice_comment_row(
+            source_key=source_key,
+            notice_id=notice_id,
+            notice_title=notice_title,
+            author=author,
+            comment=draft_value,
+            comment_id=optimistic_comment_id,
+        ),
+    }
+
+
+def _reconcile_notice_comment_save(*, scope_key: str, default_flash_scope: str = "_comment_global") -> None:
+    pending_key = _notice_comment_pending_save_key(scope_key)
+    pending = st.session_state.get(pending_key)
+    if not isinstance(pending, dict):
+        return
+
+    future = pending.get("future")
+    if not isinstance(future, Future) or not future.done():
+        return
+
+    submit_inflight_key = clean(pending.get("submit_inflight_key")) or _notice_comment_submit_inflight_key(scope_key)
+    status_key = clean(pending.get("status_key")) or _notice_comment_submit_status_key(scope_key)
+    text_key = clean(pending.get("text_key"))
+    draft_value = clean(pending.get("draft_value"))
+    flash_scope = clean(pending.get("flash_scope")) or default_flash_scope
+    try:
+        future.result()
+        _push_ui_flash(flash_scope, "success", "댓글을 저장했습니다.")
+    except Exception as exc:
+        if text_key:
+            st.session_state[text_key] = draft_value
+        _push_ui_flash(flash_scope, "error", f"댓글 저장 실패: {exc}")
+    finally:
+        st.session_state.pop(pending_key, None)
+        st.session_state.pop(status_key, None)
+        st.session_state[submit_inflight_key] = False
+
+
+def _schedule_notice_comment_delete(
+    *,
+    scope_key: str,
+    comment_id: str,
+    current_user_id: str,
+    flash_scope: str,
+) -> None:
+    delete_inflight_key = _notice_comment_delete_inflight_key(scope_key, comment_id)
+    pending_key = _notice_comment_pending_delete_key(scope_key, comment_id)
+    if st.session_state.get(delete_inflight_key):
+        return
+
+    st.session_state[delete_inflight_key] = True
+    future = get_ui_background_executor().submit(delete_notice_comment, comment_id, current_user_id)
+    st.session_state[pending_key] = {
+        "future": future,
+        "flash_scope": clean(flash_scope),
+        "delete_inflight_key": delete_inflight_key,
+        "comment_id": clean(comment_id),
+    }
+
+
+def _reconcile_notice_comment_delete(
+    *,
+    scope_key: str,
+    comment_id: str,
+    default_flash_scope: str = "_comment_global",
+) -> None:
+    pending_key = _notice_comment_pending_delete_key(scope_key, comment_id)
+    pending = st.session_state.get(pending_key)
+    if not isinstance(pending, dict):
+        return
+
+    future = pending.get("future")
+    if not isinstance(future, Future) or not future.done():
+        return
+
+    delete_inflight_key = clean(pending.get("delete_inflight_key")) or _notice_comment_delete_inflight_key(scope_key, comment_id)
+    flash_scope = clean(pending.get("flash_scope")) or default_flash_scope
+    try:
+        future.result()
+        _push_ui_flash(flash_scope, "success", "댓글을 삭제했습니다.")
+    except Exception as exc:
+        _push_ui_flash(flash_scope, "error", f"댓글 삭제 실패: {exc}")
+    finally:
+        st.session_state.pop(pending_key, None)
+        st.session_state[delete_inflight_key] = False
+
+
+def _iter_pending_notice_comment_save_keys() -> list[str]:
+    return sorted(
+        key for key in st.session_state.keys()
+        if key.startswith("_comment_pending_save::")
+    )
+
+
+def _iter_pending_notice_comment_delete_keys() -> list[str]:
+    return sorted(
+        key for key in st.session_state.keys()
+        if key.startswith("_comment_pending_delete::")
+    )
+
+
+def _has_pending_notice_comment_deletes(scope_key: str) -> bool:
+    prefix = f"_comment_pending_delete::{clean(scope_key)}::"
+    return any(
+        isinstance(st.session_state.get(key), dict)
+        for key in st.session_state.keys()
+        if key.startswith(prefix)
+    )
+
+
+def _resolve_notice_comment_status(scope_key: str) -> str:
+    status = clean(st.session_state.get(_notice_comment_submit_status_key(scope_key)))
+    if status:
+        return status
+    if _has_pending_notice_comment_deletes(scope_key):
+        return "댓글 삭제 중..."
+    return ""
+
+
+def _pending_notice_comment_delete_ids(scope_key: str) -> set[str]:
+    prefix = f"_comment_pending_delete::{clean(scope_key)}::"
+    hidden_ids: set[str] = set()
+    for key in st.session_state.keys():
+        if not key.startswith(prefix):
+            continue
+        pending = st.session_state.get(key)
+        if not isinstance(pending, dict):
+            continue
+        hidden_ids.add(clean(pending.get("comment_id")) or key.rsplit("::", 1)[-1])
+    return hidden_ids
+
+
+def _apply_notice_comment_optimistic_state(scope_key: str, matched: pd.DataFrame) -> list[dict]:
+    comment_rows = matched.to_dict("records") if isinstance(matched, pd.DataFrame) and not matched.empty else []
+    hidden_ids = _pending_notice_comment_delete_ids(scope_key)
+    if hidden_ids:
+        comment_rows = [
+            row for row in comment_rows
+            if clean(row.get("comment_id")) not in hidden_ids
+        ]
+
+    pending_save = st.session_state.get(_notice_comment_pending_save_key(scope_key))
+    optimistic_rows: list[dict] = []
+    if isinstance(pending_save, dict):
+        optimistic_row = pending_save.get("optimistic_row")
+        if isinstance(optimistic_row, dict):
+            optimistic_rows.append(optimistic_row.copy())
+    return optimistic_rows + comment_rows
+
+
+def _is_notice_comment_optimistic(comment_row: dict) -> bool:
+    return bool(comment_row.get("_optimistic")) or clean(comment_row.get("comment_id")).startswith("pending::")
+
+
+def _is_notice_comment_delete_inflight(scope_key: str, comment_id: str) -> bool:
+    return bool(st.session_state.get(_notice_comment_delete_inflight_key(scope_key, comment_id)))
+
+
+def _has_pending_notice_comment_actions() -> bool:
+    return any(isinstance(st.session_state.get(key), dict) for key in _iter_pending_notice_comment_save_keys()) or any(
+        isinstance(st.session_state.get(key), dict) for key in _iter_pending_notice_comment_delete_keys()
+    )
+
+
+def _reconcile_all_pending_notice_comment_actions(*, default_flash_scope: str = "_comment_global") -> bool:
+    reconciled_any = False
+    for pending_key in _iter_pending_notice_comment_save_keys():
+        scope_key = pending_key.removeprefix("_comment_pending_save::")
+        if pending_key not in st.session_state:
+            continue
+        before_pending = pending_key in st.session_state
+        _reconcile_notice_comment_save(scope_key=scope_key, default_flash_scope=default_flash_scope)
+        if before_pending and pending_key not in st.session_state:
+            reconciled_any = True
+
+    delete_prefix = "_comment_pending_delete::"
+    for pending_key in _iter_pending_notice_comment_delete_keys():
+        if pending_key not in st.session_state:
+            continue
+        remainder = pending_key.removeprefix(delete_prefix)
+        scope_key, _, comment_id = remainder.rpartition("::")
+        if not scope_key or not comment_id:
+            continue
+        before_pending = pending_key in st.session_state
+        _reconcile_notice_comment_delete(
+            scope_key=scope_key,
+            comment_id=comment_id,
+            default_flash_scope=default_flash_scope,
+        )
+        if before_pending and pending_key not in st.session_state:
+            reconciled_any = True
+    return reconciled_any
+
+
+def render_notice_comment_action_monitor() -> None:
+    @st.fragment(run_every=0.2 if _has_pending_notice_comment_actions() else None)
+    def _render_notice_comment_action_monitor_fragment() -> None:
+        reconciled_any = _reconcile_all_pending_notice_comment_actions()
+        _render_ui_flash("_comment_global", presentation="toast")
+        if reconciled_any:
+            st.rerun(scope="app")
+
+    _render_notice_comment_action_monitor_fragment()
 
 
 def render_notice_comments(
@@ -11615,7 +11935,6 @@ def render_notice_comments(
     current_user_id = clean(get_current_user_id())
     author_id = current_user_id or clean(get_env("DEFAULT_COMMENT_AUTHOR")) or "익명"
     flash_scope = f"comments::{section_key}"
-    save_feedback = ""
 
     if not notice_id:
         if modern_layout:
@@ -11638,6 +11957,10 @@ def render_notice_comments(
             st.caption("공고ID가 없어 댓글을 연결할 수 없습니다.")
         return
 
+    comment_scope_key = _notice_comment_scope_key(source_key, notice_id)
+    submit_inflight_key = _notice_comment_submit_inflight_key(comment_scope_key)
+    comment_text_key = f"{section_key}_comment_text"
+
     def _load_matched_comments() -> pd.DataFrame:
         try:
             comments_df = load_notice_comments()
@@ -11649,8 +11972,7 @@ def render_notice_comments(
     if modern_layout:
         @st.fragment
         def _render_comments_fragment() -> None:
-            matched = _load_matched_comments()
-            save_feedback = ""
+            comment_rows = _apply_notice_comment_optimistic_state(comment_scope_key, _load_matched_comments())
             with st.container(key=f"detail_comments_panel_{section_key}"):
                 st.markdown(
                     (
@@ -11659,7 +11981,7 @@ def render_notice_comments(
                         '<div class="detail-fact-title">댓글</div>'
                         '<div class="detail-comments-subtitle">작성자는 로그인 ID로 자동 기록됩니다.</div>'
                         "</div>"
-                        f'<div class="detail-comments-count">댓글 {len(matched)}건</div>'
+                        f'<div class="detail-comments-count">댓글 {len(comment_rows)}건</div>'
                         "</div>"
                     ),
                     unsafe_allow_html=True,
@@ -11667,49 +11989,57 @@ def render_notice_comments(
                 _render_ui_flash(flash_scope, presentation="inline")
 
                 with st.container(key=f"detail_comments_body_{section_key}"):
-                    with st.form(f"{section_key}_comment_form", clear_on_submit=True, border=False):
+                    with st.form(f"{section_key}_comment_form", clear_on_submit=False, border=False):
                         st.markdown(
                             f'<div class="detail-comments-author">작성자 {escape(author_id)}</div>',
                             unsafe_allow_html=True,
                         )
                         comment_text = st.text_area(
                             "의견",
-                            key=f"{section_key}_comment_text",
+                            key=comment_text_key,
                             height=150,
                             placeholder="이 공고에 대한 메모나 검토 의견을 남겨주세요.",
                             label_visibility="collapsed",
                         )
-                        submitted = st.form_submit_button("댓글 저장", use_container_width=True)
+                        submitted = st.form_submit_button(
+                            "댓글 저장",
+                            use_container_width=True,
+                            disabled=bool(st.session_state.get(submit_inflight_key)),
+                        )
 
-                    if submitted:
+                    status_message = _resolve_notice_comment_status(comment_scope_key)
+                    if status_message:
+                        st.caption(status_message)
+
+                    if submitted and not st.session_state.get(submit_inflight_key):
                         try:
-                            append_notice_comment(
+                            _schedule_notice_comment_save(
+                                scope_key=comment_scope_key,
                                 source_key=source_key,
                                 notice_id=notice_id,
                                 notice_title=notice_title,
                                 author=author_id,
                                 comment=comment_text,
+                                text_key=comment_text_key,
+                                flash_scope=flash_scope,
                             )
-                            save_feedback = "댓글을 저장했습니다."
-                            _push_ui_flash(flash_scope, "success", "댓글을 저장했습니다.")
-                            matched = _load_matched_comments()
+                            st.rerun(scope="fragment")
                         except Exception as exc:
                             st.error(f"댓글 저장 실패: {exc}")
 
                     with st.container(key=f"detail_comments_history_{section_key}"):
-                        if save_feedback:
-                            st.success(save_feedback)
                         st.markdown('<div class="detail-comments-history-title">댓글 이력</div>', unsafe_allow_html=True)
-                        if matched.empty:
+                        if not comment_rows:
                             st.markdown('<div class="detail-comments-empty">아직 등록된 댓글이 없습니다.</div>', unsafe_allow_html=True)
                         else:
-                            comment_rows = matched.to_dict("records")
                             for idx, comment_row in enumerate(comment_rows):
                                 comment_id = clean(comment_row.get("comment_id"))
                                 created_at = clean(comment_row.get("created_at"))
                                 nickname = clean(comment_row.get("nickname")) or clean(comment_row.get("author")) or "익명"
                                 content = clean(comment_row.get("content")) or clean(comment_row.get("comment"))
-                                allow_delete = bool(comment_id and can_delete_comment(comment_row, current_user_id))
+                                is_optimistic = _is_notice_comment_optimistic(comment_row)
+                                allow_delete = bool(comment_id and not is_optimistic and can_delete_comment(comment_row, current_user_id))
+                                is_delete_inflight = _is_notice_comment_delete_inflight(comment_scope_key, comment_id)
                                 meta_parts = []
                                 if created_at:
                                     meta_parts.append(
@@ -11719,6 +12049,8 @@ def render_notice_comments(
                                     meta_parts.append(
                                         f'<span class="detail-comments-entry-author">{escape(nickname)}</span>'
                                     )
+                                if is_optimistic:
+                                    meta_parts.append('<span class="detail-comments-entry-author">전송 중</span>')
 
                                 with st.container(key=f"detail_comment_entry_{section_key}_{comment_id or idx}"):
                                     meta_col, action_col = st.columns([4.2, 0.8], gap="small")
@@ -11729,17 +12061,20 @@ def render_notice_comments(
                                         )
                                     with action_col:
                                         if allow_delete:
-                                            st.button(
+                                            delete_clicked = st.button(
                                                 "삭제",
                                                 key=f"{section_key}_delete_comment_{comment_id}",
                                                 use_container_width=False,
-                                                on_click=_delete_notice_comment_with_flash,
-                                                kwargs={
-                                                    "comment_id": comment_id,
-                                                    "current_user_id": current_user_id,
-                                                    "flash_scope": flash_scope,
-                                                },
+                                                disabled=is_delete_inflight,
                                             )
+                                            if delete_clicked and not is_delete_inflight:
+                                                _schedule_notice_comment_delete(
+                                                    scope_key=comment_scope_key,
+                                                    comment_id=comment_id,
+                                                    current_user_id=current_user_id,
+                                                    flash_scope=flash_scope,
+                                                )
+                                                st.rerun(scope="fragment")
                                     st.markdown(
                                         f'<div class="detail-comments-entry-text">{escape(content).replace(chr(10), "<br>")}</div>',
                                         unsafe_allow_html=True,
@@ -11748,52 +12083,64 @@ def render_notice_comments(
         _render_comments_fragment()
         return
 
-    with st.form(f"{section_key}_comment_form", clear_on_submit=True):
-        comment = st.text_area("의견", key=f"{section_key}_comment_text", height=110)
-        submitted = st.form_submit_button("댓글 저장")
-        if submitted:
+    with st.form(f"{section_key}_comment_form", clear_on_submit=False):
+        comment = st.text_area("의견", key=comment_text_key, height=110)
+        submitted = st.form_submit_button("댓글 저장", disabled=bool(st.session_state.get(submit_inflight_key)))
+        if submitted and not st.session_state.get(submit_inflight_key):
             try:
-                append_notice_comment(
+                _schedule_notice_comment_save(
+                    scope_key=comment_scope_key,
                     source_key=source_key,
                     notice_id=notice_id,
                     notice_title=notice_title,
                     author=author_id,
                     comment=comment,
+                    text_key=comment_text_key,
+                    flash_scope=flash_scope,
                 )
-                save_feedback = "댓글을 저장했습니다."
+                st.rerun()
             except Exception as exc:
                 st.error(f"댓글 저장 실패: {exc}")
 
-    matched = _load_matched_comments()
-    if save_feedback:
-        st.success(save_feedback)
+    status_message = _resolve_notice_comment_status(comment_scope_key)
+    if status_message:
+        st.caption(status_message)
+    comment_rows = _apply_notice_comment_optimistic_state(comment_scope_key, _load_matched_comments())
     if show_title:
         st.markdown('<div class="detail-section-title">댓글</div>', unsafe_allow_html=True)
-    if matched.empty:
+    if not comment_rows:
         st.info("아직 등록된 댓글이 없습니다.")
         return
 
-    st.caption(f"댓글 이력 {len(matched)}건")
-    for comment_row in matched.to_dict("records"):
+    st.caption(f"댓글 이력 {len(comment_rows)}건")
+    for comment_row in comment_rows:
         comment_id = clean(comment_row.get("comment_id"))
         created_at = clean(comment_row.get("created_at"))
         author = clean(comment_row.get("nickname")) or clean(comment_row.get("author")) or "익명"
         comment_text = clean(comment_row.get("content")) or clean(comment_row.get("comment"))
-        allow_delete = bool(comment_id and can_delete_comment(comment_row, current_user_id))
+        is_optimistic = _is_notice_comment_optimistic(comment_row)
+        allow_delete = bool(comment_id and not is_optimistic and can_delete_comment(comment_row, current_user_id))
+        is_delete_inflight = _is_notice_comment_delete_inflight(comment_scope_key, comment_id)
         with st.container(border=True):
-            st.caption(" · ".join([value for value in [created_at, author] if value]))
+            caption_parts = [value for value in [created_at, author] if value]
+            if is_optimistic:
+                caption_parts.append("전송 중")
+            st.caption(" · ".join(caption_parts))
             st.write(comment_text)
             if allow_delete:
-                st.button(
+                delete_clicked = st.button(
                     "댓글 삭제",
                     key=f"{section_key}_delete_comment_{comment_id}",
-                    on_click=_delete_notice_comment_with_flash,
-                    kwargs={
-                        "comment_id": comment_id,
-                        "current_user_id": current_user_id,
-                        "flash_scope": flash_scope,
-                    },
+                    disabled=is_delete_inflight,
                 )
+                if delete_clicked and not is_delete_inflight:
+                    _schedule_notice_comment_delete(
+                        scope_key=comment_scope_key,
+                        comment_id=comment_id,
+                        current_user_id=current_user_id,
+                        flash_scope=flash_scope,
+                    )
+                    st.rerun()
     _render_ui_flash(flash_scope, presentation="toast")
 
 
@@ -17319,6 +17666,7 @@ def main(app_mode: str = "viewer"):
     consume_workspace_logout_query_action()
     consume_favorite_toggle_query_action()
     render_favorite_toggle_monitor()
+    render_notice_comment_action_monitor()
 
     sheet_names = {
         "notice_master": resolve_canonical_notice_master_sheet(get_env),
