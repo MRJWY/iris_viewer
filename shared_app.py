@@ -9231,6 +9231,7 @@ def _current_notice_queue_filter_params() -> dict[str, str]:
     search_text = clean(st.session_state.get("notice_queue_workspace_search"))
     selected_status = st.session_state.get("notice_queue_workspace_status_inline") or []
     selected_recommendations = st.session_state.get("notice_queue_workspace_recommendation") or []
+    selected_sources = st.session_state.get("notice_queue_workspace_source_inline") or []
     sort_option = clean(st.session_state.get("notice_queue_workspace_sort"))
 
     if search_text:
@@ -9239,6 +9240,8 @@ def _current_notice_queue_filter_params() -> dict[str, str]:
         params["nq_status"] = _encode_notice_queue_query_list(list(selected_status))
     if selected_recommendations:
         params["nq_reco"] = _encode_notice_queue_query_list(list(selected_recommendations))
+    if selected_sources:
+        params["nq_source"] = _encode_notice_queue_query_list(list(selected_sources))
     if sort_option:
         params["nq_sort"] = sort_option
     return params
@@ -9249,8 +9252,9 @@ def _notice_queue_filter_signature(
     search_text: object | None = None,
     selected_status: list[str] | tuple[str, ...] | None = None,
     selected_recommendations: list[str] | tuple[str, ...] | None = None,
+    selected_sources: list[str] | tuple[str, ...] | None = None,
     sort_option: object | None = None,
-) -> tuple[str, tuple[str, ...], tuple[str, ...], str]:
+) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], str]:
     return (
         clean(st.session_state.get("notice_queue_workspace_search") if search_text is None else search_text),
         tuple(
@@ -9275,15 +9279,27 @@ def _notice_queue_filter_signature(
                 if clean(value)
             )
         ),
+        tuple(
+            sorted(
+                clean(value)
+                for value in (
+                    st.session_state.get("notice_queue_workspace_source_inline")
+                    if selected_sources is None
+                    else selected_sources
+                ) or []
+                if clean(value)
+            )
+        ),
         clean(st.session_state.get("notice_queue_workspace_sort") if sort_option is None else sort_option),
     )
 
 
-def _notice_queue_query_signature() -> tuple[str, tuple[str, ...], tuple[str, ...], str]:
+def _notice_queue_query_signature() -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], str]:
     return (
         clean(get_query_param("nq_search")),
         tuple(sorted(clean(value) for value in _decode_notice_queue_query_list(get_query_param("nq_status")) if clean(value))),
         tuple(sorted(clean(value) for value in _decode_notice_queue_query_list(get_query_param("nq_reco")) if clean(value))),
+        tuple(sorted(clean(value) for value in _decode_notice_queue_query_list(get_query_param("nq_source")) if clean(value))),
         clean(get_query_param("nq_sort")) or "최신 등록일순",
     )
 
@@ -10830,12 +10846,27 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
             ),
             axis=1,
         )
+    source_option_df = notice_rows[["source_key", "Source"]].copy() if not notice_rows.empty else pd.DataFrame(columns=["source_key", "Source"])
+    if not source_option_df.empty:
+        source_option_df["source_key"] = source_option_df["source_key"].fillna("").astype(str).str.strip()
+        source_option_df["Source"] = source_option_df["Source"].fillna("").astype(str).str.strip()
+        source_option_df = source_option_df[
+            source_option_df["source_key"].ne("") & source_option_df["Source"].ne("")
+        ].drop_duplicates(subset=["source_key"], keep="first")
+        source_option_df = source_option_df.sort_values(by=["Source", "source_key"], ascending=[True, True], na_position="last")
+    source_label_map = {
+        clean(row.get("source_key")): clean(row.get("Source"))
+        for _, row in source_option_df.iterrows()
+        if clean(row.get("source_key")) and clean(row.get("Source"))
+    }
+    source_options = list(source_label_map.keys())
     page_state_key = "notice_queue_workspace_page_index"
     page_size = 10
     filter_reset_keys = [
         "notice_queue_workspace_search",
         "notice_queue_workspace_status_inline",
         "notice_queue_workspace_recommendation",
+        "notice_queue_workspace_source_inline",
         "notice_queue_workspace_sort",
     ]
 
@@ -10843,7 +10874,7 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
     def _render_notice_queue_workspace_fragment() -> None:
         render_notice_queue_ui_styles()
         with st.container(key="notice_queue_toolbar_shell"):
-            toolbar_cols = st.columns([4.7, 1.05, 1.05, 1.0, 0.6], gap="small")
+            toolbar_cols = st.columns([4.0, 1.0, 1.0, 1.15, 1.0, 0.6], gap="small")
             with toolbar_cols[0]:
                 search_text = st.text_input(
                     "Notice Search",
@@ -10878,13 +10909,22 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
                     label_visibility="collapsed",
                 )
             with toolbar_cols[3]:
+                selected_sources = st.multiselect(
+                    "크롤러",
+                    options=source_options,
+                    key="notice_queue_workspace_source_inline",
+                    format_func=lambda value: source_label_map.get(clean(value), clean(value).upper() or "-"),
+                    placeholder="크롤러",
+                    label_visibility="collapsed",
+                )
+            with toolbar_cols[4]:
                 sort_option = st.selectbox(
                     "정렬",
                     options=["최신 등록일순", "마감 임박순", "추천도순"],
                     key="notice_queue_workspace_sort",
                     label_visibility="collapsed",
                 )
-            with toolbar_cols[4]:
+            with toolbar_cols[5]:
                 st.button(
                     "초기화",
                     key="notice_queue_reset_top",
@@ -10900,6 +10940,7 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
             search_text=search_text,
             selected_status=selected_status,
             selected_recommendations=selected_recommendations,
+            selected_sources=selected_sources,
             sort_option=sort_option,
         )
         previous_signature = st.session_state.get("notice_queue_workspace_filter_signature")
@@ -10922,6 +10963,15 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
             ]
         if selected_recommendations:
             filtered = filtered[filtered["Recommendation"].isin(selected_recommendations)]
+        if selected_sources:
+            selected_source_keys = {
+                clean(value)
+                for value in selected_sources
+                if clean(value)
+            }
+            filtered = filtered[
+                filtered["source_key"].fillna("").astype(str).str.strip().isin(selected_source_keys)
+            ]
 
         if sort_option == "마감 임박순":
             filtered = filtered.assign(
@@ -10939,6 +10989,22 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
             filtered = filtered.sort_values(by=["_sort_date", "Title"], ascending=[False, True], na_position="last")
 
         total_rows = len(filtered)
+        source_count_summary = ""
+        if total_rows:
+            source_count_rows = (
+                filtered.assign(
+                    _source_label=filtered["Source"].fillna("").astype(str).str.strip()
+                )
+                .groupby("_source_label", dropna=False)
+                .size()
+                .reset_index(name="count")
+                .sort_values(by=["count", "_source_label"], ascending=[False, True], na_position="last")
+            )
+            source_count_summary = " / ".join(
+                f"{clean(row.get('_source_label'))} {int(row.get('count') or 0):,}건"
+                for _, row in source_count_rows.iterrows()
+                if clean(row.get("_source_label"))
+            )
         total_pages = max(1, math.ceil(total_rows / page_size)) if page_size else 1
         query_page_no = safe_int(get_query_param("page_no"), 0)
         query_signature = _notice_queue_query_signature()
@@ -10952,7 +11018,8 @@ def render_notice_queue_page(datasets: dict[str, pd.DataFrame], source_datasets:
         page_rows = filtered.iloc[start_idx:start_idx + page_size].copy()
 
         st.markdown(
-            f'<div class="notice-queue-toolbar-meta">검색 결과 {total_rows:,}건</div>',
+            f'<div class="notice-queue-toolbar-meta">검색 결과 {total_rows:,}건'
+            f"{' | ' + escape(source_count_summary) if source_count_summary else ''}</div>",
             unsafe_allow_html=True,
         )
         _render_notice_queue_table(page_rows, key_prefix="notice_queue_workspace")
