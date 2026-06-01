@@ -73,18 +73,6 @@ def build_workspace_nav_items(sources: tuple[SourceRouteConfig, ...]) -> tuple[N
                 source.default_page,
             )
         )
-    for source in sources:
-        if source.key in primary_workspace_order:
-            continue
-        if source.page_configs:
-            items.append(
-                NavItemConfig(
-                    f"{source.key}_home",
-                    source.label,
-                    source.key,
-                    source.default_page,
-                )
-            )
     return tuple(items)
 
 
