@@ -10870,6 +10870,50 @@ def _normalize_display_title_key(value: object) -> str:
     return text
 
 
+def _normalize_notice_style_title_key(value: object) -> str:
+    text = clean(value).lower()
+    text = re.sub(r"\.(pdf|hwpx|hwp|zip|docx?)$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"[\[\]\(\)_~\-.,/]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _is_notice_style_project_title(value: object) -> bool:
+    text = clean(value)
+    if not text:
+        return False
+    compact = _normalize_notice_style_title_key(text)
+    if not compact:
+        return False
+    if re.search(
+        r"(공고문|모집공고|통합공고|안내문|연장공고|재공고|지원계획\s*공고|신규지원\s*대상과제\s*공고)",
+        compact,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if re.match(r"^\d{4}\s*년(?:도)?", compact) and "공고" in compact:
+        return True
+    return False
+
+
+def _looks_fragmented_display_project_title(value: object) -> bool:
+    text = clean(value)
+    if not text:
+        return False
+
+    fragmented_markers = (
+        "공고기간",
+        "온라인접수",
+        "등록기간",
+        "접수기간",
+        "신청기간",
+        "접수방법",
+        "제출서류",
+    )
+    marker_hits = sum(1 for marker in fragmented_markers if marker in text)
+    return marker_hits >= 2
+
+
 def _is_bad_display_project_title(value: object, *, notice_title: object = "", file_name: object = "") -> bool:
     text = clean(value)
     if not text:
@@ -10879,8 +10923,15 @@ def _is_bad_display_project_title(value: object, *, notice_title: object = "", f
     normalized = _normalize_display_title_key(text)
     file_normalized = _normalize_display_title_key(file_name)
     notice_normalized = _normalize_display_title_key(notice_title)
+    notice_style_normalized = _normalize_notice_style_title_key(text)
+    file_notice_style_normalized = _normalize_notice_style_title_key(file_name)
+    notice_title_style_normalized = _normalize_notice_style_title_key(notice_title)
     generic_titles = {"", "사업명", "과제명", "rfp", "rfp제목", "사업명rfp명과제수"}
     if normalized in generic_titles:
+        return True
+    if _is_notice_style_project_title(text):
+        return True
+    if _looks_fragmented_display_project_title(text):
         return True
     if re.search(r"\.(pdf|hwpx|hwp|zip|docx?)$", lowered, flags=re.IGNORECASE):
         return True
@@ -10888,20 +10939,24 @@ def _is_bad_display_project_title(value: object, *, notice_title: object = "", f
         return True
     if notice_normalized and normalized == notice_normalized:
         return True
+    if notice_title_style_normalized and notice_style_normalized == notice_title_style_normalized:
+        return True
+    if file_notice_style_normalized and notice_style_normalized == file_notice_style_normalized:
+        return True
     if "붙임" in text and re.search(r"\.(pdf|hwpx|hwp|zip|docx?)", lowered, flags=re.IGNORECASE):
         return True
     return False
 
 
 def choose_display_project_title(row: dict) -> str:
-    notice_title = first_non_empty(row, "Notice Title", "notice_title", "공고명")
+    notice_title = first_non_empty(row, "Notice Title", "notice_title", "공고명", "notice_title")
     file_name = first_non_empty(row, "file_name", "File Name", "파일명")
     candidates = [
         "llm_project_name",
         "project_name",
         "Project",
         "해당 과제명",
-        "과제명",
+        "대표과제명",
         "llm_rfp_title",
         "rfp_title",
         "RFP 제목",
