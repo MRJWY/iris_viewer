@@ -754,7 +754,8 @@ def build_dashboard_opportunity_index(
         normalized["Notice ID"] = series_from_candidates(working, ["notice_id", "공고ID"])
         normalized["Notice Title"] = series_from_candidates(working, ["notice_title", "공고명"])
         normalized["Project"] = series_from_candidates(working, ["llm_project_name", "project_name", "해당 과제명", "llm_rfp_title", "rfp_title"])
-        normalized["Recommendation"] = series_from_candidates(working, ["recommendation", "추천여부", "llm_recommendation"])
+        normalized["Recommendation"] = series_from_candidates(working, ["candidate_flag", "확장후보여부", "llm_score_candidate_flag"])
+        normalized["Recommendation"] = normalized["Recommendation"].apply(lambda value: "키워드 후보" if is_candidate_value(value) else "")
         normalized["Score"] = to_numeric_column(series_from_candidates(working, ["rfp_score", "점수", "llm_fit_score"]))
         normalized["Candidate"] = series_from_candidates(working, ["candidate_flag", "확장후보여부", "llm_score_candidate_flag"])
         normalized["Candidate Reason"] = series_from_candidates(working, ["candidate_reason", "확장후보사유", "llm_score_candidate_reason"])
@@ -9145,6 +9146,25 @@ def build_positive_recommendation_mask(df: pd.DataFrame) -> pd.Series:
     return recommendation_series.apply(_normalize_recommendation_value).eq("추천")
 
 
+def is_candidate_value(value: object) -> bool:
+    normalized = clean(value).strip().upper()
+    return normalized in {"Y", "YES", "TRUE", "1", "후보", "키워드 후보"}
+
+
+def build_candidate_mask(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    candidate = series_from_candidates(
+        df,
+        ["candidate_flag", "확장후보여부", "llm_score_candidate_flag", "Candidate"],
+    )
+    keywords = series_from_candidates(
+        df,
+        ["keywords", "llm_keywords", "대표키워드", "Keywords"],
+    ).fillna("").astype(str).str.strip()
+    return candidate.apply(is_candidate_value) | keywords.ne("")
+
+
 def _recommendation_sort_rank(value: object) -> int:
     normalized = _normalize_recommendation_value(value)
     if normalized == "추천":
@@ -12503,7 +12523,14 @@ def _pill_html(text: object, *, kind: str = "recommendation", base_class: str = 
 
 def _queue_row_context(row: dict[str, object] | pd.Series) -> dict[str, str]:
     row_dict = normalize_row_dict(row)
-    recommendation = first_non_empty(
+    candidate_flag = first_non_empty(
+        row_dict,
+        "candidate_flag",
+        "확장후보여부",
+        "llm_score_candidate_flag",
+        "Candidate",
+    )
+    raw_recommendation = first_non_empty(
         row_dict,
         "_queue_recommendation",
         "Recommendation",
@@ -12511,7 +12538,8 @@ def _queue_row_context(row: dict[str, object] | pd.Series) -> dict[str, str]:
         "추천여부",
         "llm_recommendation",
         "대표추천도",
-    ) or "검토"
+    )
+    recommendation = "키워드 후보" if is_candidate_value(candidate_flag) else (raw_recommendation or "검토")
     score = _score_value(first_non_empty(row_dict, "llm_fit_score", "rfp_score", "점수", "Score"))
     period = first_non_empty(row_dict, "notice_period", "period", "Period", "접수기간", "요청기간")
     deadline = format_dashboard_deadline_badge(period, first_non_empty(row_dict, "status", "Status"))
@@ -13822,11 +13850,19 @@ def build_favorite_notice_df(notice_view_df: pd.DataFrame, source_datasets: dict
         return pd.DataFrame()
 
     combined = pd.concat(frames, ignore_index=True)
-    combined = combined[
-        combined["검토 여부"].fillna("").astype(str).str.strip().eq(FAVORITE_REVIEW_STATUS)
-    ]
+    combined["_effective_review"] = combined.apply(
+        lambda row: _resolve_live_favorite_value(
+            clean(first_non_empty(row, "_source_key", "source_key")) or "iris",
+            clean(first_non_empty(row, "공고ID", "notice_id")),
+            clean(first_non_empty(row, "검토 여부", "검토여부", "review_status")),
+        ),
+        axis=1,
+    )
+    combined["검토 여부"] = combined["_effective_review"]
+    combined = combined[combined["_effective_review"].eq(FAVORITE_REVIEW_STATUS)].copy()
     if combined.empty:
         return combined
+    combined = combined.drop(columns=["_effective_review"], errors="ignore")
     return combined.sort_values(
         by=["_sort_date", "매체", "공고명"],
         ascending=[False, True, True],
@@ -15327,6 +15363,8 @@ def _render_rfp_queue_pagination_controls(
     route: dict[str, object] | None = None,
     current_page: int,
     total_pages: int,
+    total_rows: int,
+    page_size: int,
 ) -> str:
     base_route = route_core.normalize_route(route or route_core.build_rfp_queue_route())
 
@@ -15344,29 +15382,46 @@ def _render_rfp_queue_pagination_controls(
         return f"?{urlencode(params)}"
 
     page_numbers = _notice_queue_pagination_window(current_page, total_pages)
-    prev_class = " is-disabled" if current_page <= 1 else ""
-    next_class = " is-disabled" if current_page >= total_pages else ""
+    prev_class = "notice-queue-page-nav" + (" is-disabled" if current_page <= 1 else "")
+    next_class = "notice-queue-page-nav" + (" is-disabled" if current_page >= total_pages else "")
     number_links: list[str] = []
     for page_number in page_numbers:
         active_class = " is-active" if page_number == current_page else ""
         number_links.append(
-            f'<a class="queue-page-link{active_class}" href="{escape(_page_href(page_number), quote=True)}" target="_self">{page_number}</a>'
+            f'<a class="notice-queue-page-link{active_class}" href="{escape(_page_href(page_number), quote=True)}" target="_self">{page_number}</a>'
         )
     if total_pages > page_numbers[-1]:
         if total_pages > page_numbers[-1] + 1:
-            number_links.append('<span class="queue-page-ellipsis">…</span>')
+            number_links.append('<span class="notice-queue-page-ellipsis">…</span>')
         number_links.append(
-            f'<a class="queue-page-link" href="{escape(_page_href(total_pages), quote=True)}" target="_self">{total_pages}</a>'
+            f'<a class="notice-queue-page-link" href="{escape(_page_href(total_pages), quote=True)}" target="_self">{total_pages}</a>'
         )
 
-    nav_html = (
-        f'<div class="queue-pagination-row">'
-        f'<a class="queue-page-nav{prev_class}" href="{escape(_page_href(current_page - 1), quote=True)}" target="_self">&lt; 이전</a>'
-        f'<a class="queue-page-nav{next_class}" href="{escape(_page_href(current_page + 1), quote=True)}" target="_self">다음 &gt;</a>'
+    jump_params = with_auth_params(route_core.serialize_route(base_route))
+    jump_params.pop("page_no", None)
+    hidden_inputs = "".join(
+        f'<input type="hidden" name="{escape(clean(key), quote=True)}" value="{escape(clean(value), quote=True)}">'
+        for key, value in jump_params.items()
+        if clean(key) and clean(value)
+    )
+    return (
+        '<div class="notice-queue-footer">'
+        f'<div class="notice-queue-footer-meta">총 {total_rows:,}건 · 페이지 {current_page} / {total_pages} · 페이지당 {page_size}건</div>'
+        '<nav class="notice-queue-pagination-wrap" aria-label="RFP Queue pagination">'
+        '<div class="notice-queue-pagination notice-queue-pagination-nav">'
+        f'<a class="{prev_class}" href="{escape(_page_href(current_page - 1), quote=True)}" target="_self">‹ 이전</a>'
+        f'<a class="{next_class}" href="{escape(_page_href(current_page + 1), quote=True)}" target="_self">다음 ›</a>'
+        '</div>'
+        f'<div class="notice-queue-pagination">{"".join(number_links)}</div>'
+        '<form class="notice-queue-page-jump" method="get">'
+        f'{hidden_inputs}'
+        f'<input type="number" name="page_no" min="1" max="{total_pages}" value="{current_page}" aria-label="page number">'
+        f'<span class="notice-queue-page-jump-total">/{total_pages}</span>'
+        '<button type="submit">이동</button>'
+        '</form>'
+        '</nav>'
         '</div>'
     )
-    number_html = f'<div class="queue-pagination-row">{"".join(number_links)}</div>'
-    return f'<nav class="queue-pagination-wrap" aria-label="RFP Queue pagination">{number_html}{nav_html}</nav>'
 
 
 def _render_notice_queue_pagination_controls(
@@ -15378,7 +15433,7 @@ def _render_notice_queue_pagination_controls(
     total_rows: int,
     page_size: int,
 ) -> str:
-    del page_state_key, control_key_prefix, total_rows, page_size
+    del page_state_key, control_key_prefix
 
     def _page_href(page_number: int) -> str:
         params = get_query_params_dict()
@@ -15407,14 +15462,41 @@ def _render_notice_queue_pagination_controls(
             f'<a class="notice-queue-page-link" href="{escape(_page_href(total_pages), quote=True)}" target="_self">{total_pages}</a>'
         )
 
-    nav_html = (
-        f'<div class="notice-queue-pagination">'
+    jump_params = {
+        clean(key): clean(value)
+        for key, value in get_query_params_dict().items()
+        if clean(key) and clean(value)
+    }
+    jump_params.update({
+        "source": "notices",
+        "page": "notice_queue",
+        "view": "table",
+    })
+    for key in ("page_no", "nq_search", "nq_status", "nq_source", "nq_reco", "nq_sort"):
+        jump_params.pop(key, None)
+    jump_params.update(_current_notice_queue_filter_params())
+    hidden_inputs = "".join(
+        f'<input type="hidden" name="{escape(key, quote=True)}" value="{escape(value, quote=True)}">'
+        for key, value in jump_params.items()
+    )
+    return (
+        '<div class="notice-queue-footer">'
+        f'<div class="notice-queue-footer-meta">총 {total_rows:,}건 · 페이지 {current_page} / {total_pages} · 페이지당 {page_size}건</div>'
+        '<nav class="notice-queue-pagination-wrap" aria-label="Notice Queue pagination">'
+        '<div class="notice-queue-pagination notice-queue-pagination-nav">'
         f'<a class="notice-queue-page-nav{prev_class}" href="{escape(_page_href(current_page - 1), quote=True)}" target="_self">‹ 이전</a>'
         f'<a class="notice-queue-page-nav{next_class}" href="{escape(_page_href(current_page + 1), quote=True)}" target="_self">다음 ›</a>'
         '</div>'
+        f'<div class="notice-queue-pagination">{"".join(number_links)}</div>'
+        '<form class="notice-queue-page-jump" method="get">'
+        f'{hidden_inputs}'
+        f'<input type="number" name="page_no" min="1" max="{total_pages}" value="{current_page}" aria-label="page number">'
+        f'<span class="notice-queue-page-jump-total">/{total_pages}</span>'
+        '<button type="submit">이동</button>'
+        '</form>'
+        '</nav>'
+        '</div>'
     )
-    number_html = f'<div class="notice-queue-pagination">{"".join(number_links)}</div>'
-    return f'<nav class="notice-queue-pagination-wrap" aria-label="Notice Queue pagination">{number_html}{nav_html}</nav>'
 
 
 
@@ -15429,6 +15511,7 @@ def render_opportunity_page(
     archive: bool = False,
     all_df: pd.DataFrame | None = None,
 ) -> None:
+    render_notice_queue_ui_styles()
     page_key = page_key or ("opportunity_archive" if archive else "opportunity")
     title = title or ("Opportunity Archive" if archive else "RFP Queue")
     source_df = ensure_opportunity_row_ids(df)
@@ -15452,8 +15535,12 @@ def render_opportunity_page(
         # have sparse period/status fields despite belonging to the current sheet.
         base_rows = filter_archived_opportunity_rows(all_source_df) if archive else source_df.copy()
         base_rows = filter_rankable_opportunity_rows(base_rows)
+        if not base_rows.empty:
+            base_rows = base_rows[build_candidate_mask(base_rows)].copy()
         working = _build_queue_filter_frame(base_rows)
         option_rows = filter_archived_opportunity_rows(all_source_df) if archive else all_source_df
+        if not option_rows.empty:
+            option_rows = option_rows[build_candidate_mask(option_rows)].copy()
         option_working = _build_queue_filter_frame(option_rows)
         if working.empty and option_working.empty:
             st.info("표시할 RFP가 없습니다.")
@@ -15464,9 +15551,7 @@ def render_opportunity_page(
         recommendation_widget_key = f"{page_key}_filter_recommendation"
         recommendation_init_key = f"{page_key}_filter_recommendation_initialized"
         if recommendation_widget_key not in st.session_state and not archive:
-            st.session_state[recommendation_widget_key] = [
-                value for value in recommendation_options if is_positive_recommendation(value)
-            ]
+            st.session_state[recommendation_widget_key] = []
         st.session_state[recommendation_init_key] = True
         archive_reason_options = sorted(
             [
@@ -15479,7 +15564,7 @@ def render_opportunity_page(
         filter_cols = st.columns(3 if archive else 2)
         with filter_cols[0]:
             selected_recommendation = st.multiselect(
-                "추천 상태",
+                "후보 상태",
                 options=recommendation_options,
                 default=st.session_state.get(recommendation_widget_key, []),
                 key=recommendation_widget_key,
@@ -15523,6 +15608,8 @@ def render_opportunity_page(
             else (all_source_df if include_closed else source_df.copy())
         )
         filter_source = filter_rankable_opportunity_rows(filter_source)
+        if not filter_source.empty:
+            filter_source = filter_source[build_candidate_mask(filter_source)].copy()
         filtered = filter_queue_working_frame(
             _build_queue_filter_frame(filter_source),
             selected_recommendation=selected_recommendation,
@@ -15572,6 +15659,8 @@ def render_opportunity_page(
             route=pagination_route,
             current_page=current_page,
             total_pages=total_pages,
+            total_rows=total_rows,
+            page_size=page_size,
         )
         st.markdown(pagination_html, unsafe_allow_html=True)
 
@@ -16584,6 +16673,39 @@ def render_notice_queue_ui_styles() -> None:
           font-size: 1.05rem;
           font-weight: 900;
         }
+        .notice-queue-page-jump {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.55rem;
+        }
+        .notice-queue-page-jump input {
+          width: 64px;
+          height: 38px;
+          border: 1px solid #6b7280;
+          border-radius: 8px;
+          color: #4b5563;
+          font-size: 0.98rem;
+          font-weight: 800;
+          text-align: center;
+          background: #ffffff;
+        }
+        .notice-queue-page-jump-total {
+          color: #4b5563;
+          font-size: 0.98rem;
+          font-weight: 800;
+        }
+        .notice-queue-page-jump button {
+          height: 38px;
+          padding: 0 1rem;
+          border: 1px solid #3b82f6;
+          border-radius: 8px;
+          background: #eff6ff;
+          color: #2563eb;
+          font-size: 0.96rem;
+          font-weight: 900;
+          cursor: pointer;
+        }
         .notice-kpi-grid {
           display: grid;
           grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -17478,8 +17600,8 @@ def _render_dashboard_workspace(
     opportunity_index = build_dashboard_opportunity_index(datasets, source_datasets)
     if not opportunity_index.empty:
         opportunity_index = _sort_opportunity_rows_for_display(opportunity_index)
-    recommended_rows = (
-        opportunity_index[build_positive_recommendation_mask(opportunity_index)].copy()
+    keyword_rows = (
+        opportunity_index[build_candidate_mask(opportunity_index)].copy()
         if not opportunity_index.empty
         else pd.DataFrame()
     )
@@ -17522,12 +17644,22 @@ def _render_dashboard_workspace(
         notice_rows,
         dashboard_search,
     )
-    recommended_filtered = (
-        filtered_opportunity_rows[build_positive_recommendation_mask(filtered_opportunity_rows)].copy()
+    keyword_filtered = (
+        filtered_opportunity_rows[build_candidate_mask(filtered_opportunity_rows)].copy()
         if not filtered_opportunity_rows.empty
         else pd.DataFrame()
     )
-    top_rows = recommended_filtered.head(10).copy() if not recommended_filtered.empty else pd.DataFrame()
+    top_rows = pd.DataFrame()
+    if not keyword_filtered.empty:
+        top_rows = keyword_filtered.copy()
+        if "_queue_project_sort" not in top_rows.columns:
+            top_rows = _build_queue_filter_frame(top_rows)
+        top_rows = top_rows.sort_values(
+            by=["_sort_date", "_queue_project_sort"],
+            ascending=[False, True],
+            na_position="last",
+            kind="stable",
+        ).head(10).copy()
 
     def _deadline_sort_key(value: object) -> int | None:
         text = clean(value)
@@ -17562,10 +17694,10 @@ def _render_dashboard_workspace(
         ).head(5).copy()
 
     if dashboard_search:
-        st.caption(f"검색 결과: 추천 RFP {len(top_rows)}건, 마감 임박 {len(deadline_preview_rows)}건")
+        st.caption(f"검색 결과: 키워드 RFP {len(top_rows)}건, 마감 임박 {len(deadline_preview_rows)}건")
 
     kpi_cards = [
-        ("추천 RFP", f"{len(recommended_rows)}건", "AI 추천 기준", "iris", "rfp_queue", "blue", "RFP"),
+        ("키워드 RFP", f"{len(keyword_rows)}건", "키워드 기반", "iris", "rfp_queue", "blue", "RFP"),
         ("마감 임박", f"{urgent_count}건", "D-30 이내", "notices", "notice_queue", "red", "D-30"),
         ("관심공고", f"{favorite_count}건", "저장된 공고", "favorites", "favorites", "green", "SAVE"),
     ]
@@ -17591,8 +17723,8 @@ def _render_dashboard_workspace(
         ctx = _queue_row_context(row)
         row_id = clean(row.get("Row ID"))
         href = build_route_href("rfp_queue", row_id, source_key=resolve_route_source_key_for_row(row))
-        recommendation_text = clean(ctx["recommendation"]) or "검토필요"
-        recommendation_class = "is-recommend" if is_positive_recommendation(recommendation_text) else "is-review"
+        recommendation_text = clean(ctx["recommendation"]) or "키워드 RFP"
+        recommendation_class = "is-recommend" if recommendation_text in {"키워드 후보", "키워드 RFP"} else "is-review"
         keywords_html = "".join(
             f'<span class="rfp-card-keyword">{escape(keyword)}</span>'
             for keyword in _extract_dashboard_keywords(row, limit=3)
@@ -17629,11 +17761,11 @@ def _render_dashboard_workspace(
         (
             '<section class="dashboard-section">'
             '<div class="dashboard-section-header">'
-            '<div class="dashboard-section-title">추천 RFP Top 10</div>'
+            '<div class="dashboard-section-title">키워드 RFP Top 10</div>'
             '<a class="dashboard-section-link" href="?source=iris&page=rfp_queue&view=table" target="_self">전체 RFP Queue 보기</a>'
             '</div>'
-            '<div class="dashboard-carousel-note">좌우로 넘겨서 추천 RFP 10개를 확인할 수 있습니다.</div>'
-            f"""<div class="rfp-card-row">{"".join(card_html) if card_html else '<div class="dashboard-empty">표시할 추천 RFP가 없습니다.</div>'}</div>"""
+            '<div class="dashboard-carousel-note">좌우로 넘겨서 키워드 RFP 10개를 확인할 수 있습니다.</div>'
+            f"""<div class="rfp-card-row">{"".join(card_html) if card_html else '<div class="dashboard-empty">표시할 키워드 RFP가 없습니다.</div>'}</div>"""
             '</section>'
         ),
         unsafe_allow_html=True,
