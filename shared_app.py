@@ -3928,19 +3928,44 @@ def get_service_account_info() -> dict | None:
     return None
 
 
+def get_google_sheet_credentials_error() -> str:
+    service_account_info = get_service_account_info()
+    if service_account_info:
+        return ""
+
+    credentials_path = get_env("GOOGLE_CREDENTIALS_JSON")
+    if credentials_path:
+        if Path(credentials_path).exists():
+            return ""
+        return f"credentials file not found: {credentials_path}"
+
+    return (
+        "Google Sheets signup storage is not configured. "
+        "Set GOOGLE_SHEET_ID and one of: gcp_service_account in st.secrets, "
+        "GOOGLE_CREDENTIALS_JSON_CONTENT, or GOOGLE_CREDENTIALS_JSON."
+    )
+
+
+def get_signup_storage_error() -> str:
+    if not get_env("GOOGLE_SHEET_ID"):
+        return "GOOGLE_SHEET_ID is not set."
+    return get_google_sheet_credentials_error()
+
+
 @st.cache_resource(show_spinner=False)
 def get_gspread_client():
-    service_account_info = get_service_account_info()
+    credentials_error = get_google_sheet_credentials_error()
+    if not credentials_error:
+        service_account_info = get_service_account_info()
+    else:
+        service_account_info = None
     if service_account_info:
         creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPE)
         return gspread.authorize(creds)
 
     credentials_path = get_env("GOOGLE_CREDENTIALS_JSON")
     if not credentials_path:
-        raise RuntimeError(
-            "Google credentials are not set. "
-            "Provide gcp_service_account in st.secrets or GOOGLE_CREDENTIALS_JSON."
-        )
+        raise RuntimeError(credentials_error or get_signup_storage_error())
     if not Path(credentials_path).exists():
         raise RuntimeError(f"credentials file not found: {credentials_path}")
 
@@ -3949,11 +3974,7 @@ def get_gspread_client():
 
 
 def get_worksheet(sheet_name: str):
-    gc = get_gspread_client()
-    sheet_id = get_env("GOOGLE_SHEET_ID")
-    if not sheet_id:
-        raise RuntimeError("GOOGLE_SHEET_ID is not set.")
-    sh = run_gspread_call(gc.open_by_key, sheet_id)
+    sh = get_spreadsheet()
     return run_gspread_call(sh.worksheet, sheet_name)
 
 
@@ -4369,12 +4390,15 @@ def get_current_user_affiliation() -> str:
         organization = clean(user.get("organization"))
         if organization:
             return organization
-        latest_request = get_latest_signup_request_for_account(
-            {
-                "user_id": clean(user.get("user_id")),
-                "email": clean(user.get("email")),
-            }
-        )
+        try:
+            latest_request = get_latest_signup_request_for_account(
+                {
+                    "user_id": clean(user.get("user_id")),
+                    "email": clean(user.get("email")),
+                }
+            )
+        except Exception:
+            latest_request = {}
         organization = clean(latest_request.get("organization"))
         if organization:
             return organization
@@ -4776,6 +4800,12 @@ def render_signup_form() -> None:
     allowed_domains = sorted(load_allowed_email_domains())
     if allowed_domains:
         st.caption("가입 가능 도메인: " + ", ".join(allowed_domains))
+    storage_error = get_signup_storage_error()
+    if storage_error:
+        st.warning(
+            "가입 요청 저장용 Google Sheets 설정이 없습니다. "
+            f"{storage_error}"
+        )
     with st.form("signup_form"):
         user_id = st.text_input("아이디", key="signup_user_id")
         display_name = st.text_input("이름", key="signup_display_name")
@@ -4783,7 +4813,7 @@ def render_signup_form() -> None:
         email = st.text_input("이메일", key="signup_email")
         password = st.text_input("비밀번호", type="password", key="signup_password")
         password_confirm = st.text_input("비밀번호 확인", type="password", key="signup_password_confirm")
-        submitted = st.form_submit_button("가입 요청", use_container_width=True)
+        submitted = st.form_submit_button("가입 요청", use_container_width=True, disabled=bool(storage_error))
     if submitted:
         if clean(password) != clean(password_confirm):
             st.error("비밀번호 확인이 일치하지 않습니다.")
@@ -4963,7 +4993,10 @@ def get_latest_signup_request_for_account(account: dict[str, str] | None) -> dic
     try:
         request_df = load_signup_requests_live()
     except Exception:
-        request_df = load_signup_requests()
+        try:
+            request_df = load_signup_requests()
+        except Exception:
+            return {}
     if request_df.empty:
         return {}
 
@@ -5103,6 +5136,10 @@ def sync_auth_account_status(
 
 
 def submit_signup_request(*, user_id: str, password: str, display_name: str, organization: str, email: str) -> None:
+    storage_error = get_signup_storage_error()
+    if storage_error:
+        raise RuntimeError(storage_error)
+
     user_id = clean(user_id)
     password = clean(password)
     email = clean(email).lower()
