@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Legacy notice queue page shim.
+
+The active public viewer runtime now delegates to the repository-root `app.py`.
+Prefer updating the root app first when changing Notice Queue behavior or UI.
+"""
+
 import pandas as pd
 
 

@@ -1,9 +1,20 @@
 This repository is PUBLIC_VIEWER_REPO.
 
-# IRIS Viewer
+# IRIS Viewer Shim Repo
 
-Streamlit viewer for IRIS R&D notices and selected external crawler sources.
-This folder is prepared as a standalone public viewer bundle.
+This repository is now officially treated as a shim repo for the viewer runtime.
+The active Streamlit behavior lives in the sibling `iris_crawling` repository,
+and this repo keeps compatibility entrypoints so existing viewer commands still
+work without duplicating business logic in two places.
+
+Source of truth:
+- runtime behavior: `../app.py` in the sibling `iris_crawling` repo
+- this repo: shim entrypoints, compatibility wrappers, and viewer-specific docs
+
+Operational rule:
+- if a change should affect the live viewer behavior, update `iris_crawling/app.py`
+- do not add new queue/detail/dashboard logic to `iris_viewer_repo/shared_app.py`
+- keep files here thin and explicit about their delegation behavior
 
 ## Structure
 
@@ -19,17 +30,19 @@ This folder is prepared as a standalone public viewer bundle.
 - `Favorites`
   - unified view for notices whose review status is `관심공고`
 - `public_viewer_app.py`
-  - public viewer body that boots the app runtime and renders the admin-aligned viewer shell
+  - compatibility entrypoint; delegates to the sibling `iris_crawling/app.py`
 - `viewer_body.py`
-  - public viewer body renderers for RFP Queue, Notice Queue, Summary, and detail pages
+  - compatibility wrapper that forwards legacy viewer body calls to the sibling runtime
 - `shared_app.py`
-  - shared helper layer for login, Google Sheets access, comments, favorites, and domain-scoped collaboration state
+  - legacy local shared layer retained only for compatibility; not the source of truth
 - `app.py`
-  - default public viewer entrypoint that runs `public_viewer_app.main()`
+  - default shim entrypoint; runs the sibling viewer runtime
 - `viewer_app.py`
-  - alias entrypoint that runs `public_viewer_app.main()`
+  - alias shim entrypoint; runs the sibling viewer runtime
+- `root_app_proxy.py`
+  - loader that imports `../app.py` from the sibling `iris_crawling` repo and runs viewer mode
 - `app_config.py`
-  - viewer source/page config used by the shared app
+  - legacy viewer config kept only for compatibility with remaining local wrappers
 
 Notice detail pages support review status updates and comment history through Google Sheets.
 Viewer login is enabled by default. Users can request signup from the viewer
@@ -59,10 +72,14 @@ Optional:
 
 ## Local Run
 
+This repo no longer launches independently. It expects the sibling
+`iris_crawling` repository to exist next to it.
+
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
 Alternate viewer entrypoint:
 ```bash
 streamlit run viewer_app.py

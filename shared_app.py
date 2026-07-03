@@ -34,6 +34,14 @@ from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 
 try:
+    from .root_app_proxy import run_root_viewer
+except ImportError:
+    try:
+        from root_app_proxy import run_root_viewer
+    except ImportError:
+        run_root_viewer = None
+
+try:
     from jobs_mss.crawl_mss_list import crawl_mss_list
 except Exception:
     crawl_mss_list = None
@@ -457,23 +465,43 @@ def build_rfp_queue_frames(
     datasets: dict[str, pd.DataFrame],
     source_datasets: dict[str, object] | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    current_frames = [_source_tagged_opportunity_frame(datasets["opportunity"], source_key="iris")]
+    current_frames = [
+        _source_tagged_opportunity_frame(
+            filter_current_opportunity_rows(datasets["opportunity"]),
+            source_key="iris",
+        )
+    ]
     all_frames = [
-        _source_tagged_opportunity_frame(datasets["opportunity"], source_key="iris"),
+        _source_tagged_opportunity_frame(
+            filter_current_opportunity_rows(datasets["opportunity"]),
+            source_key="iris",
+        ),
         _source_tagged_opportunity_frame(datasets["opportunity_archive"], source_key="iris"),
     ]
     if source_datasets:
         current_frames.extend(
             [
-                _source_tagged_opportunity_frame(source_datasets["mss_opportunity"], source_key="tipa"),
-                _source_tagged_opportunity_frame(source_datasets["nipa_opportunity"], source_key="nipa"),
+                _source_tagged_opportunity_frame(
+                    filter_current_opportunity_rows(source_datasets["mss_opportunity"]),
+                    source_key="tipa",
+                ),
+                _source_tagged_opportunity_frame(
+                    filter_current_opportunity_rows(source_datasets["nipa_opportunity"]),
+                    source_key="nipa",
+                ),
             ]
         )
         all_frames.extend(
             [
-                _source_tagged_opportunity_frame(source_datasets["mss_opportunity"], source_key="tipa"),
+                _source_tagged_opportunity_frame(
+                    filter_current_opportunity_rows(source_datasets["mss_opportunity"]),
+                    source_key="tipa",
+                ),
                 _source_tagged_opportunity_frame(source_datasets["mss_opportunity_archive"], source_key="tipa"),
-                _source_tagged_opportunity_frame(source_datasets["nipa_opportunity"], source_key="nipa"),
+                _source_tagged_opportunity_frame(
+                    filter_current_opportunity_rows(source_datasets["nipa_opportunity"]),
+                    source_key="nipa",
+                ),
                 _source_tagged_opportunity_frame(source_datasets["nipa_opportunity_archive"], source_key="nipa"),
             ]
         )
@@ -4482,6 +4510,23 @@ def consume_workspace_logout_query_action() -> None:
     logout_current_user()
 
 
+def normalize_user_review_status_value(value: object) -> str:
+    normalized = clean(value)
+    if normalized in {"???", "해제"}:
+        return ""
+    return normalized
+
+
+def clear_review_status_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame):
+        return df
+    working = df.copy()
+    for column in ["검토 여부", "검토여부", "review_status"]:
+        if column in working.columns:
+            working[column] = ""
+    return working
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def load_user_review_statuses(user_id: str) -> pd.DataFrame:
     user_id = clean(user_id)
@@ -4499,6 +4544,7 @@ def load_user_review_statuses(user_id: str) -> pd.DataFrame:
     for column in USER_REVIEW_COLUMNS:
         if column not in working.columns:
             working[column] = ""
+    working["review_status"] = working["review_status"].apply(normalize_user_review_status_value)
     return working[working["user_id"].fillna("").astype(str).str.strip().eq(user_id)].copy()
 
 
@@ -4511,7 +4557,7 @@ def build_user_review_lookup(user_reviews_df: pd.DataFrame) -> dict[tuple[str, s
         notice_key = normalize_notice_id_for_match(row.get("notice_id"))
         if not notice_key:
             continue
-        lookup[(source_key, notice_key)] = clean(row.get("review_status"))
+        lookup[(source_key, notice_key)] = normalize_user_review_status_value(row.get("review_status"))
     return lookup
 
 
@@ -4548,14 +4594,45 @@ def apply_user_review_statuses(
     if not user_id:
         return datasets, source_datasets
 
+    scoped_datasets = dict(datasets)
+    for key in [
+        "notice",
+        "notice_master",
+        "notice_current",
+        "notice_view",
+        "pending",
+        "notice_archive",
+        "opportunity",
+        "opportunity_all",
+        "opportunity_archive",
+        "summary",
+    ]:
+        if key in scoped_datasets:
+            scoped_datasets[key] = clear_review_status_columns(scoped_datasets[key])
+
+    scoped_source_datasets = dict(source_datasets) if source_datasets else source_datasets
+    if scoped_source_datasets:
+        for dataset_key in [
+            "mss_current",
+            "mss_past",
+            "mss_opportunity",
+            "mss_opportunity_archive",
+            "nipa_current",
+            "nipa_past",
+            "nipa_opportunity",
+            "nipa_opportunity_archive",
+        ]:
+            value = scoped_source_datasets.get(dataset_key)
+            if isinstance(value, pd.DataFrame):
+                scoped_source_datasets[dataset_key] = clear_review_status_columns(value)
+
     try:
         user_reviews_df = load_user_review_statuses(user_id)
     except Exception:
-        return datasets, source_datasets
+        return scoped_datasets, scoped_source_datasets
     if user_reviews_df.empty:
-        return datasets, source_datasets
+        return scoped_datasets, scoped_source_datasets
 
-    scoped_datasets = dict(datasets)
     for key in [
         "notice",
         "notice_master",
@@ -4571,7 +4648,6 @@ def apply_user_review_statuses(
         if key in scoped_datasets:
             scoped_datasets[key] = apply_user_review_statuses_to_df(scoped_datasets[key], "iris", user_reviews_df)
 
-    scoped_source_datasets = dict(source_datasets) if source_datasets else source_datasets
     if scoped_source_datasets:
         source_key_map = {
             "mss_current": "tipa",
@@ -8649,7 +8725,7 @@ def build_favorite_toggle_href(
 
 
 NOTICE_QUEUE_DETAIL_PAGE_KEY = "notice_queue"
-UNFAVORITE_REVIEW_STATUS = "???"
+UNFAVORITE_REVIEW_STATUS = ""
 STATUS_FILTER_OPTIONS: list[tuple[str, str]] = [
     ("??", "??"),
     ("???", "???"),
@@ -8871,7 +8947,7 @@ def _schedule_favorite_scrap_toggle(
     next_value = UNFAVORITE_REVIEW_STATUS if previous_value == FAVORITE_REVIEW_STATUS else FAVORITE_REVIEW_STATUS
     st.session_state[state_key] = next_value
     st.session_state[inflight_key] = True
-    st.session_state[status_key] = "관심공고 해제 중..." if next_value == UNFAVORITE_REVIEW_STATUS else "관심공고 저장 중..."
+    st.session_state[status_key] = "관심공고 해제 중..." if next_value == "" else "관심공고 저장 중..."
     future = get_ui_background_executor().submit(
         _commit_favorite_scrap_toggle,
         notice_id=notice_id,
@@ -8916,7 +8992,7 @@ def _reconcile_favorite_scrap_toggle(
         _push_ui_flash(
             resolved_flash_scope,
             "success",
-            "관심공고에서 제거했습니다." if next_value == UNFAVORITE_REVIEW_STATUS else "관심공고로 저장했습니다.",
+            "관심공고에서 제거했습니다." if next_value == "" else "관심공고로 저장했습니다.",
         )
     except Exception as exc:
         st.session_state[state_key] = previous_value
@@ -13976,188 +14052,17 @@ def load_viewer_runtime(app_mode: str = "viewer") -> tuple[AppModeConfig, dict[s
 
 
 def main_viewer_v2(app_mode: str = "viewer") -> None:
-    try:
-        mode_config, datasets, source_datasets = load_viewer_runtime(app_mode)
-    except Exception as exc:
-        st.error(f"시트 로딩 실패: {exc}")
-        st.stop()
-
-    render_workspace_header(mode_config)
-
-    current_page = normalize_route_page_key(get_query_param("page")) or "rfp_queue"
-    if current_page == "opportunity_archive":
-        current_page = "notice_archive"
-    if current_page not in VIEWER_V2_ROUTE_MAP:
-        current_page = "rfp_queue"
-
-    selected_page = render_page_tabs(
-        current_page,
-        [
-            ("rfp_queue", "RFP Queue"),
-            ("notice_queue", "Notice Queue"),
-            ("summary", "Summary"),
-            ("notice_archive", "Archive"),
-            ("favorites", "관심공고"),
-        ],
-        key="viewer_v2_primary_tabs",
-    )
-    if selected_page != current_page:
-        target_source, target_page = VIEWER_V2_ROUTE_MAP[selected_page]
-        navigate_to_route(target_source, target_page)
-
-    if current_page == "notice_queue":
-        render_notice_queue_page(datasets, source_datasets)
-        return
-    if current_page == "notice_archive":
-        render_notice_page_with_scope(
-            datasets["notice_view"],
-            datasets["opportunity_all"],
-            page_key="notice_archive",
-            title="Archive",
-            default_status_scope="전체",
-            current_only_default=False,
-            archive=True,
-        )
-        return
-    if current_page == "summary":
-        render_summary_page(
-            datasets["summary"],
-            datasets["opportunity_all"],
-        )
-        return
-    if current_page == "favorites":
-        render_favorite_notice_page(
-            datasets["notice_view"],
-            datasets["opportunity_all"],
-            source_datasets,
-        )
-        return
-
-    render_opportunity_page(
-        datasets["opportunity"],
-        page_key="rfp_queue",
-        title="RFP Queue",
-        archive=False,
-    )
+    del app_mode
+    if run_root_viewer is None:
+        raise RuntimeError("root_app_proxy is unavailable; this shim repo cannot launch independently.")
+    run_root_viewer()
 
 
 def _legacy_main(app_mode: str = "viewer"):
-    load_dotenv()
-
-    mode_config = build_app_mode_config(
-        app_mode,
-        nipa_view_columns=tuple(NIPA_VIEW_COLUMNS),
-    )
-
-    st.set_page_config(
-        page_title=mode_config.page_title,
-        layout="wide",
-    )
-    inject_page_styles()
-    inject_opportunity_detail_alignment_styles()
-    inject_viewer_layout_styles()
-    require_login(mode_config)
-    render_workspace_header(mode_config)
-
-    sheet_names = {
-        "notice_master": resolve_canonical_notice_master_sheet(get_env),
-        "notice_current": resolve_notice_current_view_sheet(get_env),
-        "pending": resolve_notice_pending_view_sheet(get_env),
-        "notice_archive": resolve_notice_archive_view_sheet(get_env),
-        "opportunity": resolve_iris_opportunity_current_sheet(get_env),
-        "opportunity_archive": resolve_iris_opportunity_archive_sheet(get_env),
-        "summary": get_env("SUMMARY_SHEET", "SUMMARY"),
-        "errors": get_env("ERROR_SHEET", "OPPORTUNITY_ERRORS"),
-    }
-
-    try:
-        datasets = load_app_datasets(
-            sheet_names["notice_master"],
-            sheet_names["notice_current"],
-            sheet_names["pending"],
-            sheet_names["notice_archive"],
-            sheet_names["opportunity"],
-            sheet_names["opportunity_archive"],
-            sheet_names["summary"],
-            sheet_names["errors"],
-        )
-    except Exception as exc:
-        st.error(f"시트 로딩 실패: {exc}")
-        st.stop()
-
-    source_config_map = get_source_config_map(mode_config)
-    default_route = route_core.normalize_route(
-        {
-            "source": mode_config.default_source,
-            "page": get_default_page_for_source(mode_config, mode_config.default_source),
-            "view": "list",
-            "source_key": mode_config.default_source,
-        }
-    )
-    current_route = initialize_route_state(default_route)
-    normalized_route = _normalize_workspace_shell_route(current_route)
-    if not route_core.route_equals(current_route, normalized_route):
-        route_core.set_current_route(normalized_route)
-        replace_query_params(with_auth_params(route_core.serialize_route(normalized_route)))
-        current_route = normalized_route
-    current_source = clean(current_route.get("source")) or mode_config.default_source
-    if current_source not in source_config_map:
-        current_source = mode_config.default_source
-    current_page = normalize_route_page_key(current_route.get("page")) or get_default_page_for_source(mode_config, current_source)
-    current_group = find_nav_group_for_route(mode_config, current_source, current_page)
-
-    selected_group_key = render_nav_tabs(
-        current_group.key,
-        [(group.key, group.label) for group in mode_config.nav_groups],
-        key=f"{mode_config.mode}_primary_nav",
-        label="",
-    )
-    selected_group = next((group for group in mode_config.nav_groups if group.key == selected_group_key), mode_config.nav_groups[0])
-    if selected_group.key != current_group.key:
-        target_item = selected_group.items[0]
-        navigate_to_route(target_item.source_key, target_item.page_key)
-
-    current_item = next(
-        (
-            item
-            for item in selected_group.items
-            if item.source_key == current_source and item.page_key == current_page
-        ),
-        None,
-    )
-    selected_item = current_item or selected_group.items[0]
-    if current_item is not None and len(selected_group.items) > 1:
-        selected_item_key = render_nav_tabs(
-            current_item.key,
-            [(item.key, item.label) for item in selected_group.items],
-            key=f"{mode_config.mode}_secondary_nav_{selected_group.key}",
-            label="세부 페이지",
-        )
-        selected_item = next((item for item in selected_group.items if item.key == selected_item_key), selected_group.items[0])
-        if selected_item.key != current_item.key:
-            navigate_to_route(selected_item.source_key, selected_item.page_key)
-
-    selected_source_key = selected_item.source_key
-    selected_source_config = source_config_map.get(selected_source_key)
-
-    source_datasets = None
-    if selected_source_config and selected_source_config.requires_source_datasets:
-        source_datasets = build_source_datasets()
-    if is_user_scoped_operations_enabled():
-        datasets, source_datasets = apply_user_review_statuses(
-            datasets,
-            source_datasets,
-            get_current_operation_scope_key(),
-        )
-
-    render_selected_source(
-        selected_source_key,
-        source_config=selected_source_config,
-        mode_config=mode_config,
-        datasets=datasets,
-        source_datasets=source_datasets,
-        show_internal_tabs=False,
-    )
+    del app_mode
+    if run_root_viewer is None:
+        raise RuntimeError("root_app_proxy is unavailable; this shim repo cannot launch independently.")
+    run_root_viewer()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Legacy RFP detail page shim.
+
+The active public viewer runtime now delegates to the repository-root `app.py`.
+Prefer updating the root app first when changing RFP detail behavior or UI.
+"""
+
 import re
 
 from components.detail_blocks import (
