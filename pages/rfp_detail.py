@@ -108,6 +108,7 @@ def _summary_sections(api, story: dict[str, object], ai_summary: str) -> list[di
     detail_text = present_value(api, story.get("detail_text"))
     support_need_text = present_value(api, story.get("support_need_text"))
     support_plan_text = present_value(api, story.get("support_plan_text"))
+    special_notes_text = present_value(api, story.get("special_notes_text"))
 
     section_one = "\n\n".join(
         part for part in [background_text, support_need_text, ai_summary] if part and part != "-"
@@ -116,11 +117,13 @@ def _summary_sections(api, story: dict[str, object], ai_summary: str) -> list[di
     section_three = "\n\n".join(
         part for part in [detail_text, support_plan_text] if part and part != "-"
     ).strip() or "없음"
+    section_four = special_notes_text or "없음"
 
     return [
         {"title": "사업 개요 및 배경", "body": section_one or "없음"},
         {"title": "과제 목표", "body": section_two},
         {"title": "과제 내용", "body": section_three},
+        {"title": "특기사항", "body": section_four},
     ]
 
 

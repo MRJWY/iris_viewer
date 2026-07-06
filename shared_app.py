@@ -803,6 +803,7 @@ def build_dashboard_opportunity_index(
         normalized["Application Field"] = series_from_candidates(working, ["llm_application_field", "application_field"])
         normalized["Eligibility"] = series_from_candidates(working, ["llm_eligibility", "eligibility"])
         normalized["Support Need"] = series_from_candidates(working, ["llm_support_need", "support_need"])
+        normalized["Special Notes"] = series_from_candidates(working, ["llm_special_notes", "special_notes"])
         normalized["Status"] = series_from_candidates(working, ["rcve_status", "status", "notice_status"])
         normalized["Review"] = series_from_candidates(working, ["review_status", "검토여부"])
         normalized["_sort_date"] = parse_date_column(normalized["Date"])
@@ -5683,6 +5684,7 @@ def enrich_opportunity_df(df: pd.DataFrame) -> pd.DataFrame:
     enriched["technical_background"] = series_from_candidates(enriched, ["기술개발 배경 및 지원필요성", "technical_background"])
     enriched["development_content"] = series_from_candidates(enriched, ["기술개발 내용", "development_content"])
     enriched["support_need"] = series_from_candidates(enriched, ["지원필요성", "support_need"])
+    enriched["special_notes"] = series_from_candidates(enriched, ["특기사항", "special_notes"])
     enriched["document_type"] = series_from_candidates(enriched, ["문서유형", "document_type"])
     enriched["file_type"] = series_from_candidates(enriched, ["파일유형", "file_type"])
     enriched["source_site"] = series_from_candidates(enriched, ["출처사이트", "source_site"])
@@ -8460,6 +8462,7 @@ def build_project_analysis_text(*rows: dict | None) -> str:
     keywords = split_public_tags(first_non_empty(merged, "llm_keywords", "keywords", "keyword"), limit=5)
     support_need = _analysis_clause(first_non_empty(merged, "llm_support_need", "support_need"), max_chars=90)
     support_plan = _analysis_clause(first_non_empty(merged, "llm_support_plan", "support_plan"), max_chars=90)
+    special_notes = _analysis_clause(first_non_empty(merged, "llm_special_notes", "special_notes"), max_chars=100)
     reason_text = _analysis_clause(
         first_non_empty(
             merged,
@@ -8486,6 +8489,7 @@ def build_project_analysis_text(*rows: dict | None) -> str:
             development,
             support_need,
             support_plan,
+            special_notes,
             reason_text,
             " ".join(market_fields),
             " ".join(keywords),
@@ -12467,18 +12471,27 @@ def _legacy_render_notice_detail_from_row(row: dict, opportunity_df: pd.DataFram
                         "활용분야",
                     ),
                 ),
-                (
+            (
+                "지원기간 및 예산·추진체계",
+                first_non_empty(
+                    top_related,
+                    "llm_support_plan",
+                    "support_plan",
                     "지원기간 및 예산·추진체계",
-                    first_non_empty(
-                        top_related,
-                        "llm_support_plan",
-                        "support_plan",
-                        "지원기간 및 예산·추진체계",
-                    ),
                 ),
-                ("키워드", first_non_empty(top_related, "llm_keywords", "keywords", "대표키워드")),
-                ("텍스트 미리보기", first_non_empty(top_related, "text_preview")),
-            ],
+            ),
+            (
+                "특기사항",
+                first_non_empty(
+                    top_related,
+                    "llm_special_notes",
+                    "special_notes",
+                    "특기사항",
+                ),
+            ),
+            ("키워드", first_non_empty(top_related, "llm_keywords", "keywords", "대표키워드")),
+            ("텍스트 미리보기", first_non_empty(top_related, "text_preview")),
+        ],
         )
     with right:
         render_detail_card(
@@ -13157,6 +13170,15 @@ def _legacy_render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFra
                     "llm_support_plan",
                     "support_plan",
                     "지원기간 및 예산·추진체계",
+                ),
+            ),
+            (
+                "특기사항",
+                first_non_empty(
+                    top_related,
+                    "llm_special_notes",
+                    "special_notes",
+                    "특기사항",
                 ),
             ),
             ("대표과제명", first_non_empty(top_related, "llm_project_name", "project_name", "대표과제명")),
@@ -14638,6 +14660,7 @@ def build_analysis_story_bundle(
     )
     support_need_text = first_non_empty(base_row, "llm_support_need", "support_need")
     support_plan_text = first_non_empty(base_row, "llm_support_plan", "support_plan")
+    special_notes_text = first_non_empty(base_row, "llm_special_notes", "special_notes", "특기사항")
     eligibility_text = first_non_empty(base_row, "llm_eligibility", "eligibility", "지원대상")
     total_budget_text = first_non_empty(base_row, "llm_total_budget_text", "total_budget_text", "budget")
     per_project_budget_text = first_non_empty(base_row, "llm_per_project_budget_text", "per_project_budget_text")
@@ -14665,6 +14688,7 @@ def build_analysis_story_bundle(
         {"title": "사업 개요 및 배경", "body": _join_display_blocks(background_text, support_need_text, max_items=3)},
         {"title": "과제 목표", "body": objective_text},
         {"title": "과제 내용", "body": _join_display_blocks(detail_text, support_plan_text, max_items=3)},
+        {"title": "특기사항", "body": special_notes_text},
         {"title": "지원 내용 및 혜택", "body": benefit_text},
     ]
 
@@ -14675,6 +14699,7 @@ def build_analysis_story_bundle(
         "detail_text": detail_text or "-",
         "support_need_text": support_need_text or "-",
         "support_plan_text": support_plan_text or "-",
+        "special_notes_text": special_notes_text or "-",
         "eligibility_text": eligibility_text or "-",
         "total_budget_text": total_budget_text or "-",
         "per_project_budget_text": per_project_budget_text or "-",
@@ -14810,6 +14835,15 @@ def render_summary_detail_from_row(row: dict, opportunity_df: pd.DataFrame) -> N
                     "llm_support_plan",
                     "support_plan",
                     "지원기간 및 예산·추진체계",
+                ),
+            ),
+            (
+                "특기사항",
+                first_non_empty(
+                    top_related,
+                    "llm_special_notes",
+                    "special_notes",
+                    "특기사항",
                 ),
             ),
             ("대표과제명", first_non_empty(top_related, "llm_project_name", "project_name", "대표과제명")),
