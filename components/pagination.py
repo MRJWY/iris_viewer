@@ -1,5 +1,4 @@
-"""Numbered, URL-addressable pagination shared by discovery lists."""
-from html import escape
+"""Numbered pagination that updates a list fragment without browser navigation."""
 
 
 def clamp_page(value, total_pages: int) -> int:
@@ -17,31 +16,32 @@ def page_window(current: int, total: int, *, size: int = 10) -> list[int]:
     return list(range(start, start + size))
 
 
-def render_pagination(st, *, current: int, total: int, page_param: str, api) -> None:
+def _change_page(st, page_param: str, page: int) -> None:
+    # Updating query params preserves deep links, filters and auth without a reload.
+    st.query_params[page_param] = str(page)
+
+
+def render_pagination(st, *, current: int, total: int, page_param: str, key: str) -> None:
     if total <= 1:
         return
-    from components.notice_discovery import discovery_href
-
     current = clamp_page(current, total)
-    params = dict(st.query_params)
 
-    def link(page, label, *, css="", rel=""):
-        href = discovery_href({**params, page_param: str(page)}, api=api)
-        return (f'<a class="{css}" href="{escape(href, quote=True)}" target="_self" '
-                f'aria-label="{page}페이지"' + (f' rel="{rel}"' if rel else "")
-                + f'>{label}</a>')
+    def button(page, label, suffix, *, disabled=False, selected=False):
+        st.button(
+            label, key=f"discovery_pager_{suffix}_{key}",
+            help=f"현재 {page}페이지" if selected else f"{page}페이지로 이동" if not disabled else None,
+            disabled=disabled, type="primary" if selected else "tertiary",
+            on_click=_change_page, args=(st, page_param, page),
+        )
 
-    parts = [link(current - 1, "‹ 이전", css="discovery-page-direction", rel="prev")
-             if current > 1 else '<span class="discovery-page-direction is-disabled" aria-disabled="true">‹ 이전</span>']
-    for page in page_window(current, total):
-        if page == current:
-            parts.append(f'<span class="is-current" aria-current="page" aria-label="현재 {page}페이지">{page}</span>')
-        else:
-            parts.append(link(page, str(page), css="is-distant" if abs(page - current) > 2 else ""))
-    parts.append(link(current + 1, "다음 ›", css="discovery-page-direction", rel="next")
-                 if current < total else '<span class="discovery-page-direction is-disabled" aria-disabled="true">다음 ›</span>')
+    with st.container(key=f"discovery_pagination_{key}", horizontal=True,
+                      horizontal_alignment="center", gap=None):
+        button(current - 1, "‹ 이전", "prev", disabled=current == 1)
+        for page in page_window(current, total):
+            suffix = f"distant_{page}" if abs(page - current) > 2 else f"page_{page}"
+            button(page, str(page), suffix, disabled=page == current, selected=page == current)
+        button(current + 1, "다음 ›", "next", disabled=current == total)
     st.markdown(
-        '<nav class="discovery-pagination" aria-label="목록 페이지">' + "".join(parts) + '</nav>'
         f'<div class="discovery-page-count">{current} / {total:,} 페이지</div>',
         unsafe_allow_html=True,
     )

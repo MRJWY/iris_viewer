@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 from urllib.parse import urlencode
+from streamlit import fragment
 
 from jobs_common.notice_discovery import filter_notices
 from components.pagination import clamp_page, render_pagination
@@ -93,6 +94,7 @@ def render_notice_list(st, rows, *, api, recommended: bool = False) -> None:
     render_notice_board(st, rows, api=api)
 
 
+@fragment
 def render_results(st, rows, *, prefix: str, api, recommended: bool = False) -> None:
     page_size = 5 if recommended else 20
     total_pages = max(1, math.ceil(len(rows) / page_size))
@@ -101,4 +103,4 @@ def render_results(st, rows, *, prefix: str, api, recommended: bool = False) -> 
     start = (page - 1) * page_size
     st.caption(f"{'추천 공고' if recommended else '검색 결과'} {len(rows):,}건 · 최신 등록순")
     render_notice_list(st, rows.iloc[start:start + page_size], api=api, recommended=recommended)
-    render_pagination(st, current=page, total=total_pages, page_param="discovery_page_no", api=api)
+    render_pagination(st, current=page, total=total_pages, page_param="discovery_page_no", key=prefix)

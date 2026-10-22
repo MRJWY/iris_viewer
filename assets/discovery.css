@@ -30,8 +30,6 @@
 .discovery-summary-value { margin:14px 0; color:var(--discovery-ink); font-size:clamp(30px,3.5vw,38px); font-weight:750; letter-spacing:-.05em; line-height:1.2; }
 .discovery-summary-value small { margin-left:7px; font-size:14px; font-weight:500; letter-spacing:0; color:#7a8397; }
 .discovery-summary-card p { margin:0; color:#6a758c; font-size:12px; line-height:1.6; }
-.discovery-summary-card.accent { background:#f0eefb; border-color:#dbd5f4; }
-.discovery-summary-card.accent .discovery-summary-value { color:var(--discovery-accent); }
 .discovery-section-heading { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 16px; margin:22px 0 4px; }
 .stApp .discovery-section-heading h2 { font-size:22px !important; font-weight:650 !important; padding:0 !important; margin:0 !important; color:var(--discovery-ink) !important; }
 .discovery-section-heading h2 span { margin-left:6px; font-size:14px; color:var(--discovery-accent); }
@@ -68,13 +66,13 @@
 .discovery-board-action span { color:#8590a4; font-size:12px; }
 .discovery-header a:focus-visible, .discovery-board-action a:focus-visible { outline:2px solid #7866d8; outline-offset:3px; }
 .discovery-page-count { text-align:center; color:#788399; font-size:13px; padding:10px; }
-.discovery-pagination { display:flex; justify-content:center; align-items:center; gap:4px; margin:28px 0 0; }
-.discovery-pagination a, .discovery-pagination > span { display:inline-flex; align-items:center; justify-content:center; min-width:36px; height:40px; padding:0 6px; box-sizing:border-box; border-radius:8px; font-size:14px; text-decoration:none !important; color:var(--discovery-accent) !important; }
-.discovery-pagination a:hover { background:#eeecf8; text-decoration:underline !important; }
-.discovery-pagination a:focus-visible { outline:2px solid var(--discovery-accent); outline-offset:2px; }
-.discovery-pagination .is-current { color:var(--discovery-ink) !important; font-weight:750; background:#eeecf8; }
-.discovery-pagination .discovery-page-direction { min-width:68px; white-space:nowrap; }
-.discovery-pagination .is-disabled { color:#a7aebb !important; }
+[class*="st-key-discovery_pagination_"] { margin-top:28px; }
+[class*="st-key-discovery_pagination_"] button { min-width:36px; height:40px; padding:0 6px; margin:0 2px; border:0; border-radius:8px; color:var(--discovery-accent); background:transparent; }
+[class*="st-key-discovery_pagination_"] button:hover:not(:disabled) { background:#eeecf8; }
+[class*="st-key-discovery_pagination_"] button:focus-visible { outline:2px solid var(--discovery-accent); outline-offset:2px; }
+[class*="st-key-discovery_pagination_"] button:disabled { color:#a7aebb; }
+[class*="st-key-discovery_pagination_"] button[kind="primary"]:disabled { color:var(--discovery-ink); font-weight:750; background:#eeecf8; }
+[class*="st-key-discovery_pager_prev_"] button, [class*="st-key-discovery_pager_next_"] button { min-width:68px; white-space:nowrap; }
 .discovery-footer-link { display:inline-block; margin-top:16px; color:var(--discovery-accent) !important; font-size:14px; text-decoration:none !important; }
 [data-testid="stForm"]:has(input[aria-label="공고 검색"]) [data-testid="stBaseButton-primaryFormSubmit"] { min-height:50px; background:var(--discovery-accent); border-color:var(--discovery-accent); color:white; border-radius:12px; }
 [data-testid="stForm"]:has(input[aria-label="공고 검색"]) [data-testid="stBaseButton-primaryFormSubmit"]:hover { background:var(--discovery-hover); border-color:var(--discovery-hover); }
@@ -85,10 +83,9 @@
   .discovery-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 @media (max-width:760px) {
-  .discovery-pagination { gap:2px; }
-  .discovery-pagination .is-distant { display:none; }
-  .discovery-pagination a, .discovery-pagination > span { min-width:30px; }
-  .discovery-pagination .discovery-page-direction { min-width:58px; }
+  [class*="st-key-discovery_pager_distant_"] { display:none; }
+  [class*="st-key-discovery_pagination_"] button { min-width:30px; margin:0 1px; }
+  [class*="st-key-discovery_pager_prev_"] button, [class*="st-key-discovery_pager_next_"] button { min-width:58px; }
   [data-testid="stMainBlockContainer"] { padding:1.5rem 1rem 3rem !important; }
   .discovery-header { flex-wrap:wrap; gap:12px; padding-bottom:15px; margin-bottom:20px; }
   .discovery-brand-sub { display:none; }

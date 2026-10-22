@@ -1,5 +1,6 @@
 """Daily overview using the award_list summary cards and project board."""
 from html import escape
+from streamlit import fragment
 from components.notice_discovery import discovery_href
 
 from components.notice_board import render_notice_board
@@ -10,7 +11,7 @@ def render_summary_cards(st, latest, recommended, closing, all_notices, *, selec
     cards = []
     items = [
         ("latest", "신규 공고", len(latest), "등록일 기준 최신 5건", ""),
-        ("recommended", "추천 RFP 목록", len(recommended), "접수 중인 키워드 후보 과제", "accent"),
+        ("recommended", "추천 RFP 목록", len(recommended), "접수 중인 키워드 후보 과제", ""),
         ("closing", "마감 예정 공고", len(closing), "오늘부터 7일 이내 · 오늘 마감 포함", ""),
         ("all_notices", "전체 공고", len(all_notices), "수집된 모든 공고 · 마감 공고 포함", ""),
     ]
@@ -54,6 +55,7 @@ def render_dashboard_search(st, *, api=None):
         st.rerun()
 
 
+@fragment
 def render_section(st, title, subtitle, rows, *, key, api, rfp=False, empty_message):
     st.markdown(
         f'<div class="discovery-section-heading"><h2>{escape(title)} <span>{len(rows):,}</span></h2>'
@@ -69,4 +71,4 @@ def render_section(st, title, subtitle, rows, *, key, api, rfp=False, empty_mess
     page_param = "discovery_page_no"
     page = clamp_page(st.query_params.get(page_param, 1), total_pages)
     render_notice_board(st, rows.iloc[(page - 1) * page_size:page * page_size], api=api, rfp=rfp)
-    render_pagination(st, current=page, total=total_pages, page_param=page_param, api=api)
+    render_pagination(st, current=page, total=total_pages, page_param=page_param, key=key)
