@@ -4,8 +4,10 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import pandas as pd
+import re
 
 from jobs_common.notice_views import extract_period_range
+from jobs_common.rfp_field_quality import looks_low_value_project_name
 
 
 IDENTITY = ["source_key", "Notice ID"]
@@ -107,6 +109,32 @@ def latest_notices(notices: pd.DataFrame, *, limit: int = 5) -> pd.DataFrame:
     return dated.sort_values("_sort_date", ascending=False, kind="stable").head(limit).copy()
 
 
+def resolve_recommended_project_title(row, *, project_title=None) -> str:
+    """Display fallback only: never replace the persisted RFP identity with a notice title."""
+    def text(key):
+        value = row.get(key, "")
+        return "" if pd.isna(value) else str(value).strip()
+
+    title = text("Project") if project_title is None else str(project_title or "").strip()
+    file_name = text("file_name") or text("File Name")
+    file_stem = re.sub(r"\.(?:pdf|hwpx?|docx?|zip)$", "", file_name, flags=re.IGNORECASE)
+    normalize = lambda value: re.sub(r"[\s_]+", "", value).lower()
+    from_file = bool(file_name and normalize(title) in {normalize(file_name), normalize(file_stem)})
+    low_confidence = any(
+        title == text(field) and text(confidence).lower() == "low"
+        for field, confidence in (
+            ("project_name", "project_name_confidence"),
+            ("llm_project_name", "llm_project_name_confidence"),
+        )
+    )
+    if (title and not looks_low_value_project_name(title) and not from_file and not low_confidence
+            and not re.search(r"\.(?:pdf|hwpx?|docx?|zip)$", title, flags=re.IGNORECASE)):
+        return title
+    if "Notice Title" in row:
+        return text("Notice Title")
+    return text("notice_title") or text("공고명")
+
+
 def recommended_rfps(notices: pd.DataFrame, candidates: pd.DataFrame) -> pd.DataFrame:
     """Keep distinct tasks under each eligible notice and use its authoritative title."""
     eligible = recommended_notices(notices, candidates)
@@ -116,6 +144,10 @@ def recommended_rfps(notices: pd.DataFrame, candidates: pd.DataFrame) -> pd.Data
     notice_metadata = eligible[IDENTITY + metadata].rename(columns={"Title": "_authoritative_title"})
     rows = candidates.merge(notice_metadata, on=IDENTITY, how="inner", suffixes=("", "_notice"), validate="many_to_one")
     rows["Notice Title"] = rows.pop("_authoritative_title")
+    # Resolve after joining the source notice so stale opportunity titles cannot
+    # supply the fallback. Source fields, row IDs and review state stay intact.
+    rows["notice_title"] = rows["Notice Title"]
+    rows["Project"] = rows.apply(resolve_recommended_project_title, axis=1)
     for column in metadata[1:]:
         if f"{column}_notice" in rows:
             rows[column] = rows.pop(f"{column}_notice")

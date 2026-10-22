@@ -6,6 +6,7 @@ FIELDS = (
     "llm_document_role", "validation_errors", "rfp_score", "llm_fit_score",
     "llm_reason", "reason", "candidate_reason", "llm_score_candidate_reason",
     "file_name", "manual_archive", "_row_id",
+    "project_name_confidence", "llm_project_name_confidence",
 )
 
 

@@ -68,6 +68,13 @@
 .discovery-board-action span { color:#8590a4; font-size:12px; }
 .discovery-header a:focus-visible, .discovery-board-action a:focus-visible { outline:2px solid #7866d8; outline-offset:3px; }
 .discovery-page-count { text-align:center; color:#788399; font-size:13px; padding:10px; }
+.discovery-pagination { display:flex; justify-content:center; align-items:center; gap:4px; margin:28px 0 0; }
+.discovery-pagination a, .discovery-pagination > span { display:inline-flex; align-items:center; justify-content:center; min-width:36px; height:40px; padding:0 6px; box-sizing:border-box; border-radius:8px; font-size:14px; text-decoration:none !important; color:var(--discovery-accent) !important; }
+.discovery-pagination a:hover { background:#eeecf8; text-decoration:underline !important; }
+.discovery-pagination a:focus-visible { outline:2px solid var(--discovery-accent); outline-offset:2px; }
+.discovery-pagination .is-current { color:var(--discovery-ink) !important; font-weight:750; background:#eeecf8; }
+.discovery-pagination .discovery-page-direction { min-width:68px; white-space:nowrap; }
+.discovery-pagination .is-disabled { color:#a7aebb !important; }
 .discovery-footer-link { display:inline-block; margin-top:16px; color:var(--discovery-accent) !important; font-size:14px; text-decoration:none !important; }
 [data-testid="stForm"]:has(input[aria-label="공고 검색"]) [data-testid="stBaseButton-primaryFormSubmit"] { min-height:50px; background:var(--discovery-accent); border-color:var(--discovery-accent); color:white; border-radius:12px; }
 [data-testid="stForm"]:has(input[aria-label="공고 검색"]) [data-testid="stBaseButton-primaryFormSubmit"]:hover { background:var(--discovery-hover); border-color:var(--discovery-hover); }
@@ -78,6 +85,10 @@
   .discovery-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 @media (max-width:760px) {
+  .discovery-pagination { gap:2px; }
+  .discovery-pagination .is-distant { display:none; }
+  .discovery-pagination a, .discovery-pagination > span { min-width:30px; }
+  .discovery-pagination .discovery-page-direction { min-width:58px; }
   [data-testid="stMainBlockContainer"] { padding:1.5rem 1rem 3rem !important; }
   .discovery-header { flex-wrap:wrap; gap:12px; padding-bottom:15px; margin-bottom:20px; }
   .discovery-brand-sub { display:none; }

@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from jobs_common.notice_discovery import filter_notices
+from components.pagination import clamp_page, render_pagination
 
 
 def discovery_href(params, *, api=None):
@@ -95,16 +96,9 @@ def render_notice_list(st, rows, *, api, recommended: bool = False) -> None:
 def render_results(st, rows, *, prefix: str, api, recommended: bool = False) -> None:
     page_size = 5 if recommended else 20
     total_pages = max(1, math.ceil(len(rows) / page_size))
-    page = max(1, min(int(st.session_state.get(f"{prefix}_page_no", 1)), total_pages))
+    page = clamp_page(st.query_params.get("discovery_page_no", st.session_state.get(f"{prefix}_page_no", 1)), total_pages)
     st.session_state[f"{prefix}_page_no"] = page
     start = (page - 1) * page_size
     st.caption(f"{'추천 공고' if recommended else '검색 결과'} {len(rows):,}건 · 최신 등록순")
     render_notice_list(st, rows.iloc[start:start + page_size], api=api, recommended=recommended)
-    if total_pages > 1:
-        left, middle, right = st.columns([1, 3, 1])
-        with left:
-            st.button("← 이전", key=f"{prefix}_prev", disabled=page <= 1, on_click=_set_page, args=(st, prefix, page - 1), use_container_width=True)
-        with middle:
-            st.markdown(f'<div class="discovery-page-count">{page} / {total_pages}</div>', unsafe_allow_html=True)
-        with right:
-            st.button("다음 →", key=f"{prefix}_next", disabled=page >= total_pages, on_click=_set_page, args=(st, prefix, page + 1), use_container_width=True)
+    render_pagination(st, current=page, total=total_pages, page_param="discovery_page_no", api=api)

@@ -3,7 +3,7 @@ import pandas as pd
 
 from components.notice_discovery import render_results, render_search
 from jobs_common.discovery_service import load_discovery_projection, resolve_discovery_database_url
-from jobs_common.notice_discovery import closing_notices, latest_notices, recommended_rfps
+from jobs_common.notice_discovery import closing_notices, latest_notices, recommended_rfps, resolve_recommended_project_title
 from components.discovery_sections import render_lists
 
 
@@ -54,7 +54,10 @@ def render_page(st, source, *, api):
                 st.info("선택한 RFP를 찾을 수 없습니다.")
             else:
                 task = selected_tasks.iloc[0]
-                st.subheader(api.choose_display_project_title(task) or "과제명 미확인")
+                st.subheader(resolve_recommended_project_title(
+                    {**task.to_dict(), "Notice Title": row.get("notice_title", "")},
+                    project_title=api.choose_display_project_title(task),
+                ) or "공고명 미확인")
                 st.caption("선택한 RFP")
                 st.dataframe(pd.DataFrame([
                     {"항목": label, "내용": api.clean(task.get(field)) or "미확인"}

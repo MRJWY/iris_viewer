@@ -3,6 +3,7 @@ from html import escape
 from components.notice_discovery import discovery_href
 
 from components.notice_board import render_notice_board
+from components.pagination import clamp_page, render_pagination
 
 
 def render_summary_cards(st, latest, recommended, closing, all_notices, *, selected="", api=None):
@@ -64,8 +65,8 @@ def render_section(st, title, subtitle, rows, *, key, api, rfp=False, empty_mess
         return
     page_size = 5
     total_pages = (len(rows) + page_size - 1) // page_size
-    page = 1
-    if total_pages > 1:
-        page = st.selectbox("목록 페이지", range(1, total_pages + 1), key=f"{key}_page",
-                            format_func=lambda value: f"{value} / {total_pages} 페이지")
+    # Use the existing return-route field so detail -> list restores this page.
+    page_param = "discovery_page_no"
+    page = clamp_page(st.query_params.get(page_param, 1), total_pages)
     render_notice_board(st, rows.iloc[(page - 1) * page_size:page * page_size], api=api, rfp=rfp)
+    render_pagination(st, current=page, total=total_pages, page_param=page_param, api=api)
