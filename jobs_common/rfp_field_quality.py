@@ -75,6 +75,7 @@ PROJECT_NAME_PLACEHOLDERS = {
     "\uacfc\uc81c\uba85 \ubbf8\uae30\uc7ac",
 }
 PROJECT_NAME_EXACT_LOW_VALUE_KEYS = {
+    "및 내용",
     "\uac1c\ubc1c\uacfc\uac80\uc99d",
     "\uac1c\ubc1c\uacfc \uac80\uc99d",
     "\uac1c\ubc1c \ubc0f \uac80\uc99d",
