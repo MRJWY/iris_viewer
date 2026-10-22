@@ -3,3 +3,5 @@ pandas
 gspread
 google-auth
 python-dotenv
+
+psycopg[binary]>=3.2,<4

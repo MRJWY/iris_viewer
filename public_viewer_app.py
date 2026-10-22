@@ -249,6 +249,16 @@ def _legacy_public_viewer_main() -> None:
 
 
 def main() -> None:
+    from jobs_common.discovery_service import uses_supabase_discovery
+    core.load_dotenv()
+    source = core.get_query_param("source")
+    page = core.get_query_param("page")
+    is_discovery = source in {"", "dashboard", "notices"} or page in {"dashboard", "notice_queue", "rfp_queue"}
+    legacy_rfp_detail = page == "rfp_queue" and core.get_query_param("view") == "detail"
+    if uses_supabase_discovery(core.get_env) and is_discovery and not legacy_rfp_detail:
+        from pages.discovery_workspace import render_workspace
+        render_workspace()
+        return
     core.main(app_mode="viewer")
 
 

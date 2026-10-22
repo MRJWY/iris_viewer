@@ -3854,7 +3854,7 @@ def replace_query_params(params: dict[str, str]) -> None:
 
 
 def encode_return_route(params: dict[str, str]) -> str:
-    allowed_keys = {"source", "page", "view", "id", "return_to"}
+    allowed_keys = {"source", "page", "view", "id", "return_to", "notice_source", "dashboard_section", "discovery_q", "discovery_status", "discovery_provider", "discovery_page_no"}
     payload = {
         clean(key): clean(value)
         for key, value in params.items()
@@ -3883,7 +3883,7 @@ def decode_return_route(token: str) -> dict[str, str]:
     return {
         clean(key): clean(value)
         for key, value in payload.items()
-        if clean(key) in {"source", "page", "view", "id", "return_to"} and clean(value)
+        if clean(key) in {"source", "page", "view", "id", "return_to", "notice_source", "dashboard_section", "discovery_q", "discovery_status", "discovery_provider", "discovery_page_no"} and clean(value)
     }
 
 
@@ -3904,6 +3904,10 @@ def capture_current_route_params() -> dict[str, str]:
         params["id"] = current_id
     if current_return_to:
         params["return_to"] = current_return_to
+    for key in ("notice_source", "dashboard_section", "discovery_q", "discovery_status", "discovery_provider", "discovery_page_no"):
+        value = get_query_param(key)
+        if value:
+            params[key] = value
     return params
 
 

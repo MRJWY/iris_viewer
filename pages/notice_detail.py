@@ -54,8 +54,11 @@ def _dday_badge_tone(dday_text: str) -> str:
 
 def _source_label(source_key: str) -> str:
     return {
+        "iris": "IRIS",
         "tipa": "MSS",
         "nipa": "NIPA",
+        "bipa": "BIPA",
+        "bizinfo": "BIZINFO",
     }.get((source_key or "").lower(), "IRIS")
 
 
@@ -184,7 +187,7 @@ def render_page(st, row, opportunity_df: pd.DataFrame, *, api) -> None:
             related_items.append(
                 {
                     "title": truncate(api, project_title, max_chars=92),
-                    "href": api.build_route_href("rfp_queue", row_id, source_key=source_key),
+                    "href": related_dict.get("Detail Href") or api.build_route_href("rfp_queue", row_id, source_key=source_key),
                     "subtitle": truncate(
                         api,
                         first_present(api, related_dict, "notice_title", "공고명"),

@@ -1,5 +1,31 @@
 This repository is PUBLIC_VIEWER_REPO.
 
+## Supabase discovery deployment
+
+The deployed `app.py` calls `public_viewer_app.main`. With a configured database,
+the existing viewer login guard runs before the Supabase discovery workspace.
+The home page shows four cards (latest notices, recommended RFPs, closing notices,
+and all notices) and search. The all-notices card opens the existing full search,
+including closed and archived notices.
+Notice titles are joined from the notice master, never inferred from filenames.
+
+Configure this app's own Streamlit Secrets (separate from the admin app):
+
+```toml
+SUPABASE_DB_URL = "your-existing-database-connection"
+```
+
+Put these keys above any TOML section headers. Never commit real credentials.
+The default backend is `auto`; `DISCOVERY_DATA_BACKEND="supabase"` is optional.
+The discovery repository uses read-only transactions. Account verification,
+favorites and comments retain their existing storage and permissions; comments
+load on request. Existing legacy workflow links remain available.
+
+The bundled discovery components/services match the admin repository's discovery
+modules; `pages/discovery_workspace.py` adapts the public viewer's existing auth
+and detail interfaces. This repository runs independently on Streamlit Cloud.
+The older sibling-runtime notes below describe local compatibility wrappers only.
+
 # IRIS Viewer Shim Repo
 
 This repository is now officially treated as a shim repo for the viewer runtime.
